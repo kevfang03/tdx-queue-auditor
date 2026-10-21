@@ -1,4 +1,4 @@
-"""Possible duplicates in the shift summary (payload 16): same requester, similar title."""
+"""Possible duplicates in the shift summary: same requester, similar title."""
 
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo

@@ -77,8 +77,8 @@ def _open_start_page(browser: TdxBrowser, url: str, timeout: float = 10.0) -> No
     most likely a connection Chromium dropped while the page loaded), the navigation failed
     and the page stayed on about:blank. The server already serves each connection in its own
     thread, so the abort cannot block it; only the one navigation is lost.
-    TdxBrowser treats a failed start page as not fatal by design (the owner retries by hand),
-    so the test retries the way the owner would.
+    TdxBrowser treats a failed start page as not fatal by design (the person retries by
+    hand), so the test retries the way a person would.
     """
     for _ in range(2):
         browser.open_start_page()
@@ -138,7 +138,7 @@ def test_a_start_page_that_does_not_load_is_not_fatal(tmp_path: Path) -> None:
         browser.open_start_page()
         urls = browser.current_urls()
 
-    # The page stays open (on Chromium's error page) for the owner to retry by hand.
+    # The page stays open (on Chromium's error page) for the person to retry by hand.
     assert len(urls) == 1
 
 

@@ -285,7 +285,7 @@ def test_not_recurring(title: str) -> None:
     assert not is_recurring_event(title)
 
 
-# --- several dates (payload 05c) ---------------------------------------------------------
+# --- several dates -----------------------------------------------------------------------
 
 
 @pytest.mark.parametrize(
@@ -408,7 +408,7 @@ def test_an_unresolvable_date_in_a_list_is_dropped() -> None:
     assert parse("EVENT [2/29, 10/20] Example Talk").dates == (at(10, 20),)
 
 
-# --- end time (payload 16, "Events this week") ----------------------------------------------
+# --- end time ("Events this week") ----------------------------------------------------------
 
 
 @pytest.mark.parametrize(
@@ -438,7 +438,7 @@ def test_no_end_time_without_a_readable_range(title: str) -> None:
     assert parse(title).end_time is None
 
 
-# --- location missing (payload 22) ---------------------------------------------------------
+# --- location missing ----------------------------------------------------------------------
 
 
 @pytest.mark.parametrize(

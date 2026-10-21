@@ -3,20 +3,20 @@
 ``run_audit`` is the read-only audit that ``tdx audit`` prints: read the dashboard, open the
 feeds that need it (and the event request forms' descriptions), apply the rules (with the
 local desk-member memory unless it is off), then the follow-up classifier on "requestor
-wrote last" findings when ``llm.enabled`` is set (payload 06b; ``--no-llm`` turns it off
-for one run). Its data class is always ``drexel``; ``tdx demo`` reuses ``read_and_judge``,
-``classify_step`` and ``draft_card`` with ``synthetic`` on the synthetic app (payload 07).
+wrote last" findings when ``llm.enabled`` is set (``--no-llm`` turns it off for one run).
+Its data class is always ``institutional``; ``tdx demo`` reuses ``read_and_judge``,
+``classify_step`` and ``draft_card`` with ``synthetic`` on the synthetic app.
 ``send_alerts`` plans the findings that are new or due again, posts one card and records the
-state only after a successful post. Cards go to a named destination (``personal`` or ``desk``,
-docs/ARCHITECTURE.md, "Desk channel mode"), each with its own state file; real ticket cards go
+state only after a successful post. Cards go to a named destination (``personal`` or
+``desk``), each with its own state file; real ticket cards go
 to ``desk`` only with ``teams.desk.approved``. Operator notices always go to ``personal``.
 ``watch`` runs the cycle every ``tdx.watch.interval_minutes`` during desk hours, in the
 foreground, and waits out an expired sign-in instead of exiting; its clock, sleep, cycle and
 notifier are injected, so tests need no browser, network or real time.
 
-Shift summaries (payload 14, ``tdx.summary``): the loop also wakes at the configured summary
+Shift summaries (``tdx.summary``): the loop also wakes at the configured summary
 times, and a cycle that runs while a slot is due posts ``send_summary`` instead of the alert
-card, recording its findings as alerted. Payload 17: the day's first summary posted is full
+card, recording its findings as alerted. The day's first summary posted is full
 (every open finding, with the mention); later slots post a delta (new findings and due
 reminders, cleared ones as a count) or nothing when nothing changed. While summaries go to the
 desk chat, a desk watch's alert cards go to the personal chat (``alert_destination``,
@@ -24,7 +24,7 @@ desk chat, a desk watch's alert cards go to the personal chat (``alert_destinati
 (``summary-state-desk.json``) holds the last slot dealt with, the last one posted and the
 (ticket id, kind) set open at that post. A slot posted late, or not at all
 within ``grace_minutes``, sends one plain notice to the personal chat. The summary also lists
-the coming week's events and marks possible duplicates (payload 16), both worked out in memory
+the coming week's events and marks possible duplicates, both worked out in memory
 from this run; "ready to close" findings go on it but, unless ``tdx.alerts.alert_ready_to_close``,
 never on an alert card or into the alert state.
 
@@ -127,8 +127,8 @@ STATE_FILE_NAMES: dict[Destination, str] = {
 }
 DESK_NOT_APPROVED = (
     "real ticket cards go to the desk chat only with teams.desk.approved = true in your own "
-    'config, set after the manager\'s written OK (docs/USAGE.md, "Desk chat"); nothing was '
-    "read or sent"
+    "config, set only once the desk has approved real cards there "
+    '(docs/USAGE.md, "Desk chat"); nothing was read or sent'
 )
 NO_PERSONAL_FOR_NOTICES = (
     "ops-suite: warning: sign-in notices need a personal webhook; they go to your own chat, "
@@ -285,13 +285,20 @@ def follow_up(
 ) -> tuple[AuditResult, FollowUpOutcome, LlmDayUsage | None]:
     """The follow-up classifier on the rules' result, when ``use_llm`` and ``llm.enabled``.
 
-    The data class is always ``drexel``: this path only ever reads the live TDX queue, so the
-    calls also need ``llm.allow_drexel_data``. Off, no client is built and nothing changes.
+    The data class is always ``institutional``: this path only ever reads the live TDX queue, so the
+    calls also need ``llm.allow_institutional_data``. Off, no client is built and nothing changes.
     """
     if not (use_llm and settings.llm.enabled):
         return result, off_outcome(result), None
     return classify_step(
-        settings, result, rows, feeds, rules, now, client=LlmClient(settings), data_class="drexel"
+        settings,
+        result,
+        rows,
+        feeds,
+        rules,
+        now,
+        client=LlmClient(settings),
+        data_class="institutional",
     )
 
 
@@ -307,7 +314,7 @@ def classify_step(
     data_class: DataClass,
 ) -> tuple[AuditResult, FollowUpOutcome, LlmDayUsage]:
     """Classify with ``client`` and apply the verdicts. Internal: ``follow_up`` calls it with
-    ``drexel`` for the live queue, and only ``tdx demo`` with ``synthetic``."""
+    ``institutional`` for the live queue, and only ``tdx demo`` with ``synthetic``."""
     desk_names = [*strong_desk_names(rows, feeds.feeds), *rules.extra_staff_names]
     outcome = classify_follow_ups(
         result,
@@ -366,7 +373,7 @@ def run_audit(
     use_llm: bool = True,
 ) -> AuditRun:
     """Read the dashboard and the feeds that need it (read-only), apply the rules, then the
-    follow-up classifier (see ``follow_up``, always ``drexel`` here).
+    follow-up classifier (see ``follow_up``, always ``institutional`` here).
 
     Raises BrowserStartError, NotSignedInError and DashboardStructureError (with
     ``failed_step``) as ``tdx audit`` always has. Settings are checked by the caller.
@@ -754,7 +761,7 @@ def send_summary(
 
 
 def alert_destination(settings: Settings, destination: Destination) -> Destination | None:
-    """Where a ``tdx watch --to <destination>`` cycle posts its alert card (payload 17).
+    """Where a ``tdx watch --to <destination>`` cycle posts its alert card.
 
     While shift summaries go to the desk chat, a desk watch posts no alert cards there unless
     ``tdx.summary.desk_alerts``; they go to the personal chat with ``personal_alerts``, or
@@ -871,7 +878,7 @@ def sign_in_notice(retry_minutes: int) -> str:
 
 
 def _profile_in_use(error: Exception) -> bool:
-    """The ``tdx login`` window has the profile open (the owner is signing in)."""
+    """The ``tdx login`` window has the profile open (someone is signing in)."""
     return isinstance(error, BrowserStartError) and error.reason == "profile_in_use"
 
 
@@ -927,8 +934,8 @@ def watch(
 
     An expired session does not stop it: one notice (one more on each new local day), then a
     quiet check every ``signed_out_retry_minutes`` until a cycle succeeds again; the first
-    expiry after a ``tdx login`` is written to ``session-log.json`` (payload 15). A
-    profile-in-use error (the owner's ``tdx login`` window), signed in or out, is never a
+    expiry after a ``tdx login`` is written to ``session-log.json``. A
+    profile-in-use error (the person's own ``tdx login`` window), signed in or out, is never a
     failure: one line per busy spell, then a quiet check every ``signed_out_retry_minutes``.
     Stops after ``failures_before_stop`` failed cycles in a row (one notice); expiry never
     counts and resets the count, since the browser started and reached TDX. A Teams post
@@ -951,7 +958,7 @@ def watch(
     cycle posted it in time, sends one notice naming the time (and, when skipped, the last
     failure's reason).
 
-    Payload 17: while summaries go to the desk chat, ``alert_destination`` says where a desk
+    While summaries go to the desk chat, ``alert_destination`` says where a desk
     watch's alert cards go (the personal chat by default, with a start warning when no
     personal webhook is saved); ``run_cycle`` is expected to follow it (``send_cycle``).
     """

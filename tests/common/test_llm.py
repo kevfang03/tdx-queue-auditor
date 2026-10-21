@@ -195,25 +195,25 @@ def test_force_enabled_skips_only_the_enabled_check():
     client, sdk = make_client(Settings())
     assert classify(client, force_enabled=True).status == "ok"
     client, sdk = make_client(Settings())
-    assert unavailable(client, sdk, "drexel", force_enabled=True) == "gate"
+    assert unavailable(client, sdk, "institutional", force_enabled=True) == "gate"
 
 
-def test_drexel_needs_the_gate():
+def test_institutional_needs_the_gate():
     client, sdk = make_client(make_settings())
-    assert unavailable(client, sdk, "drexel") == "gate"
-    client, sdk = make_client(make_settings(allow_drexel_data=True))
-    assert classify(client, "drexel").status == "ok"
+    assert unavailable(client, sdk, "institutional") == "gate"
+    client, sdk = make_client(make_settings(allow_institutional_data=True))
+    assert classify(client, "institutional").status == "ok"
 
 
 @pytest.mark.parametrize("data_class", ["synthetic", "personal"])
 def test_synthetic_and_personal_need_only_enabled(data_class: str):
-    client, sdk = make_client(make_settings(allow_drexel_data=False))
+    client, sdk = make_client(make_settings(allow_institutional_data=False))
     assert classify(client, data_class).status == "ok"
 
 
 def test_disabled_comes_before_the_gate():
     client, sdk = make_client(Settings())
-    assert unavailable(client, sdk, "drexel") == "disabled"
+    assert unavailable(client, sdk, "institutional") == "disabled"
 
 
 def test_no_key():
@@ -514,7 +514,7 @@ def test_repr_never_shows_the_key():
 
 def test_llm_settings_default_to_off():
     llm = Settings().llm
-    assert llm.enabled is False and llm.allow_drexel_data is False
+    assert llm.enabled is False and llm.allow_institutional_data is False
     assert (llm.model, llm.effort, llm.max_output_tokens) == ("claude-haiku-5-5", "low", 256)
     assert llm.daily_token_budget == 100_000
 
@@ -526,4 +526,4 @@ def test_llm_settings_env_override(monkeypatch: pytest.MonkeyPatch):
 
     llm = load_settings().llm
     assert llm.enabled is True and llm.daily_token_budget == 5000
-    assert llm.allow_drexel_data is False
+    assert llm.allow_institutional_data is False

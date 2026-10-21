@@ -156,7 +156,7 @@ def test_a_cleared_finding_deletes_its_record_and_returns_as_new(state: AlertSta
 def test_a_multi_date_event_over_record_is_cleared_once_the_event_is_judged_running(
     state: AlertState,
 ) -> None:
-    # Before payload 05c the first date (10/13, three days ago) made this event "over".
+    # Reading only the first date (10/13, three days ago) would make this event "over".
     title = "EVENT [10/13/26, 10/27/26, 11/3/26 3:00 PM - 5:00 PM Room 101] Club"
     sent(state, [event_over(106, 71)])
 
@@ -444,7 +444,7 @@ def test_with_titles_is_the_default(state: AlertState) -> None:
             Finding(1, "event_details_pending", "high", "details_pending", 72, 30),
             "Event in 30 h; no reply to the desk for 3 days: follow up",
         ),
-        # Payload 22: the near-event override, and the requester replying on an event.
+        # The near-event override, and the requester replying on an event.
         (
             Finding(1, "event_outreach_due", "high", "outreach_due_requester_wrote", 30, 30, 50),
             "Event in 30 h: reach out. Confirm the room · Zoom link if hybrid · desk mailbox "
@@ -705,7 +705,7 @@ def test_the_card_holds_no_requestor_name_or_email(state: AlertState) -> None:
     assert "Laptop will not connect to campus Wi-Fi" in text  # titles do go on the card
 
 
-# --- shift summary (payload 14) ----------------------------------------------------------
+# --- shift summary -----------------------------------------------------------------------
 
 SLOT = datetime(2026, 10, 19, 7, 30, tzinfo=TZ)
 SLOT_RUN = datetime(2026, 10, 19, 7, 31, tzinfo=TZ)
@@ -877,7 +877,7 @@ def test_an_unreadable_summary_state_is_moved_aside(tmp_path: Path) -> None:
     assert (tmp_path / "summary-state-desk.json.bad").exists()
 
 
-# --- ready to close, possible duplicates, events this week (payload 16) -------------------
+# --- ready to close, possible duplicates, events this week --------------------------------
 
 
 def ready(ticket_id: int, age: int = 96) -> Finding:
@@ -1022,7 +1022,7 @@ def test_alertable_keeps_ready_to_close_out_unless_switched_on() -> None:
     assert alertable(findings, alert_ready_to_close=True) == tuple(findings)
 
 
-# --- deltas (payload 17) ------------------------------------------------------------------
+# --- deltas -------------------------------------------------------------------------------
 
 NOON = datetime(2026, 10, 19, 12, 0, tzinfo=TZ)
 NOON_RUN = datetime(2026, 10, 19, 12, 1, tzinfo=TZ)

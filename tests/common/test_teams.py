@@ -329,7 +329,7 @@ def test_https_posts_verify_against_the_system_trust_store() -> None:
     assert context.check_hostname is True
 
 
-# --- mentions (payload 14) ---------------------------------------------------------------
+# --- mentions ----------------------------------------------------------------------------
 
 
 def test_people_mentions_follow_the_documented_entity_shape() -> None:

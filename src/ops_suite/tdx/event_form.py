@@ -8,7 +8,7 @@ the defaults list both names ("SCIS Event Request Form", "SCIS Operational Assis
 Its answers sit in the ticket's description: first a ``Recipient Data:`` block (submission
 metadata: an IP address, a response id, a link to a private results report), then a
 ``Response Summary:`` block with the answers, which hold student names, emails and ID numbers.
-See docs/ARCHITECTURE.md, Module 3, "Event outreach".
+The outreach rules that use them are in docs/tdx-rules.md.
 
 ``parse_event_form`` first cuts the text at "Response Summary:", so nothing before it, the
 Recipient Data block included, is ever parsed. It then reads only the recurring answer, the
@@ -86,7 +86,7 @@ _LABEL_PATTERNS = tuple(
 @dataclass(frozen=True, slots=True)
 class EventFormOptions:
     """Option prefixes, matched case-insensitively at the start of an answer after collapsing
-    whitespace (docs/payloads/10-event-outreach.md, "Mapping")."""
+    whitespace, so small wording changes on the form still match."""
 
     marketing_only_prefixes: tuple[str, ...] = ("Marketing/advertising",)
     av_service_prefixes: tuple[str, ...] = ("A/V & Technical Support",)
@@ -121,7 +121,7 @@ class EventForm:
     wants_room: bool
     marketing_only: bool
     unknown_options: int  # selected options that matched no known prefix (count only)
-    # For the summary's "Events this week" (payload 16): whether a start time was given, the
+    # For the summary's "Events this week": whether a start time was given, the
     # end of the time range when one was, and the type of space as a category.
     has_time: bool = False
     end_time: time | None = None

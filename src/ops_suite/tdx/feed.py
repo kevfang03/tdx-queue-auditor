@@ -12,8 +12,8 @@ the synthetic fixture tests run.
 
 Personal data rule: authors stay inside ``FeedEntry`` objects in memory, and comment text is
 read only to tell whether any is there, except the newest reply's, which is kept in memory as
-``TicketFeed.latest_reply_text`` for the follow-up classifier (payload 06b), and each reply's,
-which is tested for a desk signature and dropped (payload 18). None of it goes into an
+``TicketFeed.latest_reply_text`` for the follow-up classifier, and each reply's, which is
+tested for a desk signature and dropped. None of it goes into an
 exception message, a log record or ``repr()``. An entry that cannot be read leaves
 this module only as a structural shape.
 """
@@ -56,7 +56,7 @@ NOT_REPLY_COMMENT_CLASSES = frozenset({AUTHOR_CLASS, REPLY_CONTEXT_CLASS, PRIVAT
 SKIPPED_SELECTOR = 'blockquote, [class*="attachment"], [class*="quote"]'
 HIDDEN_CLASSES = frozenset({"hidden", "ng-hide", "d-none"})
 # Fixed TDX interface phrases that open an entry's own comment (case-insensitive, after
-# trimming, quoted history left out), as the owner reported them from live tickets. Both kinds
+# trimming, quoted history left out), as they appear on live tickets. Both kinds
 # are "system" entries, whatever their private marker says:
 # - a merge notice, "Merged incident <id> (<title>, originally created by <name>):", followed
 #   by the merged ticket's whole thread. It stays ONE entry;
@@ -87,7 +87,7 @@ MARKER_STAT_KEYS: tuple[str, ...] = (
     "visibility_fallback",  # feeds read by marker presence because the list did not fit
     "merge_notes",  # entries that open with a MERGE_NOTE_PREFIXES phrase
     "reassignments",  # entries that open with a SYSTEM_NOTE_PREFIXES phrase
-    "signature_desk_replies",  # replies whose own text holds a desk signature (payload 18)
+    "signature_desk_replies",  # replies whose own text holds a desk signature
 )
 
 
@@ -486,7 +486,7 @@ def read_feed_frames(
     document order, saying whether the browser rendered it. Pass only the feed frame's HTML
     with it.
 
-    ``desk_signatures`` (payload 18): a visible reply whose own text (quoted mail cut) holds
+    ``desk_signatures``: a visible reply whose own text (quoted mail cut) holds
     one of these phrases, case-insensitively with whitespace collapsed, puts its author in
     ``desk_authors``. Never the ``requester``; without a requester the rule is off.
     """

@@ -1,4 +1,4 @@
-"""Possible duplicate tickets, for the shift summary's rows (payload 16). Pure functions.
+"""Possible duplicate tickets, for the shift summary's rows. Pure functions.
 
 Two unclaimed tickets are possible duplicates when the requester is the same person
 (``same_person``) and the titles are similar: a token Jaccard of at least the threshold after

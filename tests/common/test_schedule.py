@@ -128,7 +128,7 @@ def test_desk_hours_come_from_the_environment(monkeypatch: pytest.MonkeyPatch) -
     assert settings.teams.timeout_seconds == 30
 
 
-# --- shift-summary slots (payload 14) -----------------------------------------------------
+# --- shift-summary slots ------------------------------------------------------------------
 
 
 def summary_slots(**summary: object) -> SummarySlots:

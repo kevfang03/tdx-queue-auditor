@@ -66,7 +66,7 @@ One question is beyond a rule: when the client wrote last, is the desk still exp
 
 - **By type:** the LLM client accepts only a `ScrubbedText`, which only the scrubber can construct. "Scrub before every call" is checked by the type system, not left to each caller.
 - **The scrubber:** quoted earlier mail and everything from a sign-off onward are dropped first, and the text is capped in length. Then names known to the run (the requester, every author in the feed, the desk staff, greeting names) become `[NAME]`, and emails, phone numbers, ID numbers, usernames and URLs are replaced. If any word of a known name survives, the call is refused.
-- **The data gate:** every text carries a data class set by the run mode, never by config: live runs are the live class, and the demo and the eval are `synthetic`. Live text reaches the API only when two separate switches are on in the person's own config; both default to off.
+- **The data gate:** every text carries a data class set by the run mode, never by config: live runs are `institutional`, and the demo and the eval are `synthetic`. Live text reaches the API only when two separate switches are on in the person's own config; both default to off.
 - **The budget:** a daily token budget is checked before every call and hard-stops at the limit. Every call logs the model, token counts, an estimated cost and the ticket id, never text. Each client message is classified once (a cache of ids and timestamps), and the fixed system prompt uses prompt caching.
 
 **Why:** ticket text can hold student records. Making the unsafe call impossible to write is stronger than reviewing every call site, and the budget turns a runaway loop into a bounded cost.

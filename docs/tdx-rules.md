@@ -16,7 +16,7 @@ Student assistants never claim tickets: a ticket stays **unclaimed** while the d
 1. The grid settles many tickets. An unclaimed ticket created in the last 48 hours is not stale, and its feed is never opened.
 2. Only unclaimed, non-event tickets created 48+ hours ago (or with no Created time) have their feed opened, plus every unclaimed **event request form** whatever its age, and every unclaimed, non-recurring **renamed event** whose next date is 14 days away or less (`outreach_days`; below). `plan_feeds` lists them, oldest Created first, so a run cut short still reads the oldest ones; all of them count toward `max_feeds_per_run`.
 3. Renamed event tickets further out, and past ones, need no page: their title says everything the rules use for them (`event_over`, TBD).
-4. No LLM. "Needs review" is only counted until payload 06.
+4. The rules use no LLM. The one optional LLM step, the [follow-up classifier](#the-follow-up-classifier), runs after them on a single kind of finding.
 
 ## The rules
 
@@ -56,7 +56,7 @@ A renamed event further out than 14 days, or past, never gets its page read. Wit
   - Each date takes the first time after it and before the next date. A date without one takes the time after the last date, as in `10/20, 10/27 3pm`. With no time at all, each date ends at 23:59.
   - Each year-less date gets its own year (closest to the run); the list is then sorted and duplicates removed.
 - **TBD:** the word TBD, any capitalisation, anywhere in the title.
-- **No location** (payload 22): a leading `[...]` or `(...)` group that holds a date **and** a time and nothing else once weekdays and joining words (at, from, to, and, on, until, EST/EDT/ET) are set aside, as in `EVENT [10/21/26 6PM-7PM] Resume Review`. Any other word or number left (`Room 101`, `Zoom`, `3675 Market`) is taken as the location. A title with TBD is TBD, not this; a bracket with a date but no time, or a title with no leading bracket, is never read as missing a location, since where the room would be cannot be told. Counted `event_location_missing`.
+- **No location**: a leading `[...]` or `(...)` group that holds a date **and** a time and nothing else once weekdays and joining words (at, from, to, and, on, until, EST/EDT/ET) are set aside, as in `EVENT [10/21/26 6PM-7PM] Resume Review`. Any other word or number left (`Room 101`, `Zoom`, `3675 Market`) is taken as the location. A title with TBD is TBD, not this; a bracket with a date but no time, or a title with no leading bracket, is never read as missing a location, since where the room would be cannot be told. Counted `event_location_missing`.
 - **Visible entry:** a reply or comment the requestor can see. Private notes and status-change-only entries are skipped, so a private note after the client's message still leaves the client waiting.
 - **Same person:** names match ignoring case, punctuation and order ("Example, Alex" is "Alex Example"), and a middle name on one side only still matches. There is no fuzzy matching: a typo is someone else.
 - **Desk member:** built once per run, before any ticket is judged, from:
@@ -72,7 +72,7 @@ A renamed event further out than 14 days, or past, never gets its page read. Wit
 
 ## The desk-member memory
 
-A student assistant who replies on one ticket in a run, writes no private note and is not Prim Resp anywhere looks like "anyone else". So the auditor remembers desk members across runs (decided 2026-10-16, after the first `tdx watch` run flagged a desk reply an hour old):
+A student assistant who replies on one ticket in a run, writes no private note and is not Prim Resp anywhere looks like "anyone else". So the auditor remembers desk members across runs (without it, a live `tdx watch` run flagged a desk reply an hour old):
 
 - **What is remembered:** only names seen through a **strong** signal: Prim Resp of a claimed ticket, the author of a private note, the author of a merge notice, or the author of a reply signed with the desk signature. From then on, one reply is enough for that person to count as desk.
 - **What is not:** the "2 or more tickets in one run" guess, so a colleague who is often CC'd cannot become desk for good. `extra_staff_names` is not copied into the memory either; it stays in your config.
@@ -95,7 +95,7 @@ The 48-hour gate on `other_last` works with or without the memory: someone just 
 
 ## Tickets a desk member opened
 
-A manager sometimes opens a ticket as a reminder or notice for the queue. Nobody is waiting for a reply on it, so "client waiting" there is wrong (decided 2026-10-17, after the 06b live check flagged one):
+A manager sometimes opens a ticket as a reminder or notice for the queue. Nobody is waiting for a reply on it, so "client waiting" there is wrong (a live check flagged one):
 
 - **The rule:** when the requestor of an unclaimed, non-event ticket is a desk member through a **strong** signal, the ticket raises no `client_waiting` finding, neither `no_reply_yet` nor `requestor_last`. It is counted `internal_requestor` instead.
 - **Strong signals only:** a Prim Resp name of a claimed row, a private-note, merge-notice or desk-signature author in this run, the desk-member memory, or `extra_staff_names`. The "2 or more tickets in one run" guess does **not** count, so a client who writes on many tickets is never hidden.
@@ -128,11 +128,11 @@ Outreach applies when the request is not marketing-only and wants A/V or a room.
 
 Between the event's start and 24 hours after it, nothing is raised.
 
-### Event state (payload 22)
+### Event state
 
 For every upcoming event whose page was read, a form ticket or a renamed one within 14 days, the state comes from **who wrote last** among the visible entries (`event_status`; private notes and status changes are skipped). The *first outreach* is the oldest visible desk reply. "The requester" here is anyone who is not desk staff (the requestor first, as everywhere; an on-site contact answering for the event counts as the requester's side).
 
-**First, on every such event, whatever its services** (marketing only and no outreach included) and whether or not the desk has replied yet (payload 22 review, 2026-10-21): when the requester wrote the latest visible entry, the desk owes a reply, as on any ticket. A requester's follow-up question that the desk never answered must not go silent.
+**First, on every such event, whatever its services** (marketing only and no outreach included) and whether or not the desk has replied yet: when the requester wrote the latest visible entry, the desk owes a reply, as on any ticket. A requester's follow-up question that the desk never answered must not go silent.
 
 | Services | Latest visible entry | Condition | Finding | Priority | Reason code |
 |---|---|---|---|---|---|
@@ -189,7 +189,7 @@ If the feed had no visible entry at all, the finding would be `client_waiting`, 
 
 **Recurring event.** Ticket 1009 is titled "EVENT [Bi-Weekly, Mon/Wed 2-3pm] Example Club". It has no single date: counted `event_recurring`, no finding.
 
-**Needs review.** Ticket 1004, unclaimed, created 80 hours ago. Its latest visible entry is a reply from Casey Testperson, 75 hours ago, who is not the requestor, appears on no other ticket in the run, wrote no private note, and is not in `extra_staff_names` (perhaps a CC'd colleague). The rules cannot tell who is holding things up: finding `needs_review`, reason `other_last`, 75 hours. Payload 06 will hand these to the LLM; until then they are only reported. Had Casey's reply been 3 hours old, there would be no finding (counted `other_recent`): someone just acted on the ticket.
+**Needs review.** Ticket 1004, unclaimed, created 80 hours ago. Its latest visible entry is a reply from Casey Testperson, 75 hours ago, who is not the requestor, appears on no other ticket in the run, wrote no private note, and is not in `extra_staff_names` (perhaps a CC'd colleague). The rules cannot tell who is holding things up: finding `needs_review`, reason `other_last`, 75 hours. These are only reported, for a person to look at; the follow-up classifier never sees them. Had Casey's reply been 3 hours old, there would be no finding (counted `other_recent`): someone just acted on the ticket.
 
 ## The run summary
 
@@ -214,7 +214,7 @@ With `show_ids`, one line per finding (most urgent first: priority, then longest
 
 Only ticket ids, reason codes and hours appear. Titles, names and links are student data (FERPA) and never appear in a summary, log, `repr()` or error from these modules.
 
-## Ready to close (payload 16)
+## Ready to close
 
 The manual weekly check-in had a "close these if nothing new" list. The `ready_to_close` finding is that list:
 
@@ -228,7 +228,7 @@ It is a **summary-only** finding by default: it is listed in the "Ready to close
 
 ## Teams alerts (tdx audit --send, tdx watch)
 
-Findings become one Adaptive Card per run, posted to the owner's own Teams chat. The card shows only findings that are **new or due again**, grouped by kind in this order: client waiting, follow up with client, needs review, event outreach due, event details pending, location TBD soon, event over, ready to close (only with `alert_ready_to_close`). Rows are ordered by priority, then kind, then oldest first. At most `tdx.alerts.max_rows_per_card` (25) fit on a card; the rest wait for the next one, and the card says how many ("12 more waiting; they come on the next cards.").
+Findings become one Adaptive Card per run, posted to the own Teams chat of the person running the tool (or to the desk chat, see [USAGE.md](USAGE.md#desk-chat)). The card shows only findings that are **new or due again**, grouped by kind in this order: client waiting, follow up with client, needs review, event outreach due, event details pending, location TBD soon, event over, ready to close (only with `alert_ready_to_close`). Rows are ordered by priority, then kind, then oldest first. At most `tdx.alerts.max_rows_per_card` (25) fit on a card; the rest wait for the next one, and the card says how many ("12 more waiting; they come on the next cards.").
 
 ### Re-alert policy
 
@@ -239,20 +239,20 @@ Findings become one Adaptive Card per run, posted to the owner's own Teams chat.
 - Records are written only after Teams accepts the post. If the post fails, the same findings are due on the next run.
 - The state file `alerts-state.json` holds ticket ids, kinds and times only, never a title or a name. If it cannot be read, it is moved aside to `alerts-state.json.bad` and everything is sent once more.
 
-### Shift summaries (payload 14)
+### Shift summaries
 
 With `tdx.summary.enabled`, the desk runner's `tdx watch` also posts a summary at each configured time (defaults: 07:30, 12:00 and 17:00 on weekdays; 08:00, 12:00 and 17:00 on Saturday; 12:00 on Sunday). It lists **every** open finding, grouped by kind in the order above with each kind's count, and marks the ones not yet alerted `(new)`; the rows use the wording below. It replaces that cycle's alert card, and the new or due findings it shows are recorded as alerted, so the re-alert policy above carries on from there. Settings, late and skipped slots, and mentions: [USAGE.md](USAGE.md#shift-summaries).
 
-Payload 17: only the day's **first** summary posted is that full list (a missed first slot makes the next one full); it marks `(new)` the alertable findings not open at the last summary posted. Later slots post a **delta**, `Since 07:30: N new · M cleared · K open`, with rows only for the new findings and the reminders now due, and the cleared ones as a count. A finding missing from this run counts as cleared by the same rule that clears alert records (its ticket judged this run, or gone from a queue read in full); otherwise it is still remembered as open. A delta with nothing new, cleared or due is not posted. While summaries go to the desk chat, the desk runner's alert cards go to the personal chat (`tdx.summary.desk_alerts`, `personal_alerts`).
+Only the day's **first** summary posted is that full list (a missed first slot makes the next one full); it marks `(new)` the alertable findings not open at the last summary posted. Later slots post a **delta**, `Since 07:30: N new · M cleared · K open`, with rows only for the new findings and the reminders now due, and the cleared ones as a count. A finding missing from this run counts as cleared by the same rule that clears alert records (its ticket judged this run, or gone from a queue read in full); otherwise it is still remembered as open. A delta with nothing new, cleared or due is not posted. While summaries go to the desk chat, the desk runner's alert cards go to the personal chat (`tdx.summary.desk_alerts`, `personal_alerts`).
 
-Payload 16 adds three things, all worked out in memory from the same run, with no LLM:
+The summary also has three things, all worked out in memory from the same run, with no LLM:
 
 - **Sections, in order:** Events this week, Client waiting, Follow up with client, Needs review, Event outreach due, Event details pending, Location TBD soon, Event over, Ready to close.
 - **Events this week** (first): every unclaimed event ticket, an event request form or a renamed `EVENT [...]` ticket, with a date from the summary time to `tdx.summary.events_days` (7) days later, one row per event at its next date in that window, sorted by date. A row is the linked id (the title only with `show_titles`), then `Wed 10/21 15:00–17:00 · Lobby · A/V: yes · outreach due`:
   - the date and start time (date only when none was given), and the end time when the form or title gives a range;
   - the space type from the form, renamed tickets' included: `Lobby`, `Classroom`, `Other`, or `—` (no form, or an answer that was not read);
   - `A/V: yes/no` from the form, `—` without one;
-  - the state (payload 22). A renamed title first: `location TBD` (TBD in the title) or `location missing` (a date and a time but no room). Then the form: `marketing only`, or `no outreach needed` (no A/V and no classroom). Otherwise the feed state above: `no outreach yet`, `waiting on requester since Tue 08:26` (the desk's last entry; no time when it is undated), `requester replied` or `in progress (requester answered)`; `page not read` when the run could not read the ticket's page (a failed or deferred feed).
+  - the state. A renamed title first: `location TBD` (TBD in the title) or `location missing` (a date and a time but no room). Then the form: `marketing only`, or `no outreach needed` (no A/V and no classroom). Otherwise the feed state above: `no outreach yet`, `waiting on requester since Tue 08:26` (the desk's last entry; no time when it is undated), `requester replied` or `in progress (requester answered)`; `page not read` when the run could not read the ticket's page (a failed or deferred feed).
   - Recurring events and unreadable dates are left out, as the rules leave them out. An event that already started before the summary time is not listed.
   - Never shown: requester or handler names, the A/V free-text answer or any other form field. An event's finding row, if it has one, still appears in its own section: this section is the week's agenda.
 - **Possible duplicates:** among this run's unclaimed tickets, two are possible duplicates when the requester is the same person (matched as names are everywhere else) and the titles are similar: after lower-casing, dropping punctuation and a few stop words ("a", "the", "re", "fw", "please" and similar), their word sets overlap by at least `tdx.rules.duplicate_title_similarity` (0.6, Jaccard), or one title's words appear inside the other's. The newer ticket's row gets `(possible duplicate of #<older id>)`, pointing at the oldest such ticket. Event tickets and request forms are left out (all forms share one title, and two events by one requester look alike). It is never a finding, nothing about it is stored or logged, and names are compared in memory only.
@@ -281,9 +281,9 @@ Ages read `N h` under 48 hours and `N days` (whole days, rounded down) from 48 h
 
 Each row starts with the ticket id, linked to the ticket when its address is on the TDX host, then the title, cut to `title_chars` (80) with its Markdown escaped, so `EVENT [10/20 3pm Room 101] Club` shows its brackets. The card never carries a requestor name, an email address, Prim Resp or feed text, and it is never logged.
 
-## The follow-up classifier (payload 06b)
+## The follow-up classifier
 
-The rules cannot tell "the client is waiting for us" from "the client said *they* would get back to us". The desk SOP says to check in after 2 days without a response either way, but the second case is not urgent and needs different wording. This is the auditor's one LLM step. It is **off by default** (`llm.enabled = false`), and on TDX data it also needs `llm.allow_drexel_data = true` in the person's own config; `--no-llm` turns it off for one run of `tdx audit` or `tdx watch`.
+The rules cannot tell "the client is waiting for us" from "the client said *they* would get back to us". The desk SOP says to check in after 2 days without a response either way, but the second case is not urgent and needs different wording. This is the auditor's one LLM step. It is **off by default** (`llm.enabled = false`), and on TDX data it also needs `llm.allow_institutional_data = true` in the person's own config; `--no-llm` turns it off for one run of `tdx audit` or `tdx watch`.
 
 **What it looks at.** Only `client_waiting` / `requestor_last` findings, which are already 48+ hours stale. Everything else stays rules-only.
 
@@ -319,6 +319,6 @@ Skips are named when there are any (`skipped 2 (budget)`; `skipped 3 (gate 1, no
 
 **Eval.** `uv run ops-suite llm eval [--set dev|holdout]` runs the synthetic sets in `tests/fixtures/llm/` through the same stripping, scrubbing and prompt as data class `synthetic`, and prints accuracy, a confusion table, the number of **unsafe errors** (a reply was expected, the model said `client_will_follow_up` or `no_reply_needed`), tokens and cost. `unsure` counts as right when a reply was expected and wrong otherwise. A message with nothing left after stripping makes no call and counts as `unsure`, as in the audit. The holdout set is for one final check after tuning on dev.
 
-Results on 2026-10-17 (claude-haiku-5-5, effort low; the prompt as first written, no tuning needed):
+Results (claude-haiku-5-5, effort low; the prompt as first written, no tuning needed):
 - **dev:** 24 of 24 right, 0 unsafe errors; 24 calls, cache read 30,222 tokens on calls 2+, ~$0.0007.
 - **holdout, run once:** 12 of 12 right, 0 unsafe errors; 11 calls (the "..." case had no text left after stripping and was graded `unsure` without a call), ~$0.0003.

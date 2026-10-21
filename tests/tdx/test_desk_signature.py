@@ -1,4 +1,4 @@
-"""The desk signature as a desk-member signal (payload 18). Synthetic feeds, invented names."""
+"""The desk signature as a desk-member signal. Synthetic feeds, invented names."""
 
 import logging
 from datetime import datetime
@@ -216,7 +216,7 @@ def test_no_reply_text_is_kept_or_shown() -> None:
     shown = repr(details) + repr(details.feed) + "".join(repr(e) for e in details.feed.entries)
     for word in INVENTED:
         assert word not in shown
-    # Only the newest reply's text is kept (payload 06b), and it is the requester's.
+    # Only the newest reply's text is kept, and it is the requester's.
     assert details.feed.latest_reply_text == "Still broken, thanks."
 
 

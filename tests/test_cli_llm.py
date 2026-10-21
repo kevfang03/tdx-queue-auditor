@@ -107,7 +107,7 @@ def test_status_without_a_key(fake_sdk, capsys):
     assert main(["llm", "status"]) == 0
     out = capsys.readouterr().out
     assert out == (
-        "LLM: enabled no; Drexel data allowed no; model claude-haiku-5-5; key saved no.\n"
+        "LLM: enabled no; Institutional data allowed no; model claude-haiku-5-5; key saved no.\n"
         "Today: 0 calls, 0 of 100,000 tokens, ~$0.0000.\n"
     )
     assert messages.calls == []
@@ -121,7 +121,7 @@ def test_status_with_a_key_and_a_call_today(fake_sdk, monkeypatch: pytest.Monkey
     monkeypatch.setenv("OPS_SUITE_LLM__ENABLED", "true")
     assert main(["llm", "status"]) == 0
     out = capsys.readouterr().out
-    assert "LLM: enabled yes; Drexel data allowed no;" in out
+    assert "LLM: enabled yes; Institutional data allowed no;" in out
     assert "key saved yes." in out
     assert "Today: 1 call, 49 of 100,000 tokens, ~$0.0000." in out
     assert KEY not in out
@@ -202,3 +202,11 @@ def test_llm_help_lists_the_commands(capsys):
     out = capsys.readouterr().out
     for name in ("set-key", "status", "test"):
         assert name in out
+
+
+def test_status_names_an_unknown_llm_setting(monkeypatch: pytest.MonkeyPatch, capsys):
+    retired = "ALLOW_" + "DRE" + "XEL_DATA"  # built from parts so no source line spells it out
+    monkeypatch.setenv(f"OPS_SUITE_LLM__{retired}", "false")
+    assert main(["llm", "status"]) == cli.EXIT_CONFIG
+    err = capsys.readouterr().err
+    assert f"unknown setting llm.{retired.lower()}; see config.example.toml" in err

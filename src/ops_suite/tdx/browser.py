@@ -1,7 +1,7 @@
 """The TDX browser: Playwright's bundled Chromium with a dedicated, persistent profile.
 
-``tdx login`` and ``tdx capture`` run it headed and unguarded, because the owner signs in and
-navigates by hand. ``tdx rows`` and ``tdx audit`` may run it headless, and always with the
+``tdx login`` and ``tdx capture`` run it headed and unguarded, because the person signs in
+and navigates by hand. ``tdx rows`` and ``tdx audit`` may run it headless, and always with the
 read-only request guard (``tdx/guard.py``) installed on the context before the first
 navigation, with service workers blocked so that every request passes through the guard, and
 SignalR's live updates refused: every request under ``/TDSignalR/`` and every WebSocket.
@@ -218,7 +218,7 @@ class TdxBrowser:
             try:
                 self._context.close()
             except PlaywrightError:
-                # The owner may already have closed the window.
+                # The person may already have closed the window.
                 log.debug("browser context was already closed")
             self._context = None
         self._stop_playwright()

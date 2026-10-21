@@ -1,5 +1,5 @@
-"""The shift summary's "Events this week" (payload 16): which events, their state (payload
-22: from the form and the feed), the order and the row text."""
+"""The shift summary's "Events this week": which events, their state
+(from the form and the feed), the order and the row text."""
 
 from datetime import datetime, time, timedelta
 from zoneinfo import ZoneInfo

@@ -1,7 +1,6 @@
-"""Types shared by the feed reader (payload 04a) and the stale rules (payload 04b).
+"""Types shared by the feed reader (``feed.py``) and the stale rules (``rules.py``).
 
-Created identically by both payloads; changed since through the architect only (payload 04c:
-``TicketFeed.desk_authors``, and neutral wording; payload 06b: ``latest_reply_text``).
+Both sides depend on these shapes, so a change here is a change to both: update them together.
 """
 
 from dataclasses import dataclass
@@ -33,11 +32,11 @@ class TicketFeed:
     """A ticket's activity feed, newest entry first.
 
     ``desk_authors``: people the feed itself shows to be staff beyond private-note authors:
-    whoever wrote a merge notice or reassignment, and (payload 18) the author of a visible
+    whoever wrote a merge notice or reassignment, and the author of a visible
     reply whose own text holds a desk signature, never the requester. Student data, like
     ``author``.
 
-    ``latest_reply_text`` (payload 06b): the comment text of the newest "reply" entry only, in
+    ``latest_reply_text``: the comment text of the newest "reply" entry only, in
     memory, for the follow-up classifier. Student data: never log, print, store or put it in
     an exception. ``repr`` leaves it out.
     """

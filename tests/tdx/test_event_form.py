@@ -1,4 +1,4 @@
-"""The event request form parser (payload 10): only the listed answers are read, and nothing
+"""The event request form parser: only the listed answers are read, and nothing
 from the Recipient Data block or the personal answers ever leaves it.
 
 Every description here is invented. The Recipient Data block uses a documentation address
@@ -412,7 +412,7 @@ def test_nothing_from_the_form_reaches_the_summary_state_file_or_card(
         assert all(secret not in text for text in outputs)
 
 
-# --- what "Events this week" reads (payload 16) ---------------------------------------------
+# --- what "Events this week" reads ----------------------------------------------------------
 
 
 @pytest.mark.parametrize(

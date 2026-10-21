@@ -94,7 +94,7 @@ def test_reads_several_tickets_behind_the_guard(
     ]  # fmt: skip
     assert mixed.entries[0].author == "Alex Example"
     assert mixed.unreadable == 2
-    # The newest reply's comment text is read in the real browser too (payload 06b).
+    # The newest reply's comment text is read in the real browser too.
     assert mixed.latest_reply_text is not None
     assert mixed.latest_reply_text.startswith("Hi,\nThe HDMI input shows no picture either.")
     assert read.feeds[EMPTY].latest_reply_text is None
@@ -310,7 +310,7 @@ def test_progress_is_reported_per_ticket(workmgmt_server: WorkMgmtServer, tmp_pa
     assert calls == [(1, 2), (2, 2)]
 
 
-# --- event request forms (payload 10) -----------------------------------------------------
+# --- event request forms ------------------------------------------------------------------
 
 FORM, FORM_WITHOUT_DESCRIPTION = 5501012, 5501013
 # Invented values in the form fixture that must never leave the parser.
@@ -414,7 +414,7 @@ def test_the_row_s_requester_and_the_desk_signatures_reach_the_feed_reader(
     assert read.marker_stats["signature_desk_replies"] == 0
 
 
-# --- renamed events (payload 22) ----------------------------------------------------------
+# --- renamed events -----------------------------------------------------------------------
 
 
 def test_renamed_events_get_their_form_read_within_max_feeds_per_run(

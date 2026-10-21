@@ -268,3 +268,64 @@ def test_teams_desk_settings_from_the_environment(monkeypatch: pytest.MonkeyPatc
 
     assert teams.show_titles("desk") is True
     assert teams.desk.approved is False
+
+
+# --- the [llm] section refuses unknown keys --------------------------------------------------
+
+# A retired name of the data switch, built from parts so no source line spells it out.
+RETIRED_KEY = "allow_" + "dre" + "xel_data"
+NEW_KEY = "allow_institutional_data"
+
+
+def _write_llm_toml(tmp_path: Path, key: str) -> Path:
+    config = tmp_path / "llm.toml"
+    config.write_text(f"[llm]\n{key} = true\n", encoding="utf-8")
+    return config
+
+
+def _unknown_keys(error: ValidationError) -> list[str]:
+    return [
+        ".".join(str(part) for part in item["loc"])
+        for item in error.errors()
+        if item["type"] == "extra_forbidden"
+    ]
+
+
+def test_unknown_llm_key_in_the_toml_file_stops_loading(tmp_path: Path) -> None:
+    with pytest.raises(ValidationError) as caught:
+        load_settings(_write_llm_toml(tmp_path, RETIRED_KEY))
+    assert _unknown_keys(caught.value) == [f"llm.{RETIRED_KEY}"]
+
+
+def test_unknown_llm_key_in_the_environment_stops_loading(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv(f"OPS_SUITE_LLM__{RETIRED_KEY.upper()}", "false")
+    with pytest.raises(ValidationError) as caught:
+        load_settings()
+    assert _unknown_keys(caught.value) == [f"llm.{RETIRED_KEY}"]
+
+
+def test_unknown_llm_key_in_dotenv_stops_loading(tmp_path: Path) -> None:
+    # The autouse fixture has made tmp_path the working directory, so this .env is the test's.
+    (tmp_path / ".env").write_text(f"OPS_SUITE_LLM__{RETIRED_KEY.upper()}=false\n", "utf-8")
+    with pytest.raises(ValidationError) as caught:
+        load_settings()
+    assert _unknown_keys(caught.value) == [f"llm.{RETIRED_KEY}"]
+
+
+def test_the_institutional_data_switch_loads_from_every_source(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    assert load_settings(_write_llm_toml(tmp_path, NEW_KEY)).llm.allow_institutional_data
+
+    (tmp_path / ".env").write_text("OPS_SUITE_LLM__ALLOW_INSTITUTIONAL_DATA=true\n", "utf-8")
+    assert load_settings().llm.allow_institutional_data
+    (tmp_path / ".env").unlink()
+
+    monkeypatch.setenv("OPS_SUITE_LLM__ALLOW_INSTITUTIONAL_DATA", "true")
+    assert load_settings().llm.allow_institutional_data
+
+
+def test_other_sections_still_ignore_unknown_keys(tmp_path: Path) -> None:
+    config = tmp_path / "extra.toml"
+    config.write_text("[mail.work]\nnot_a_setting = 1\n", encoding="utf-8")
+    assert load_settings(config).mail.work.retention_days == 7

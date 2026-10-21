@@ -7,7 +7,7 @@ state, desk memory and verdict cache of the demo never touch the real ones. Only
 demo tokens count against the real daily budget.
 
 The data class is ``synthetic`` here and nowhere else; ``tdx audit`` and ``tdx watch`` go
-through ``run_audit``, which hard-codes ``drexel``.
+through ``run_audit``, which hard-codes ``institutional``.
 """
 
 import copy

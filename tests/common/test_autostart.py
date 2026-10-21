@@ -24,7 +24,7 @@ from ops_suite.common.autostart import (
 )
 
 UV = "/Users/owner/.local/bin/uv"
-REPO = Path("/Users/owner/Documents/GitHub/enterprise-ai-ops-suite")
+REPO = Path("/Users/owner/Documents/GitHub/tdx-queue-auditor")
 PRINTED = (
     "gui/501/com.ops-suite.tdx-watch = {\n"
     "\tactive count = 1\n"
@@ -274,12 +274,12 @@ def test_for_platform_on_macos_is_the_launch_agent(tmp_path: Path) -> None:
     assert agent.plist_path.name == f"{LABEL}.plist"
 
 
-# --- Windows: the Startup-folder script (payload 15) -------------------------------------
+# --- Windows: the Startup-folder script --------------------------------------------------
 
 # Every path the script embeds is a Windows path on any OS, so the expected text is the same on
-# the Linux and macOS runners (payload 21). Writing the script uses real tmp_path folders.
+# the Linux and macOS runners. Writing the script uses real tmp_path folders.
 WIN_UV = r"C:\Users\Desk Owner\.local\bin\uv.exe"
-WIN_REPO = PureWindowsPath(r"C:\Users\Desk Owner\Documents\enterprise-ai-ops-suite")
+WIN_REPO = PureWindowsPath(r"C:\Users\Desk Owner\Documents\tdx-queue-auditor")
 WIN_LOGS = PureWindowsPath(r"C:\Users\Desk Owner\AppData\Local\ops-suite\Logs")
 NO_MATCH = "INFO: No tasks are running which match the specified criteria.\r\n"
 MATCH = '"cmd.exe","4242","Console","1","4,000 K"\r\n'
@@ -346,7 +346,7 @@ def test_the_script_runs_absolute_uv_in_the_repo_minimised_with_logs() -> None:
         "  exit /b",
         ")",
         'set "PYTHONIOENCODING=utf-8"',
-        r'cd /d "C:\Users\Desk Owner\Documents\enterprise-ai-ops-suite"',
+        r'cd /d "C:\Users\Desk Owner\Documents\tdx-queue-auditor"',
         f'if not exist "{WIN_LOGS}" mkdir "{WIN_LOGS}"',
         f'"{WIN_UV}" "run" "ops-suite" "tdx" "watch" '
         f'>>"{WIN_LOGS / "watch.out.log"}" 2>>"{WIN_LOGS / "watch.err.log"}"',
@@ -376,7 +376,7 @@ def test_a_relative_uv_path_is_made_absolute(
 
 
 def test_the_minimised_copy_makes_the_log_folder_before_the_redirect() -> None:
-    # The owner's case (payload 19): the folder is missing when the script runs at sign-in,
+    # A case seen on a real PC: the folder is missing when the script runs at sign-in,
     # so cmd's ">>" fails and uv never starts, unless the script makes the folder first.
     lines = _windows_script(destination="desk")
     logs = WIN_LOGS
@@ -440,10 +440,10 @@ def test_the_script_adds_to_and_the_extra_args() -> None:
 
 
 def test_the_script_switches_cmd_to_utf8_for_a_non_ascii_path() -> None:
-    lines = _windows_script(repo=PureWindowsPath("C:\\Users\\Jos\u00e9\\enterprise-ai-ops-suite"))
+    lines = _windows_script(repo=PureWindowsPath("C:\\Users\\Jos\u00e9\\tdx-queue-auditor"))
 
     assert lines[:2] == ["@echo off", "chcp 65001 >nul"]
-    assert 'cd /d "C:\\Users\\Jos\u00e9\\enterprise-ai-ops-suite"' in lines
+    assert 'cd /d "C:\\Users\\Jos\u00e9\\tdx-queue-auditor"' in lines
 
 
 def test_an_ascii_script_leaves_the_code_page_alone() -> None:
@@ -549,7 +549,7 @@ def test_for_platform_on_windows_is_the_startup_script(
     assert agent.plist_path == startup / "Startup" / STARTUP_SCRIPT
 
 
-# --- keep_awake (payload 15) -------------------------------------------------------------
+# --- keep_awake --------------------------------------------------------------------------
 
 
 def test_keep_awake_asks_windows_and_clears_the_request_on_exit() -> None:

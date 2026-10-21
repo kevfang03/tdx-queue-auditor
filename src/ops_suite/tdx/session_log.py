@@ -1,4 +1,4 @@
-"""How long a TDX sign-in lasts: ``session-log.json`` in the TDX data folder (payload 15).
+"""How long a TDX sign-in lasts: ``session-log.json`` in the TDX data folder.
 
 Each finished ``tdx login`` starts a session (``signed_in_at``); the first "not signed in"
 that ``tdx audit``, ``tdx watch`` or ``tdx rows`` meets after it closes the session

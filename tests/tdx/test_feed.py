@@ -208,7 +208,7 @@ def test_repr_holds_no_invented_name_or_text() -> None:
     assert repr(feed) == "TicketFeed(ticket_id=5501001, entries=8)"
 
 
-# --- private markers: rendered, not present (payload 04c) -------------------------------
+# --- private markers: rendered, not present ---------------------------------------------
 
 # Document order of the markers in feeds/5501005.html: E3, E2, E2b, E1, E1a; only E2's shows.
 HIDDEN_MARKERS_SHOWN = [False, True, False, False, False]
@@ -302,7 +302,7 @@ def test_replies_under_a_private_note(reply_author: str, reply_marker: str, kind
     assert [entry.kind for entry in feed.entries] == [kind, "private"]
 
 
-# --- merged tickets and reassignments (payload 04c addenda) ------------------------------
+# --- merged tickets and reassignments ----------------------------------------------------
 
 
 def test_tdx_notices_are_system_and_a_merge_stays_one_entry() -> None:
@@ -371,7 +371,7 @@ def test_without_the_phrases_the_notices_are_read_as_usual(
     assert (details.marker_stats["merge_notes"], details.marker_stats["reassignments"]) == (0, 0)
 
 
-# --- the newest reply's text (payload 06b) -----------------------------------------------
+# --- the newest reply's text -------------------------------------------------------------
 
 
 @pytest.mark.parametrize(

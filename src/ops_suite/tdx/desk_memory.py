@@ -3,8 +3,7 @@
 Only the strong signals are remembered (``rules.strong_desk_names``: Prim Resp, private-note
 authors, merge-notice authors, authors of replies with the desk signature), never the
 2+-tickets guess, so a frequently copied outsider
-cannot become desk for good. The rules are in docs/ARCHITECTURE.md (Module 3, "Desk-member
-memory (decided 2026-10-16)") and in plain language in docs/tdx-rules.md.
+cannot become desk for good. The rules are in plain language in docs/tdx-rules.md.
 
 ``desk-members.json``: ``{"schema": 1, "salt": "<32 hex>", "members": {"<64 hex sha256>":
 "<ISO UTC last seen>"}}``. A member is the salted SHA-256 of the name's ``name_key``, so

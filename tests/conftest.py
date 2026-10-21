@@ -30,7 +30,7 @@ def isolated_settings(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
 @pytest.fixture(autouse=True)
 def regular_python(monkeypatch: pytest.MonkeyPatch) -> None:
     """Run every test as on a regular Python, also where the venv still sits on the Microsoft
-    Store build, whose base prefix would make live commands refuse to run (payload 20)."""
+    Store build, whose base prefix would make live commands refuse to run."""
     monkeypatch.setattr(sys, "base_prefix", sys.prefix)
 
 

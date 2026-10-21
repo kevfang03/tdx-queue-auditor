@@ -1,4 +1,4 @@
-"""tdx demo (payload 07): the generated dataset, the demo card, the synthetic-only LLM
+"""tdx demo: the generated dataset, the demo card, the synthetic-only LLM
 client, and the command end to end on the synthetic app (browser tests)."""
 
 import json
@@ -122,7 +122,7 @@ def test_the_dataset_gives_the_expected_findings_at_any_time(now: datetime) -> N
     assert counts["event_date_unreadable"] == 0 and counts["internal_requestor"] == 0
     assert counts["event_forms"] == 4 and counts["event_marketing_only"] == 1
     assert counts["event_forms_unreadable"] == 0 and counts["event_no_outreach"] == 1
-    # Payload 22: renamed events within 14 days are read too.
+    # Renamed events within 14 days are read too.
     assert counts["event_in_progress"] == 1 and counts["event_location_missing"] == 1
     assert result.event_form_missing_ids == (1000007, 1000025)
 
@@ -209,7 +209,7 @@ def test_the_demo_client_forces_the_switch_for_synthetic_data_only(
     )
     with pytest.raises(ValueError, match="synthetic data only"):
         client.classify(
-            text, system="s", output=FollowUpAnswer, data_class="drexel", purpose="follow_up"
+            text, system="s", output=FollowUpAnswer, data_class="institutional", purpose="follow_up"
         )
 
     assert len(calls) == 1
@@ -403,7 +403,7 @@ def test_demo_summary_shows_events_duplicates_and_ready_to_close(
     assert [line.split("]")[0] for line in week] == [
         f"[#{ticket_id}" for ticket_id in EXPECTED_WEEK_EVENTS
     ]
-    # One row per state (payload 22), in date order; space and A/V from the form when known.
+    # One row per state, in date order; space and A/V from the form when known.
     assert week[0].endswith("11:00–12:00 · Classroom · A/V: yes · requester replied")
     assert week[1].endswith("18:00–19:00 · — · A/V: — · location missing")
     assert week[2].endswith("15:00 · — · A/V: — · location TBD")

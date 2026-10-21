@@ -1,6 +1,6 @@
 # TDX dashboard page structure
 
-What the reviewed dashboard capture (payload 02, taken 2026-10-08) shows about the IT Tickets dashboard in TDWorkManagement, in structural terms, and why `tdx rows` uses the selectors it does. The capture itself stays out of git; the markup sketches below are written by hand, not copied from it.
+What a reviewed dashboard capture (as of 2026-10-08) shows about the IT Tickets dashboard in TDWorkManagement, in structural terms, and why `tdx rows` uses the selectors it does. The capture itself stays out of git; the markup sketches below are written by hand, not copied from it.
 
 The selectors live in `src/ops_suite/tdx/rows.py` (constants at the top). The synthetic app's pages in `src/ops_suite/tdx/demo/pages/` and the test fixtures in `tests/fixtures/tdx_synthetic/workmgmt/` copy this structure with invented data.
 
@@ -26,12 +26,12 @@ The ticket capture shows the same dashboard frame staying loaded behind an open 
 
 Added after the first live run of `tdx rows` exited 5 with the claimed widget not found.
 
-- **What happened:** the shell opens each person's *homepage* dashboard. On the owner's account that homepage has the Unclaimed widget but not "Claimed by Others". Choosing another dashboard (IT Tickets) happens inside the page: the shell's address stays the same and only the child frame changes. So no top-level address, and no `tdx.dashboard_url` pointing at the shell, reaches the IT Tickets dashboard.
+- **What happened:** the shell opens each person's *homepage* dashboard. On the account the capture was taken with, that homepage has the Unclaimed widget but not "Claimed by Others". Choosing another dashboard (IT Tickets) happens inside the page: the shell's address stays the same and only the child frame changes. So no top-level address, and no `tdx.dashboard_url` pointing at the shell, reaches the IT Tickets dashboard.
 - **What the captures show:** the widgets sit in the child frame with its own path, `/TDWorkManagement/WorkManagement/Dashboard/Dashboard`. The captures drop query strings, so it is not known how that frame's address names the chosen dashboard. It is assumed to be a query parameter or a server-side choice.
 - **`tdx set-dashboard`:**
   - The person opens a dashboard showing both widgets by hand, in a headed, unguarded window, and the tool clicks nothing.
   - The tool then looks through every frame of every open page for **one** frame holding both configured titles, and saves that frame's full address, query included, to `<data>/tdx/dashboard.json`. If several frames qualify, the first one on the most recently opened page wins.
-  - It then opens the address on its own in a new guarded browser and checks that both widgets load and parse. If they do not (the frame may need its shell, or the dashboard choice may be stored server-side), the file is removed and the command exits 5. The fallback, clicking the dashboard switcher, is a later payload.
+  - It then opens the address on its own in a new guarded browser and checks that both widgets load and parse. If they do not (the frame may need its shell, or the dashboard choice may be stored server-side), the file is removed and the command exits 5. A fallback that clicks the dashboard switcher is not built.
 - **Where `tdx rows` starts:** `tdx.dashboard_url` if set, else the saved address, else `tdx.base_url`. The first output line names the source. The widget search is the same in every case: all frames, matched by title.
 - **Privacy:** the saved address is specific to the account. It is shown and logged only as its path with long digit runs masked (`describe_path`), never with its query.
 - **Synthetic stand-in:** the synthetic shell (`src/ops_suite/tdx/demo/pages/shell.html`) starts on a homepage without the claimed widget, and `switchDashboard("d=2")` changes only the child frame's `src`. `d=3` is an IT Tickets frame that renders only inside a parent frame, which covers the failure path.
@@ -86,8 +86,8 @@ The header and the rows are in one table (no separate scrolling header table). A
 ## Rows and cells
 
 - **Data rows:** `tbody tr.k-master-row` (alternate rows add `k-alt k-table-alt-row`). Cells are the row's direct `td` children (`role="gridcell"`); their class was masked in the capture and is not used.
-- **Links:** in both widgets the ID, Title and Requestor cells hold `a.tdx-link.tdx-link--inline-block` with an `href` (masked as `[url]`). The claimed widget also links Acct/Dept and Prim Resp; the unclaimed widget links Acct/Dept. The ticket id is the ID cell's text (`[number]` in the capture); a cell without a plain integer is counted as "row without a ticket id", and more than half such rows on a page stops the run. `detail_url` is the ID cell's link (else the Title cell's), made absolute against the frame URL; `#` and `javascript:` links are ignored. Whether the real link opens the ticket page directly or an in-app tab is not visible in the capture, which is why the link is optional. Payload 04 will check it.
-- **Dates:** shown only as `[datetime]` in the capture. The parser accepts the formats listed in payload 03 (US month/day order, `Fri 10/2/26 3:30 PM` and others) in `tdx.display_timezone`. An unreadable cell is reported only by its shape (each digit `9`, each letter `a`).
+- **Links:** in both widgets the ID, Title and Requestor cells hold `a.tdx-link.tdx-link--inline-block` with an `href` (masked as `[url]`). The claimed widget also links Acct/Dept and Prim Resp; the unclaimed widget links Acct/Dept. The ticket id is the ID cell's text (`[number]` in the capture); a cell without a plain integer is counted as "row without a ticket id", and more than half such rows on a page stops the run. `detail_url` is the ID cell's link (else the Title cell's), made absolute against the frame URL; `#` and `javascript:` links are ignored. Whether the real link opens the ticket page directly or an in-app tab is not visible in the capture, which is why the link is optional: the ticket reader opens `detail_url` when there is one and falls back to `tdx.ticket_url_template`.
+- **Dates:** shown only as `[datetime]` in the capture. The parser accepts several US month/day formats (`Fri 10/2/26 3:30 PM` and others; the list is in `src/ops_suite/tdx/rows.py`) in `tdx.display_timezone`. An unreadable cell is reported only by its shape (each digit `9`, each letter `a`).
 - **Empty widget:** not visible in the capture (both widgets had rows). Kendo's standard empty state is a `tbody` with a `tr.k-grid-norecords` row and no `k-master-row` rows; the parser counts that as zero rows. A `tbody` with rows but none marked `k-master-row` and no "no records" row is a structure error rather than a silent zero.
 
 ## Pager
@@ -124,27 +124,27 @@ Both ticket widgets show a Kendo pager; in the capture each had two numbered pag
 |---|---|---|---|
 | `POST /TDWorkManagement/WorkManagement/Widgets/#` (fetch) | 2 on load | **Allowed** (`BUILT_IN_ALLOWED`) for resource types `fetch` and `xhr` only; the exact masked path, the TDX host only | Loads one dashboard widget's report rows (Kendo grid read); one per widget on load, likely also paging. |
 
-Why it is allowed (architect decision, 2026-10-08):
+Why it is allowed:
 
 - The `#` is the widget's id (a run of digits, masked by the capture tool). Two calls match the two ticket widgets that had finished loading; the third (Closed) widget was still showing its loading animation.
 - The same request appears twice in the group-report and ticket captures too, where the dashboard frame is loaded in the background.
 - Kendo UI's ASP.NET MVC data source sends its "read" (page, page size, sort, filter) as `POST` by default, so a `POST` here is the normal way a Kendo grid reads data, not a write. It is a widget/report endpoint and cannot change a ticket.
 - Without it no widget renders, so `tdx rows` could not work.
 - Limits: only `POST`, only to the TDX host, only script requests (`fetch`/`xhr`). A `document` POST to the same path (a form postback) stays blocked, and so does any longer path (`…/Widgets/#/Something`) or a different case.
-- Every allowed non-GET request is counted and printed (`Allowed non-GET: N`, with a per-path line under `--verbose`). The live check compares that number with "2 on load, plus 1 per page turn"; anything else is a finding for the architect.
+- Every allowed non-GET request is counted and printed (`Allowed non-GET: N`, with a per-path line under `--verbose`). The live check compares that number with "2 on load, plus 1 per page turn"; anything else means the page has changed: review it before changing the allowlist.
 
 All `GET`, `HEAD` and `OPTIONS` requests are allowed to any host (page loads, scripts, styles, images and the sign-in redirect are all reads). Everything else is aborted, and each aborted request is reported as `METHOD /masked/path` with no host, query or fragment.
 
-Not on load but seen in other captures: the group report's `POST /TDNext/Apps/Reporting/ReportBuilder.aspx/GetReportColumns` (not allowed) and the ticket page's `POST /TDNext/Apps/Feed/Search` (allowed since payload 04a; see "Ticket page and feed" below).
+Not on load but seen in other captures: the group report's `POST /TDNext/Apps/Reporting/ReportBuilder.aspx/GetReportColumns` (not allowed) and the ticket page's `POST /TDNext/Apps/Feed/Search` (allowed; see "Ticket page and feed" below).
 
 ## WebSockets and service workers
 
-- The dashboard capture shows no WebSocket or SignalR traffic. The ticket capture loads SignalR (a hub script, plus `negotiate` and `start` calls, all `GET`), so the ticket page opens a WebSocket. Since payload 04c, guarded runs refuse all of SignalR; see "Ticket page and feed", "Live updates (SignalR)".
+- The dashboard capture shows no WebSocket or SignalR traffic. The ticket capture loads SignalR (a hub script, plus `negotiate` and `start` calls, all `GET`), so the ticket page opens a WebSocket. Guarded runs refuse all of SignalR; see "Ticket page and feed", "Live updates (SignalR)".
 - Guarded runs launch with service workers blocked, because a service worker's requests would bypass `context.route`. The capture shows no service worker script.
 
 ## Ticket page and feed
 
-Written from the reviewed ticket capture (taken 2026-10-08). The selectors live in `src/ops_suite/tdx/feed.py` (constants at the top); the synthetic stand-ins are `ticket-shell.html` and `ticket.html` in `src/ops_suite/tdx/demo/pages/`, with the test feeds in `tests/fixtures/tdx_synthetic/workmgmt/feeds/`.
+Written from a reviewed ticket capture (as of 2026-10-08). The selectors live in `src/ops_suite/tdx/feed.py` (constants at the top); the synthetic stand-ins are `ticket-shell.html` and `ticket.html` in `src/ops_suite/tdx/demo/pages/`, with the test feeds in `tests/fixtures/tdx_synthetic/workmgmt/feeds/`.
 
 ### Frames
 
@@ -207,7 +207,7 @@ The ticket page is an ASP.NET form. Above the feed sit the attachments panel (`#
 - **Timestamp:** the first `span` of `.feed-timestamp` in the entry's own `.feed-context`, an absolute date and time (the capture tool recognised it as one), read with `parse_tdx_datetime`. The second `span` (3 words) is most likely a relative age; it is not read.
 - **Comment:** the `.feed-body` child that is none of `.feed-heading`, `.feed-breadcrumbs`, `.feed-context`, `.feed-actions` and `.feed-reply`. Its classes are masked, so it is found by elimination.
 - **"Notified" list:** `.truncate.gray.feed-context`, the addresses as one text plus a button. Present on the 4 visible entries, absent on the private note. It has no timestamp and is skipped.
-- **Replies to an entry:** `.feed-reply` blocks inside the parent's `.feed-body` (2 in the capture). Each has its own `.feed-participant-name` (a direct child), its own comment (with what looks like quoted email history: bold header lines and addresses) and its own timestamp in `.reply-context .feed-timestamp`. This is how email replies thread under the update they answer, so **each `.feed-reply` is read as its own entry**, with its own author and time. It counts as private if its own `.feed-private` marker is rendered, or if its parent's marker is rendered and the reply has no author of its own other than the parent's (payload 04c; it was "any reply under a private note" in 04a). See "Private notes: rendered, not present" below.
+- **Replies to an entry:** `.feed-reply` blocks inside the parent's `.feed-body` (2 in the capture). Each has its own `.feed-participant-name` (a direct child), its own comment (with what looks like quoted email history: bold header lines and addresses) and its own timestamp in `.reply-context .feed-timestamp`. This is how email replies thread under the update they answer, so **each `.feed-reply` is read as its own entry**, with its own author and time. It counts as private if its own `.feed-private` marker is rendered, or if its parent's marker is rendered and the reply has no author of its own other than the parent's (a first version counted any reply under a private note as private). See "Private notes: rendered, not present" below.
 - **Attachments:** not inside entries in the capture; they sit in the separate attachments panel. In case an entry ever carries one, any element inside the comment whose class contains `attachment` is skipped, and so are `blockquote` and elements whose class contains `quote` (quoted email history).
 
 ### Telling the kinds apart
@@ -250,7 +250,7 @@ Added for event request forms, from the same reviewed ticket capture. The descri
 
 - **Container:** `#divDescription .ticket-desc` (both kept unmasked in the capture), falling back to `.ticket-desc`. Its own lines are `div`s, with `br` for blank lines and `b` for bold text. The selectors are `DESCRIPTION_SELECTORS` in `src/ops_suite/tdx/event_form.py`.
 - **How it is read:** only for event request form tickets, after the feed has loaded, with one read-only `frame.evaluate` of the container's `innerText` in the feed frame (the frame's HTML text, one line per block, when the script fails). No extra request: in the capture's request list the description comes with the ticket page's own document (`GET TicketDet.aspx`), and the synthetic tests see no new or blocked request.
-- **What is kept:** the text goes straight to `parse_event_form` and only the `EventForm` (dates, flags, one count) is kept. The capture shows the container's shape only (its text is placeholders), so the form's labels come from the owner's description of the blank form, not from a capture. The live check confirms them; an unreadable form is counted and described by its shape only.
+- **What is kept:** the text goes straight to `parse_event_form` and only the `EventForm` (dates, flags, one count) is kept. The capture shows the container's shape only (its text is placeholders), so the form's labels come from the blank form itself, not from a capture. The live check confirms them; an unreadable form is counted and described by its shape only.
 - **Synthetic stand-in:** `ticket.html` has the same container; the app renders `descriptions/<id>.html` from its page source into it (`tests/fixtures/tdx_synthetic/workmgmt/descriptions/` for the tests, `tdx/demo/dataset.py` for the demo).
 
 ### Requests on the ticket page and the guard's decisions
@@ -264,7 +264,7 @@ The ticket capture's `requests.txt` lists 2 non-GET lines:
 
 Everything else on the ticket page is `GET`: the page itself, scripts and styles (the feed app and SignalR's hub script among them), and SignalR's `negotiate` and `start` calls.
 
-### Private notes: rendered, not present (payload 04c)
+### Private notes: rendered, not present
 
 The first live run read exactly as many private entries as visible ones (48 and 48), and 7 of 14 "client waiting" findings said "no reply yet". The suspicion: the live page carries `span.feed-private` on entries where it is not shown, which a skeleton cannot reveal, because the capture tool drops `style` and `hidden`.
 
@@ -272,9 +272,9 @@ The first live run read exactly as many private entries as visible ones (48 and 
 
 - In `read_feeds`, once the feed has settled, one read-only `frame.evaluate` in the feed frame returns, in document order, whether each `.feed-private` element is rendered: it has a layout box (`getClientRects`) and its computed `visibility` is `visible`. A marker hidden by `display: none` anywhere up the tree, by the `hidden` attribute or by `visibility: hidden` counts as not shown. The script reads nothing else and changes nothing.
 - `parse_feed(..., private_marker_visible=...)` maps those flags onto the markers in the HTML. If the counts differ (the page changed in between), or the feed's entries have no layout at all (a hidden tab), it falls back to "present counts" for that feed and counts a **visibility fallback**. Fixture tests without a browser pass no list and get the old presence rule.
-- `--verbose` prints one line of counts for the owner's check, for example `Entry markers: 97 entries, 31 nested; private marker present on 96, visible on 12; inherited-private 3; merge notes 2; reassignments 1; signature desk replies 14; visibility fallback 0.` "Present on" close to "entries" with "visible on" much lower confirms the hidden-marker theory.
+- `--verbose` prints one line of counts for your own check, for example `Entry markers: 97 entries, 31 nested; private marker present on 96, visible on 12; inherited-private 3; merge notes 2; reassignments 1; signature desk replies 14; visibility fallback 0.` "Present on" close to "entries" with "visible on" much lower confirms the hidden-marker theory.
 
-### Entry types: no structural marker in the capture (payload 04c)
+### Entry types: no structural marker in the capture
 
 The feed's filter form offers three checkboxes whose labels have the word counts of "Edits", "Status Changes" and "Comments" (1, 2 and 1 words). The question was whether entries carry a matching type class or attribute that would tell a system entry from a comment without reading text. The capture cannot show one:
 
@@ -283,24 +283,24 @@ The feed's filter form offers three checkboxes whose labels have the word counts
 
 So the reader stays with text: the fixed TDX phrases above and the field-change line. A later capture could settle this if the capture tool recorded, structure only, whether entries differ in their class or `data-*` attributes.
 
-### Merged tickets and reassignments (payload 04c addenda)
+### Merged tickets and reassignments
 
-The owner's spot-check found that many private entries come from merging tickets: a merge notice, and entries carried over from the merged ticket. The capture has none.
+A spot-check of live tickets found that many private entries come from merging tickets: a merge notice, and entries carried over from the merged ticket. The capture has none.
 
-- **The fixed wording**, as the owner reported it from live tickets (interface text only; `X` stands for ticket data):
+- **The fixed wording**, as it appears on live tickets (interface text only; `X` stands for ticket data):
   - merge notice: `Merged incident X (X, originally created by X):`, followed by the merged ticket's carried-over text, a whole email thread with quoted `From:`/`Sent:`/`To:`/`Subject:` blocks and signatures;
   - reassignment: `Reassigned this incident from X to X.`, followed by a `Notified: X <X>` line.
 
-  On one ticket the owner checked, all 4 private entries were 3 merge notices and 1 reassignment, so these probably explain much of the first run's 48/48 split.
+  On one ticket checked, all 4 private entries were 3 merge notices and 1 reassignment, so these probably explain much of the first run's 48/48 split.
 - The phrases are in `feed.MERGE_NOTE_PREFIXES` (`"Merged incident"`) and `feed.SYSTEM_NOTE_PREFIXES` (`"Reassigned this incident from"`). They are matched case-insensitively at the start of the entry's **own** comment text, after trimming and with quoted history (`blockquote`, quote classes) and attachments left out, so a phrase inside a quoted or carried-over message never counts. Both give `system`, whatever the private marker says.
-- **A merge notice is one entry.** The carried-over thread is text inside the notice's comment, and the reader only ever makes entries from `role="group"` blocks and `.feed-reply` blocks, so `From:`/`Sent:` blocks inside it are never split off. The notice's author is passed on as a desk member (`TicketFeed.desk_authors`), as for a private note; so is a reassignment's author (architect decision: only staff can reassign).
+- **A merge notice is one entry.** The carried-over thread is text inside the notice's comment, and the reader only ever makes entries from `role="group"` blocks and `.feed-reply` blocks, so `From:`/`Sent:` blocks inside it are never split off. The notice's author is passed on as a desk member (`TicketFeed.desk_authors`), as for a private note; so is a reassignment's author (only staff can reassign).
 - The diagnostic counts them as "merge notes" and "reassignments" in the `Entry markers:` line.
 - **Carried-over entries** keep their own kind, author and timestamp; newest-first order puts them where they belong. A carried-over reply from a different client gives "needs review" through the normal "someone else" path.
 
-### Live updates (SignalR), decided in payloads 04a and 04c
+### Live updates (SignalR)
 
 - The ticket page loads SignalR 2.4 (`/TDSignalR/signalr/hubs`) for live feed updates. Its `negotiate` and `start` calls are `GET`s. The WebSocket it opens between them is not in `requests.txt`, because the capture tool lists HTTP requests only.
 - **Guarded runs refuse all of SignalR:** every request whose masked path starts with `/TDSignalR/` is aborted, `GET` included, and every WebSocket is closed before it connects (`context.route_web_socket`). A read-only audit has no use for live updates.
-- In 04a only the WebSocket was closed. SignalR then fell back to long polling, and the first live run showed 15 to 17 of its posts as "blocked" requests. Now SignalR never gets that far.
+- An earlier version closed only the WebSocket. SignalR then fell back to long polling, and the first live run showed 15 to 17 of its posts as "blocked" requests. Now SignalR never gets that far.
 - These are counted together as **live updates** (`WS /masked/path` and `GET /TDSignalR/...` lines, no host, no query), **not** among the blocked requests. `tdx audit` prints "Live updates blocked: N" next to "Blocked requests", so a non-zero "Blocked requests" again means that something the page asked for, other than live updates, was stopped.
 - The synthetic ticket pages load SignalR's hub script, call `negotiate` and open a WebSocket; with all three refused, the feed still loads, because it comes from `Feed/Search`. Whether the real feed app waits for SignalR before it searches is for the live check: if it did, every feed would time out and the run would stop with exit 5 after three tickets.

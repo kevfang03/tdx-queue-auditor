@@ -5,22 +5,22 @@ The webhook URL is a secret (anyone holding it can post to the chat): it lives o
 carry an HTTP status and a short reason code only, never the URL and never the response body,
 which can echo the card. The card itself is never logged.
 
-The request body is the shape verified on 2026-10-16 (docs/ARCHITECTURE.md, "Teams client"):
+The request body is the shape a Workflows webhook accepted in a live test (as of 2026-10-16):
 ``{"type": "message", "attachments": [{"contentType": <adaptive>, "content": card}]}``, plus a
 ``"summary"`` that repeats the card's counts-only ``fallbackText``, for previews and banners
 where Teams cannot render the card.
 
-Two named destinations (docs/ARCHITECTURE.md, "Desk channel mode"): ``personal``, the
+Two named destinations: ``personal``, the
 person's own chat, and ``desk``, the desk's shared chat. Each has its own keyring entry; the
 personal one keeps the name it always had, so nobody saves their webhook again.
 
-Mentions (payload 14) follow Microsoft's documented Adaptive Card format for Teams ("Format
+Mentions follow Microsoft's documented Adaptive Card format for Teams ("Format
 cards in Microsoft Teams", "User mention in Incoming Webhook with Adaptive Cards", checked
 2026-10-19): an ``<at>Name</at>`` run in a TextBlock and, under the card's ``msteams``, an
 ``entities`` list of ``{"type": "mention", "text": "<at>Name</at>", "mentioned": {"id": <UPN>,
 "name": Name}}``, where ``text`` matches the run exactly. Microsoft documents no "everyone"
 mention for cards (only for a Graph message posted as a user), so ``everyone`` is a candidate
-that the owner tests live (docs/USAGE.md, "Shift summaries").
+to test live in your own chat first (docs/USAGE.md, "Shift summaries").
 """
 
 import copy
@@ -59,7 +59,7 @@ RETRY_AFTER_CAP_SECONDS = 30
 RETRY_DEFAULT_SECONDS = 5
 TEST_CARD_FALLBACK = "ops-suite: test card"
 # The undocumented "everyone" candidate: the documented entity shape with a fixed id. Kept only
-# if the owner's synthetic test shows that it notifies the group chat.
+# if a synthetic test in your own chat shows that it notifies the group chat.
 EVERYONE_NAME = "Everyone"
 EVERYONE_ID = "everyone"
 SET_WEBHOOK_HINT = f'Teams: not sent; run "{RUN} teams set-webhook" first.'

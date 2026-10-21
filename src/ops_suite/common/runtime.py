@@ -3,9 +3,9 @@ r"""Checks on the Python interpreter the tool runs on.
 The Microsoft Store build of Python gets a private copy of ``%LOCALAPPDATA%`` from Windows: a
 folder that Python creates there lands in
 ``...\Packages\PythonSoftwareFoundation.Python...\LocalCache\Local``, where Python still sees it
-but other programs (the Startup script's cmd, Explorer, the project's Claude deny rule) do not.
+but other programs (the Startup script's cmd, Explorer, folder access rules) do not.
 For this tool that hidden copy holds the browser profile with the TDX session cookies, so live
-commands refuse to run on it (payload 20); ``uv sync`` builds the venv on a uv-managed Python.
+commands refuse to run on it; ``uv sync`` builds the venv on a uv-managed Python.
 """
 
 import sys

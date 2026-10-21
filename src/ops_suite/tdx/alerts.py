@@ -1,20 +1,20 @@
 """Which audit findings go on the Teams card, the state that remembers what was sent, and
 the card itself. Pure, apart from ``AlertState`` reading and writing its file.
 
-The rules are in docs/ARCHITECTURE.md (Module 3, "Payload 05 decisions") and in plain language
-in docs/tdx-rules.md: alert once per ticket and finding kind, then again every
-``realert_days`` (or ``old_realert_days`` once the finding is ``old_finding_days`` old) while
-it stays open. A finding that is gone from a ticket judged this run, or from a queue read in
-full, deletes its record. The state is recorded only after a successful post.
+The rules are in plain language in docs/tdx-rules.md: alert once per ticket and finding kind,
+then again every ``realert_days`` (or ``old_realert_days`` once the finding is
+``old_finding_days`` old) while it stays open. A finding that is gone from a ticket judged this
+run, or from a queue read in full, deletes its record. The state is recorded only after a
+successful post.
 
-The shift summary (payload 14, ``build_summary_card``) lists **all** open findings at a
-configured time, marks the new ones, and may mention people. Payload 16 adds the "Events this
-week" section first, "(possible duplicate of #<id>)" on rows, and "Ready to close" last. "Ready
-to close" findings stay out of the alert cards and the alert state unless
-``alert_ready_to_close`` (``alertable``). Payload 17: the day's first summary posted is that
-full card; later slots post a delta (``fit_delta_card``: new findings and due reminders as
-rows, cleared ones as a count). ``SummaryState`` remembers the last slot dealt with, the last
-one posted and the (ticket id, kind) set open at that post; ``summary_change`` compares.
+The shift summary (``build_summary_card``) lists **all** open findings at a configured time,
+marks the new ones, and may mention people. It shows the "Events this week" section first,
+"(possible duplicate of #<id>)" on rows, and "Ready to close" last. "Ready to close" findings
+stay out of the alert cards and the alert state unless ``alert_ready_to_close``
+(``alertable``). The day's first summary posted is that full card; later slots post a delta
+(``fit_delta_card``: new findings and due reminders as rows, cleared ones as a count).
+``SummaryState`` remembers the last slot dealt with, the last one posted and the (ticket id,
+kind) set open at that post; ``summary_change`` compares.
 
 Personal data rule: the card body is the only place a ticket title goes, and only with
 ``show_titles`` (on for the personal chat, off for the desk chat by default, because titles
@@ -71,13 +71,13 @@ SECTION_LABELS: dict[str, str] = {
 EVENTS_SECTION_LABEL = "Events this week"
 _PRIORITY_ORDER = {"high": 0, "normal": 1, "low": 2}
 # (kind, reason) -> wording; a reason of None matches any reason of that kind. ``{age}`` is
-# the finding's age, ``{days}`` the time until the event (event outreach, payload 10) and
+# the finding's age, ``{days}`` the time until the event (event outreach) and
 # ``{when}`` the same as "in 5 days" and ``{wrote}`` the time since the requester's latest
-# entry (payload 22). The event outreach rows are a fixed checklist, never a drafted reply.
+# entry. The event outreach rows are a fixed checklist, never a drafted reply.
 WORDING: dict[tuple[str, str | None], str] = {
     ("client_waiting", "requestor_last"): "Requestor wrote last {age} ago: reply or check in",
     ("client_waiting", "no_reply_yet"): "No reply yet, opened {age} ago",
-    # The follow-up classifier's verdicts (payload 06b); "unsure" keeps requestor_last.
+    # The follow-up classifier's verdicts; "unsure" keeps requestor_last.
     ("client_waiting", "expects_reply"): "Requestor is waiting for a reply, {age}",
     ("client_waiting", "event_requester_replied"): (
         "Event {when}: requester replied {age} ago: process and confirm"
@@ -547,7 +547,7 @@ def build_card(
     )[1]
 
 
-# --- shift summary (payload 14) ----------------------------------------------------------
+# --- shift summary ----------------------------------------------------------------------
 
 
 _SUMMARY_SCHEMA = 2
@@ -560,7 +560,7 @@ class SummaryState:
 
     ``last_slot`` is the last slot dealt with (posted, or skipped because nothing changed);
     ``last_posted`` the last slot actually posted, which a delta counts "since"; ``open`` the
-    alertable findings open at that post (payload 17). A schema 1 file (``last_slot`` only)
+    alertable findings open at that post. A schema 1 file (``last_slot`` only)
     keeps its slot and has no post, so the next slot posted is full. An unreadable file is
     moved aside to ``.bad`` and the state starts empty, so the current slot may be posted once
     more, in full: the safe failure.
@@ -647,7 +647,7 @@ def _state_key(text: str) -> StateKey:
 
 @dataclass(frozen=True, slots=True)
 class SummaryChange:
-    """How the open findings changed since the last summary post (payload 17)."""
+    """How the open findings changed since the last summary post."""
 
     new: frozenset[StateKey]  # open now, not open at the last post
     cleared: frozenset[StateKey]  # open at the last post and really gone now
@@ -974,7 +974,7 @@ def build_summary_card(
     )[1]
 
 
-# --- delta summary (payload 17) ----------------------------------------------------------
+# --- delta summary ----------------------------------------------------------------------
 
 
 def fit_delta_card(

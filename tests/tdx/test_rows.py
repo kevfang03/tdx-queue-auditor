@@ -290,8 +290,7 @@ def test_unreadable_cells_give_none(text: str) -> None:
 
 
 def test_date_shape() -> None:
-    # Each digit becomes 9. (Payload 03's example "aaa 9/9/99 9:99 aa" drops a digit of the
-    # month; the rule it states, one 9 per digit, is what is implemented.)
+    # Each digit becomes 9, one 9 per digit, so a two-digit month stays two digits wide.
     assert date_shape("Fri 10/2/26 3:30 PM") == "aaa 99/9/99 9:99 aa"
     assert date_shape("Fri 9/2/26 3:30 PM") == "aaa 9/9/99 9:99 aa"
     assert date_shape("Yesterday\n 4:12 PM") == "aaaaaaaaa 9:99 aa"

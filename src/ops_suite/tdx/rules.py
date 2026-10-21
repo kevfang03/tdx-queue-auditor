@@ -1,19 +1,18 @@
 """The stale rules: dashboard rows and ticket feeds in, findings out. Pure functions.
 
-The rules are in docs/ARCHITECTURE.md (Module 3, "Stale rules, revised 2026-10-08 after the
-first live audit") and in plain language in docs/tdx-rules.md. Only the desk's unclaimed queue
+The rules are in plain language in docs/tdx-rules.md. Only the desk's unclaimed queue
 is audited: ``plan_feeds`` picks the unclaimed, non-event tickets old enough to need their
 feed, and ``evaluate`` settles every row from the grid plus those feeds. Claimed tickets (the
 full-timers') are only counted. No browser, network, config or LLM here.
 
-Event request forms (payload 10): unclaimed tickets still titled like the form
+Event request forms: unclaimed tickets still titled like the form
 (``RuleSettings.form_titles``) always get their page read, and ``evaluate`` judges them from
 the parsed form (``tdx/event_form.py``) and the feed with the outreach rules instead of the
-client-waiting rule. Payload 22: renamed ``EVENT [...]`` tickets whose next date is within
+client-waiting rule. Renamed ``EVENT [...]`` tickets whose next date is within
 ``outreach_days`` get their page read too, since the desk renames at first handling, and
 every such event's state comes from who wrote last on the feed (``event_status``).
 
-``apply_verdicts`` (payload 06b) takes the follow-up classifier's verdicts on
+``apply_verdicts`` takes the follow-up classifier's verdicts on
 "requestor wrote last" findings; it is pure too, and the LLM step itself lives in
 ``tdx/followup.py``.
 
@@ -46,7 +45,7 @@ FindingKind = Literal[
     "ready_to_close",
 ]
 Priority = Literal["high", "normal", "low"]
-# The follow-up classifier's answer about a requestor's latest reply (payload 06b).
+# The follow-up classifier's answer about a requestor's latest reply.
 Verdict = Literal["expects_reply", "client_will_follow_up", "no_reply_needed", "unsure"]
 VERDICTS: tuple[Verdict, ...] = get_args(Verdict)
 
@@ -109,7 +108,7 @@ class RuleSettings:
     outreach_days: int = 14
     details_pending_days: int = 7
     urgent_days: int = 3
-    # An event this close raises its feed-state finding at once, at high priority (payload 22).
+    # An event this close raises its feed-state finding at once, at high priority.
     near_event_days: int = 2
     # Desk replied last this many days ago or more, client silent since: ready to close.
     close_after_days: int = 3
@@ -137,14 +136,14 @@ class Finding:
     priority: Priority
     reason: str  # a code from the rules table, never free text
     age_hours: int | None  # whole hours waiting / since the event / until the event
-    # Event outreach findings: whole hours until the next event date (payload 10).
+    # Event outreach findings: whole hours until the next event date.
     event_in_hours: int | None = None
-    # Outreach due when the requester also wrote last (payload 22 review): whole hours since
+    # Outreach due when the requester also wrote last: whole hours since
     # the requester's latest entry, shown on the one outreach row.
     requester_hours: int | None = None
 
 
-# Who wrote last on an upcoming event ticket (payload 22), from the visible entries only.
+# Who wrote last on an upcoming event ticket, from the visible entries only.
 EventFeedState = Literal[
     "no_outreach_yet", "waiting_on_requester", "requester_replied", "in_progress"
 ]
@@ -175,7 +174,7 @@ class AuditResult:
     event_date_unreadable_ids: tuple[int, ...] = ()
     # Event request forms that could not be read, ascending; listed the same way.
     event_form_unreadable_ids: tuple[int, ...] = ()
-    # Renamed event tickets whose page was read but held no form (payload 22), ascending.
+    # Renamed event tickets whose page was read but held no form, ascending.
     event_form_missing_ids: tuple[int, ...] = ()
     # The feed state of each upcoming event whose page was read and that needs outreach (or
     # whose services are unknown), by ticket id; for the summary's "Events this week".
@@ -229,14 +228,14 @@ def is_form_title(title: str, form_titles: Sequence[str]) -> bool:
 
 
 def is_form_ticket(row: TicketRow, rules: RuleSettings) -> bool:
-    """An unclaimed ticket still titled like the event request form (payload 10)."""
+    """An unclaimed ticket still titled like the event request form."""
     return row.widget == "unclaimed" and is_form_title(row.title, rules.form_titles)
 
 
 def _next_title_date(
     row: TicketRow, now: datetime, rules: RuleSettings, tz: ZoneInfo
 ) -> datetime | None:
-    """For an unclaimed, non-recurring renamed event ticket (payload 22): its next date when
+    """For an unclaimed, non-recurring renamed event ticket: its next date when
     that is 0 to ``outreach_days`` days away, else None. Its page is read for that."""
     if row.widget != "unclaimed" or not is_event_title(row.title):
         return None
@@ -374,7 +373,7 @@ def strong_desk_names(rows: Iterable[TicketRow], feeds: Mapping[int, TicketFeed]
 
     Prim Resp names of claimed rows, authors of private notes (only staff can write those)
     and the feed's own ``desk_authors`` (merge notices, reassignments and replies signed with
-    a desk signature, payload 18). These are the names the local
+    a desk signature). These are the names the local
     desk-member memory may keep; the 2+-tickets guess and extra_staff_names are not here.
     """
     desk = _People()
@@ -424,8 +423,8 @@ def evaluate(
 ) -> AuditResult:
     """Apply the stale rules to every row. See docs/tdx-rules.md for the table.
 
-    ``forms``: the parsed event request forms by ticket id (payload 10), renamed event
-    tickets' included (payload 22). A form ticket whose page was read but has no entry here
+    ``forms``: the parsed event request forms by ticket id, renamed event tickets'
+    included. A form ticket whose page was read but has no entry here
     counts as an unreadable form; a renamed one, as ``event_form_missing``.
 
     ``known_desk``: an extra test for desk staff, such as the local desk-member memory. An
@@ -486,7 +485,7 @@ def evaluate(
         states[row.ticket_id] = status
         since = _hours(status.since, now) if status.since is not None else None
         # Whatever the services and whether or not the desk has replied yet: the requester
-        # wrote last, so the desk owes a reply, as on any ticket (payload 22 review).
+        # wrote last, so the desk owes a reply, as on any ticket.
         visible = [entry for entry in feed.entries if entry.kind == "reply"]
         latest = visible[0] if visible else None
         replied = latest is not None and (
@@ -702,7 +701,7 @@ def _finding_order(finding: Finding) -> tuple[int, int, int, int, int]:
     )
 
 
-# --- the follow-up verdicts (payload 06b) ------------------------------------------------
+# --- the follow-up verdicts --------------------------------------------------------------
 
 # verdict -> (kind, priority, reason); "unsure" is absent: it leaves the finding unchanged.
 _VERDICT_FINDINGS: dict[Verdict, tuple[FindingKind, Priority, str]] = {

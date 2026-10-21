@@ -8,7 +8,7 @@ parser in ``tdx/feed.py``, together with one read-only ``frame.evaluate`` that r
 markers the browser actually renders. The page is closed after reading, and the next ticket
 waits ``tdx.feed_delay_seconds``.
 
-Event request forms (payload 10): for the tickets in ``form_ticket_ids``, one more read-only
+Event request forms: for the tickets in ``form_ticket_ids``, one more read-only
 ``frame.evaluate`` returns the description container's ``innerText`` from the same frame
 (the HTML's text when that fails). It goes straight to ``parse_event_form``, and only the
 ``EventForm`` is kept; the description is part of the server-rendered page, so no extra
@@ -91,7 +91,7 @@ class FeedRead:
     live_updates_blocked: tuple[str, ...] = ()
     # feed.MARKER_STAT_KEYS summed over the feeds read, plus tickets.py's own fallbacks.
     marker_stats: Mapping[str, int] = field(default_factory=empty_marker_stats)
-    # The parsed event request forms of the form tickets whose page was read (payload 10);
+    # The parsed event request forms of the form tickets whose page was read;
     # a read page with no readable form has no entry. Flags and dates only, never text.
     forms: dict[int, EventForm] = field(default_factory=dict)
 

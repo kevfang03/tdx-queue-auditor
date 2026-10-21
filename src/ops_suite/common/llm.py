@@ -1,10 +1,10 @@
 """The LLM client: every Claude API call in the suite goes through ``LlmClient.classify``.
 
-What it adds around the official ``anthropic`` SDK (docs/ARCHITECTURE.md, "Payload 06 design"):
+What it adds around the official ``anthropic`` SDK:
 
 - It accepts only ``ScrubbedText``, which only the scrubber can build.
-- Checks before any network: ``llm.enabled``, the Drexel-data gate, the daily token budget and
-  the API key. Each failure is an ``LlmUnavailable`` with a reason code.
+- Checks before any network: ``llm.enabled``, the institutional-data gate, the daily token
+  budget and the API key. Each failure is an ``LlmUnavailable`` with a reason code.
 - Structured output from a pydantic model, effort from config, and the system prompt as one
   cached block.
 - TLS verified against the operating system's trust store through ``truststore`` ("TLS on the
@@ -52,7 +52,7 @@ CACHE_READ_BUDGET_WEIGHT = 0.1
 # A 5-minute cache write costs 1.25x the input price.
 CACHE_WRITE_PRICE_FACTOR = 1.25
 MAX_RETRIES = 2
-DATA_CLASSES: tuple[DataClass, ...] = ("synthetic", "personal", "drexel")
+DATA_CLASSES: tuple[DataClass, ...] = ("synthetic", "personal", "institutional")
 
 _SCHEMA = 1
 
@@ -291,7 +291,7 @@ class LlmClient:
             raise ValueError("unknown data class")
         if not (self._llm.enabled or force_enabled):
             raise LlmUnavailable("disabled")
-        if data_class == "drexel" and not self._llm.allow_drexel_data:
+        if data_class == "institutional" and not self._llm.allow_institutional_data:
             raise LlmUnavailable("gate")
         if self.used_today().budget_tokens >= self._llm.daily_token_budget:
             raise LlmUnavailable("budget")
@@ -313,7 +313,7 @@ class LlmClient:
 
         ``purpose`` is a short code for the log ("follow_up", "llm_test"); ``ref`` is e.g. a
         ticket id. ``force_enabled`` skips only the ``llm.enabled`` check, for ``llm test``
-        and the synthetic eval; the Drexel-data gate still applies.
+        and the synthetic eval; the institutional-data gate still applies.
 
         TypeError unless ``text`` is a ScrubbedText. LlmUnavailable when no call was made,
         LlmFailed when the call failed or its output did not parse.

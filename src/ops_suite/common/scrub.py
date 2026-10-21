@@ -1,8 +1,8 @@
 """The scrubber: the only way to turn raw text into text the LLM client accepts.
 
 Every LLM call takes a ``ScrubbedText``, and only ``scrub()`` can build one, so "scrub before
-every call" is enforced by the types, not by convention (docs/ARCHITECTURE.md, "Payload 06
-design").
+every call" is enforced by the types, not by convention: a forgotten scrub is a TypeError,
+not a leak.
 
 The rules, in order:
 
@@ -28,7 +28,7 @@ from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import Literal
 
-DataClass = Literal["synthetic", "personal", "drexel"]
+DataClass = Literal["synthetic", "personal", "institutional"]
 
 # The counted kinds, in the order they are reported.
 KINDS = ("name", "email", "phone", "id", "user", "url")

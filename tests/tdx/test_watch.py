@@ -120,7 +120,7 @@ def settings() -> Settings:
     return Settings(tdx={"base_url": "https://tdx.example.edu/TDNext/"})
 
 
-# --- the follow-up step (payload 06b) -----------------------------------------------------
+# --- the follow-up step -------------------------------------------------------------------
 
 
 class NoClient:
@@ -133,7 +133,7 @@ def test_follow_up_is_off_without_building_a_client(
     monkeypatch: pytest.MonkeyPatch, enabled: bool, use_llm: bool
 ) -> None:
     monkeypatch.setattr(watch_module, "LlmClient", NoClient)
-    settings = Settings(llm={"enabled": enabled, "allow_drexel_data": True})
+    settings = Settings(llm={"enabled": enabled, "allow_institutional_data": True})
     run = make_run([waiting(101), waiting(102)])
 
     result, outcome, today = watch_module.follow_up(
@@ -145,7 +145,7 @@ def test_follow_up_is_off_without_building_a_client(
     assert today is None
 
 
-def test_follow_up_runs_as_drexel_and_protects_failed_and_deferred_feeds(
+def test_follow_up_runs_as_institutional_and_protects_failed_and_deferred_feeds(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     seen: dict[str, object] = {}
@@ -172,7 +172,7 @@ def test_follow_up_runs_as_drexel_and_protects_failed_and_deferred_feeds(
         settings, run.result, run.rows, feeds, rules, RUN_TIME, use_llm=True
     )
 
-    assert seen["data_class"] == "drexel"
+    assert seen["data_class"] == "institutional"
     assert seen["protect"] == [102, 103]
     assert seen["desk_names"] == ["Morgan Fixture"]
     assert seen["max_input_chars"] == settings.llm.max_input_chars
@@ -888,7 +888,7 @@ def test_the_notifier_posts_a_plain_card_and_only_logs_failures(
     assert poster.cards[0]["fallbackText"] == "ops-suite: TDX auditor notice"
 
 
-# --- the desk destination (payload 09) ------------------------------------------------------
+# --- the desk destination -------------------------------------------------------------------
 
 DESK_WEBHOOK = "https://prod-02.westus.logic.azure.com/workflows/desk/invoke?sig=SIGSECRET43"
 
@@ -1091,7 +1091,7 @@ def test_notices_go_to_the_personal_webhook_only(
     assert urls == [WEBHOOK]
 
 
-# --- shift summaries (payload 14) --------------------------------------------------------
+# --- shift summaries ---------------------------------------------------------------------
 
 
 def summary_settings(**summary: object) -> Settings:
@@ -1321,7 +1321,7 @@ def test_summaries_for_another_chat_are_not_sent_by_this_watch(
     assert "this watch posts to the personal chat, so it sends none." in capsys.readouterr().out
 
 
-# --- ready to close, duplicates and events this week (payload 16) ------------------------
+# --- ready to close, duplicates and events this week -------------------------------------
 
 SUMMARY_RUN_TIME = at(10, 19, 7, 31)  # a Monday
 
@@ -1432,7 +1432,7 @@ def test_the_summary_draft_adds_events_and_duplicates_from_the_run(
         assert secret not in text
 
 
-# --- the desk gets summaries only: full, then deltas (payload 17) --------------------------
+# --- the desk gets summaries only: full, then deltas ---------------------------------------
 
 EVENT_TITLE = "EVENT [10/21 2:00 PM - 4:00 PM Room 210] Alumni panel"
 

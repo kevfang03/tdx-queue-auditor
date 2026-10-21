@@ -1245,7 +1245,7 @@ def test_tdx_audit_verbose_adds_shapes_and_paths(
     ]
 
 
-# --- the desk-member memory (payload 05d) ------------------------------------------------
+# --- the desk-member memory --------------------------------------------------------------
 
 ASSISTANT = "Quinn Samplehelper"
 MEMORY_INVENTED = [*AUDIT_INVENTED, ASSISTANT, "Quinn", "Samplehelper"]
@@ -1756,9 +1756,9 @@ def test_tdx_audit_verbose_progress_is_line_mode_on_a_terminal(
     assert "\r" not in capsys.readouterr().err
 
 
-# --- the follow-up classifier in tdx audit / watch, and llm eval (payload 06b) ------------
+# --- the follow-up classifier in tdx audit / watch, and llm eval --------------------------
 
-LLM_ON = {"OPS_SUITE_LLM__ENABLED": "true", "OPS_SUITE_LLM__ALLOW_DREXEL_DATA": "true"}
+LLM_ON = {"OPS_SUITE_LLM__ENABLED": "true", "OPS_SUITE_LLM__ALLOW_INSTITUTIONAL_DATA": "true"}
 
 
 class FakeLlmClient:
@@ -1830,7 +1830,7 @@ def test_tdx_audit_with_the_llm_changes_the_finding_and_prints_counts_only(
     ]
     assert "  follow_up_with_client  4410001  client_follow_up  73h" in out
     (call,) = fake_llm.instances[0].calls
-    assert call["data_class"] == "drexel"  # hard-coded for the live queue
+    assert call["data_class"] == "institutional"  # hard-coded for the live queue
     assert call["purpose"] == "follow_up" and call["ref"] == "4410001"
     # Scrubbed, with the sign-off stripped: no name or address is sent.
     assert call["text"] == (
@@ -1892,7 +1892,7 @@ def test_the_closed_gate_shows_as_a_skip_and_changes_nothing_else(
     tmp_path: Path, rows_env: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     # The real client: the gate stops it before the key or the network are looked at.
-    _llm_env(rows_env, OPS_SUITE_LLM__ALLOW_DREXEL_DATA="false")
+    _llm_env(rows_env, OPS_SUITE_LLM__ALLOW_INSTITUTIONAL_DATA="false")
     _audit_env(rows_env)
 
     assert main(["tdx", "audit"]) == 0
@@ -2055,7 +2055,7 @@ def test_llm_eval_exits_7_when_the_budget_is_spent(
     assert "LLM eval: stopped (budget)." in capsys.readouterr().err
 
 
-# --- the desk chat (payload 09) -------------------------------------------------------------
+# --- the desk chat --------------------------------------------------------------------------
 
 DESK_WEBHOOK = WEBHOOK.replace("prod-01", "prod-09").replace("SIGSECRET42", "SIGSECRET42DESK")
 
@@ -2505,7 +2505,7 @@ def test_tdx_agent_status_and_uninstall(
     assert capsys.readouterr().out == "No start-at-login agent is installed.\n"
 
 
-# --- shift summaries and mentions (payload 14) -------------------------------------------
+# --- shift summaries and mentions --------------------------------------------------------
 
 MENTION_ADDRESS = "mf123@example.edu"
 
@@ -2626,10 +2626,10 @@ def test_a_summary_time_outside_desk_hours_is_a_config_problem(
     )
 
 
-# --- unattended Windows and the session lifetime (payload 15) ----------------------------
+# --- unattended Windows and the session lifetime -----------------------------------------
 
 WIN_UV = r"C:\Users\Desk Owner\.local\bin\uv.exe"
-WIN_REPO = PureWindowsPath(r"C:\Users\Desk Owner\Documents\enterprise-ai-ops-suite")
+WIN_REPO = PureWindowsPath(r"C:\Users\Desk Owner\Documents\tdx-queue-auditor")
 
 
 class FakeTasklist:
@@ -2750,7 +2750,7 @@ def test_tdx_agent_status_on_windows_warns_when_the_loop_wrote_no_log(
     win_agent: WindowsStartup,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    # The owner's case (payload 19): installed, but no watch.out.log, because cmd could not
+    # A case seen on a real PC: installed, but no watch.out.log, because cmd could not
     # append to a log in a missing folder (a missing folder has no log either).
     cli.set_webhook_url(WEBHOOK, [".logic.azure.com"])
     assert main(["tdx", "agent", "install"]) == 0
@@ -2881,7 +2881,7 @@ def test_tdx_watch_keeps_the_computer_awake_while_it_runs(
     assert events == ["awake", "watch", "released"]
 
 
-# --- the Microsoft Store Python (payload 20) -------------------------------------------------
+# --- the Microsoft Store Python --------------------------------------------------------------
 
 STORE_EXECUTABLE = (
     r"C:\Users\owner\AppData\Local\Microsoft\WindowsApps"

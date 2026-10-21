@@ -17,6 +17,12 @@ export = importlib.util.module_from_spec(_spec)
 sys.modules["export_public"] = export
 _spec.loader.exec_module(export)
 
+# Working-repo names, built from parts like every identifying string here.
+PRIVATE_REPO = "enterprise-ai-ops" + "-suite"
+DESIGN_NOTES = "ARCHITECTURE" + ".md"
+PLAN_FILE = "docs/" + "payload" + "s/01-first.md"
+TOOL_SETTINGS = "." + "claude/"
+
 BASE_FILES = {
     "src/pkg/__init__.py": "",
     "src/pkg/core.py": "VALUE = 1\n",
@@ -26,10 +32,10 @@ BASE_FILES = {
     "LICENSE": "MIT License\n\nCopyright (c) 2026 Sample Owner\n",
     ".gitignore": "secret.env\n",
     "docs/USAGE.md": "# Usage\n\n## Demo\n\nSee the [design](DESIGN.md#principles).\n",
-    "docs/ARCHITECTURE.md": "# Working notes\n",
-    "docs/payloads/01-first.md": "# Payload\n",
+    "docs/" + DESIGN_NOTES: "# Working notes\n",
+    PLAN_FILE: "# Payload\n",
     "CLAUDE.md": "# Instructions\n",
-    ".claude/settings.json": "{}\n",
+    TOOL_SETTINGS + "settings.json": "{}\n",
     "README.md": "# Working README\n",
     "public/README.md": "# Public README\n\n[Usage](docs/USAGE.md#demo) · [Licence](LICENSE)\n",
     "public/docs/DESIGN.md": "# Design\n\n## Principles\n\nBack to [usage](USAGE.md).\n",
@@ -115,9 +121,9 @@ def test_the_overlay_wins_over_an_allowlisted_file(repo: Path, tmp_path: Path) -
 
 
 def test_never_exports_working_docs_even_if_allowlisted(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(export, "ALLOWED_PREFIXES", ("docs/", ".claude/", ""))
+    monkeypatch.setattr(export, "ALLOWED_PREFIXES", ("docs/", TOOL_SETTINGS, ""))
 
-    for path in ["docs/ARCHITECTURE.md", "docs/payloads/01-first.md", "CLAUDE.md", ".claude/x"]:
+    for path in ["docs/" + DESIGN_NOTES, PLAN_FILE, "CLAUDE.md", TOOL_SETTINGS + "x"]:
         assert not export.is_allowed(path)
 
 
@@ -209,7 +215,17 @@ def test_reexport_refuses_a_manifest_pointing_outside(repo: Path, tmp_path: Path
 
 HITS = [
     ("Mail " + "icommons" + "crc" + " for help.", "shared-mailbox"),
-    ("Host: tdx." + "drexel" + ".edu", "university-domain"),
+    ("Host: tdx." + "drexe" + "l.edu", "university-name"),
+    ("A " + "Drexe" + "l University desk", "university-name"),
+    ("cd ~/" + PRIVATE_REPO, "private-repo-name"),
+    ("Fixed in (" + "Payload" + " 06b).", "payload-reference"),
+    ("See " + "payloads" + " #4 and 5.", "payload-reference"),
+    ("Steps in " + PLAN_FILE, "payload-reference"),
+    ("Decided in docs/" + DESIGN_NOTES, "design-diary"),
+    ("Asked in " + "OPEN_" + "QUESTIONS.", "design-diary"),
+    ("Report this to the " + "archi" + "tect session.", "dev-session"),
+    ("Hand it to the " + "worker" + " session.", "dev-session"),
+    ("Denied in " + TOOL_SETTINGS + "settings.json", "claude-settings"),
     ("https://sample." + "teamdynamix" + ".com/TDNext", "tdx-host"),
     ("Contact jordan.real" + "@" + "gmail.com", "email-address"),
     ("Logs in C:" + "\\Users\\" + "Admin\\AppData", "windows-profile-path"),
@@ -253,6 +269,10 @@ def test_a_privacy_hit_fails_and_prints_no_matched_text(
         "key = sk-ant-test-0000",
         "url = https://x.logic.azure.com/w?sig=SIGSECRET42",
         "page: /TDWorkManagement/" + "Home/Desktop",
+        'payload = {"type": "message", "attachments": [card]}',
+        "The webhook payloads are JSON; send_payload(payload, 3) retries twice.",
+        "## Architecture: the architecture of the tool",
+        "docs/payload.md and a payloadless request",
     ],
 )
 def test_placeholders_pass_the_privacy_checks(line: str) -> None:
@@ -264,14 +284,15 @@ def test_the_owner_handle_is_allowed_only_in_the_public_repo_links() -> None:
     files = {
         "README.md": f"[![CI](https://github.com/{handle}/tdx-queue-auditor/badge.svg)]\n"
         f"git clone https://github.com/{handle}/tdx-queue-auditor.git\n"
-        f"Old repo: https://github.com/{handle}/enterprise-ai-ops-suite\n".encode(),
+        f"Old repo: https://github.com/{handle}/{PRIVATE_REPO}\n".encode(),
         "LICENSE": f"Copyright (c) 2026 {handle}\n".encode(),
         "docs/USAGE.md": f"https://github.com/{handle}/tdx-queue-auditor\n".encode(),
     }
 
     hits = export.privacy_hits(files)
 
-    assert [(h.path, h.line) for h in hits] == [("README.md", 3), ("docs/USAGE.md", 1)]
+    handles = [(h.path, h.line) for h in hits if h.pattern == "owner-handle"]
+    assert handles == [("README.md", 3), ("docs/USAGE.md", 1)]
 
 
 def test_binary_files_are_not_scanned() -> None:
@@ -286,7 +307,7 @@ def test_a_broken_relative_link_fails(
     _write(
         repo,
         {
-            "docs/USAGE.md": "# Usage\n\n## Demo\n\nDecisions: [notes](ARCHITECTURE.md).\n"
+            "docs/USAGE.md": f"# Usage\n\n## Demo\n\nDecisions: [notes]({DESIGN_NOTES}).\n"
             "Steps: [payload](payloads/01-first.md).\n"
         },
     )
@@ -296,7 +317,7 @@ def test_a_broken_relative_link_fails(
     assert export.run(repo, target) == 1
 
     err = capsys.readouterr().err
-    assert "Broken link: docs/USAGE.md:5: ARCHITECTURE.md" in err
+    assert f"Broken link: docs/USAGE.md:5: {DESIGN_NOTES}" in err
     assert "Broken link: docs/USAGE.md:6: payloads/01-first.md" in err
     assert not target.exists()
 
@@ -345,3 +366,33 @@ def test_check_mode_writes_nothing(
 
     assert "Check only: 11 file(s)" in capsys.readouterr().out
     assert not list(tmp_path.rglob(".export-manifest"))
+
+
+def test_only_the_never_export_entries_in_the_script_itself_are_exempt() -> None:
+    entry = f'    "docs/{DESIGN_NOTES}",\n'.encode()
+    commented = f'    "docs/{DESIGN_NOTES}",  # a note\n'.encode()
+
+    assert export.privacy_hits({"scripts/export_public.py": entry}) == []
+    for path, data in [("src/pkg/core.py", entry), ("scripts/export_public.py", commented)]:
+        assert [hit.pattern for hit in export.privacy_hits({path: data})] == ["design-diary"]
+
+
+REPO_ROOT = SCRIPT.parents[1]
+
+
+def test_this_checkout_passes_the_export_checks() -> None:
+    """The same checks as ``--check`` over this working copy's exported files, uncommitted
+    changes included, so a stray identifying string or plan citation fails here and not only at
+    the next export. Inside the snapshot there is no ``public/``, and nothing to check."""
+    if not (REPO_ROOT / "public").is_dir():
+        pytest.skip("public/ is absent: this is the snapshot, not the working repository")
+    if not (REPO_ROOT / ".git").exists():
+        pytest.skip("not a git checkout")
+
+    files = export.build_snapshot(REPO_ROOT, allow_dirty=True)
+    hits = export.privacy_hits(files)
+    broken, checked = export.broken_links(files)
+
+    assert [(hit.path, hit.line, hit.pattern) for hit in hits] == []
+    assert [(link.path, link.line, link.target) for link in broken] == []
+    assert checked > 0

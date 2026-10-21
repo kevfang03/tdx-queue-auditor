@@ -148,9 +148,36 @@ class Pattern:
     allow: Allow | None = None
 
 
+# The never-export lists above must name the working repo's private notes, so their own entries
+# are the one place the diary patterns below may match. Only a line that is exactly one of those
+# string literals is exempt, and only in this script.
+_SELF = "scripts/export_public.py"
+_NEVER_LIST_LINES = frozenset(f'"{entry}",' for entry in (*NEVER_PREFIXES, *NEVER_FILES))
+
+
+def _never_list_entry(path: str, line: str, match: re.Match[str]) -> bool:
+    return path == _SELF and line.strip() in _NEVER_LIST_LINES
+
+
 PATTERNS = (
     Pattern("shared-mailbox", re.compile(r"icommons[c]rc", re.IGNORECASE)),
-    Pattern("university-domain", re.compile(r"drexel\.edu", re.IGNORECASE)),
+    # The institution's name anywhere, its web domain included.
+    Pattern("university-name", re.compile(r"drexe[l]", re.IGNORECASE)),
+    Pattern("private-repo-name", re.compile(r"enterprise-ai-ops-suit[e]", re.IGNORECASE)),
+    # A plan number after "payload" (one word, any case, an optional "#" and a letter suffix)
+    # and the plan folder. A plain "payload" (an HTTP or JSON body) does not match.
+    Pattern(
+        "payload-reference",
+        re.compile(r"\bpayloads?\s*#?\d+[a-z]?\b|docs/payload[s]", re.IGNORECASE),
+        _never_list_entry,
+    ),
+    Pattern(
+        "design-diary",
+        re.compile(r"ARCHITECTURE\.md|OPEN_QUESTION[S]", re.IGNORECASE),
+        _never_list_entry,
+    ),
+    Pattern("dev-session", re.compile(r"\barchitec[t]\b|worker[ ]session", re.IGNORECASE)),
+    Pattern("claude-settings", re.compile(r"\.claud[e]/", re.IGNORECASE), _never_list_entry),
     Pattern("tdx-host", re.compile(r"teamdynamix\.com", re.IGNORECASE)),
     Pattern(
         "email-address",

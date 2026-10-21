@@ -46,7 +46,7 @@ page_timeout_seconds = 30
 browser_launch_timeout_seconds = 60
 # Extra requests the read-only guard lets through, each "METHOD /path/pattern" with digit runs
 # written as # (for example "POST /TDWorkManagement/WorkManagement/Example/#"). Add an entry only
-# after the architect session has reviewed it.
+# after reviewing it: an allowed write is a write to TDX (docs/USAGE.md, "Read-only by design").
 allowed_requests = []
 # "tdx audit": seconds to pause between tickets (0-30), and how many ticket feeds one run opens
 # (1-200, oldest Modified first; the rest wait for the next run).
@@ -197,8 +197,8 @@ show_titles = true
 
 [teams.desk]
 # Real ticket cards go to the desk chat only when this is true. Set it in your own config only
-# after the manager's written OK is recorded in docs/ARCHITECTURE.md. Synthetic cards
-# ("teams test --to desk", "tdx demo --send --to desk") may go there at any time.
+# once the desk's lead has approved real ticket cards in the shared chat, in writing.
+# Synthetic cards ("teams test --to desk", "tdx demo --send --to desk") may go there at any time.
 approved = false
 # Ticket titles can contain names, so desk cards show the id, the finding and the age only.
 show_titles = false
@@ -207,10 +207,12 @@ show_titles = false
 # The optional Claude API step. Off by default. The API key is a secret: "ops-suite llm set-key"
 # keeps it in the system keychain, never in this file.
 enabled = false
-# Text from TDX tickets and the shared mailbox is Drexel data. Set this to true only in your own
-# config on your own machine, under the data-policy approval recorded in docs/ARCHITECTURE.md
-# ("Approvals and their status"). Never set it to true in a file in the repository.
-allow_drexel_data = false
+# Text from TDX tickets and the shared mailbox is the institution's data (it may include student
+# records). Set this to true only in your own config on your own machine, and only once your
+# institution has approved sending scrubbed ticket text to the API. Never set it to true in a
+# file in the repository. Unknown keys in this section stop the tool, so a misspelt name is
+# never silently ignored.
+allow_institutional_data = false
 model = "claude-haiku-5-5"
 # How much the model thinks before answering: "low", "medium" or "high".
 effort = "low"

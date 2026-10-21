@@ -26,7 +26,7 @@ ROWS_PER_PAGE = 10
 DESK = "Dana Desk"
 FULL_TIMER = "Robin Fulltime"
 FORM_TITLE = "CCI Event Request Form"
-# The event request form's options (docs/payloads/10-event-outreach.md).
+# The event request form's options, as the real form words them.
 HOST_EVENT = (
     "To host an event at CCI, including reserving space, marketing and other logistical support."
 )
@@ -102,10 +102,10 @@ EXPECTED_FINDINGS = {
     "needs_review": 1,
     "ready_to_close": 1,
 }
-# The shift summary's possible duplicate (payload 16): the newer ticket -> the older one.
+# The shift summary's possible duplicate: the newer ticket -> the older one.
 EXPECTED_DUPLICATES = {1000023: 1000001}
 # The shift summary's "Events this week", in date order: ticket id -> state code. One of each
-# state (payload 22).
+# state.
 EXPECTED_WEEK_EVENTS = {
     1000026: "requester_replied",
     1000025: "location_missing",
@@ -401,7 +401,7 @@ def demo_tickets(now: datetime) -> list[DemoTicket]:
             "client_waiting/no_reply_yet",
             service="Printing",
         ),
-        # Renamed events (payload 22): the desk renames at first handling, so the form and the
+        # Renamed events: the desk renames at first handling, so the form and the
         # feed tell the state. Four days out, the requester answered and the desk confirmed:
         # "in progress", no finding.
         DemoTicket(
@@ -456,7 +456,7 @@ def demo_tickets(now: datetime) -> list[DemoTicket]:
             service="Event Support",
             form=DemoForm(town_hall, HOST_EVENT, CLASSROOM, ("A/V & Technical Support",)),
         ),
-        # Event request forms (payload 10): A/V six days out and nobody has reached out yet;
+        # Event request forms: A/V six days out and nobody has reached out yet;
         # a classroom five days out where the desk asked three days ago (on a form that already
         # says SCIS); a lobby with catering only, three days out; marketing only, six days out.
         DemoTicket(

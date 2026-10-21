@@ -1,12 +1,12 @@
-"""The follow-up classifier: the auditor's one LLM step (payload 06b).
+"""The follow-up classifier: the auditor's one LLM step.
 
 Each ``client_waiting`` / ``requestor_last`` finding (already 48+ hours stale) is classified
 once from the requestor's latest visible reply: quoted mail and sign-offs are stripped here,
 ``common.scrub`` replaces names and contact details, and ``LlmClient.classify`` returns one
 enum value. ``rules.apply_verdicts`` then changes the finding. Everything that is not a clear
 verdict (unsure, a refusal, an error, a closed gate, a spent budget, the LLM off) leaves the
-finding as it is, so a missed reply never goes quiet. The design is in docs/ARCHITECTURE.md
-(Module 3, "Payload 06 design") and in plain language in docs/tdx-rules.md.
+finding as it is, so a missed reply never goes quiet. The design is in plain language in
+docs/tdx-rules.md.
 
 ``llm-verdicts.json`` remembers each verdict by ticket id and the time of the classified
 entry, so ``tdx watch`` does not pay for the same message every cycle.

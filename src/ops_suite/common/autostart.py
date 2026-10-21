@@ -1,8 +1,9 @@
 """Start ``tdx watch`` at login: a launchd user agent on macOS, a Startup-folder script on
 Windows.
 
-Both only start the same ``tdx watch`` process the owner runs in a terminal; the desk-hours
-schedule stays inside the program (no Task Scheduler, per CLAUDE.md). On macOS ``KeepAlive``
+Both only start the same ``tdx watch`` process a person runs in a terminal; the desk-hours
+schedule stays inside the program (no Task Scheduler or cron, so it works the same on every
+system). On macOS ``KeepAlive``
 is false, so launchd never restarts it after "auditor stopped", and ``caffeinate -i`` keeps
 the Mac awake. On Windows ``WindowsStartup`` writes a ``.cmd`` file into the user's Startup
 folder, and ``tdx watch`` keeps the PC awake itself with ``keep_awake()``. Linux has no
@@ -183,7 +184,7 @@ class MacLaunchAgent:
             "RunAtLoad": True,
             "KeepAlive": False,
             # No ProcessType: launchd's default (Standard). "Background" throttles CPU and I/O,
-            # which can make Chromium start too slowly for its launch timeout (payload 13).
+            # which can make Chromium start too slowly for its launch timeout.
             "StandardOutPath": str(self.out_log),
             "StandardErrorPath": str(self.err_log),
         }
@@ -343,7 +344,7 @@ class WindowsStartup:
             'set "PYTHONIOENCODING=utf-8"',
             f"cd /d {_cmd_quote(str(self.repo))}",
             # cmd cannot append to a file in a missing folder: without this line the redirect
-            # fails and uv never starts (payload 19).
+            # fails and uv never starts.
             f"if not exist {log_dir} mkdir {log_dir}",
             f"{command} >>{_cmd_quote(str(self.out_log))} 2>>{_cmd_quote(str(self.err_log))}",
             "exit",

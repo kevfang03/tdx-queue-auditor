@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Annotated, Literal
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from pydantic import BaseModel, BeforeValidator, Field, field_validator, model_validator
+from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, field_validator, model_validator
 from pydantic_settings import (
     BaseSettings,
     PydanticBaseSettingsSource,
@@ -152,7 +152,7 @@ class TdxRulesSettings(BaseModel):
 
 
 class TdxEventSettings(BaseModel):
-    """Event request forms (payload 10): which tickets, the reminder windows, and the form's
+    """Event request forms: which tickets, the reminder windows, and the form's
     option prefixes (matched case-insensitively at the start of an answer)."""
 
     # Unclaimed tickets still titled like this get their description and feed read. The
@@ -197,7 +197,7 @@ class TdxWatchSettings(BaseModel):
 
 
 class TdxSummarySettings(BaseModel):
-    """Queue summaries at shift starts (payload 14), posted by ``tdx watch``. Off by default.
+    """Queue summaries at shift starts, posted by ``tdx watch``. Off by default.
 
     Mention addresses are personal data: keep them in your own config, never the repo.
     """
@@ -222,7 +222,7 @@ class TdxSummarySettings(BaseModel):
     events_days: int = Field(default=7, ge=1, le=30)
     # Sign-in addresses (UPNs) to mention with mention = "people".
     mention_people: list[str] = []
-    # Payload 17: while summaries go to the desk chat, a "tdx watch --to desk" posts no alert
+    # While summaries go to the desk chat, a "tdx watch --to desk" posts no alert
     # card each cycle there (summaries only) unless desk_alerts; those cards go to the personal
     # chat instead with personal_alerts. With summaries off, --to desk alerts the desk as before.
     desk_alerts: bool = False
@@ -308,10 +308,11 @@ class TeamsPersonalSettings(BaseModel):
 
 
 class TeamsDeskSettings(BaseModel):
-    """The desk's shared chat (docs/ARCHITECTURE.md, "Desk channel mode")."""
+    """The desk's shared chat, next to the person's own chat. Real ticket cards go there
+    only once the desk has approved them."""
 
-    # True only after the manager's written OK is recorded in docs/ARCHITECTURE.md. Until
-    # then only synthetic cards (teams test, tdx demo --send) may go to the desk chat.
+    # True only once the desk's lead has approved real ticket cards in the shared chat, in
+    # writing. Until then only synthetic cards (teams test, tdx demo --send) may go there.
     approved: bool = False
     # Titles can contain names, so desk cards leave them out unless this is set.
     show_titles: bool = False
@@ -330,11 +331,17 @@ class TeamsSettings(BaseModel):
 
 
 class LlmSettings(BaseModel):
-    """The LLM step. Off by default; Drexel data needs its own switch (docs/ARCHITECTURE.md,
-    "Drexel-data gate"). The API key is a secret and lives in keyring, never here."""
+    """The LLM step. Off by default; text of the ``institutional`` data class (the live TDX queue,
+    the shared mailbox) needs its own switch on top. The API key is a secret and lives in keyring,
+    never here.
+
+    Unknown keys are refused rather than ignored, from any source: a misspelt or retired switch
+    must stop the tool loudly, not leave a gate in a state nobody chose."""
+
+    model_config = ConfigDict(extra="forbid")
 
     enabled: bool = False
-    allow_drexel_data: bool = False
+    allow_institutional_data: bool = False
     model: str = "claude-haiku-5-5"
     effort: Literal["low", "medium", "high"] = "low"
     max_output_tokens: int = Field(default=256, ge=16, le=4096)

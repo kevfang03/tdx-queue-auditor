@@ -4,8 +4,7 @@ The desk renames event request forms to something like "EVENT [10/15 2-4pm Room 
 but each student assistant writes the date a little differently, so reading is lenient: the
 dates after the "event" prefix, in any of the numeric or month-name styles, each with the
 first time after it. Some titles list several dates ("EVENT [10/15, 10/22 2pm Room] Name");
-every date in that list is read. See docs/ARCHITECTURE.md, Module 3, "Event tickets" and
-"Multi-date event titles".
+every date in that list is read. The rules that use them are in docs/tdx-rules.md.
 
 Personal data rule: titles are student data. Nothing here logs, prints or raises with a title;
 any input that cannot be read gives ``dates=()``.
@@ -106,7 +105,7 @@ class EventInfo:
     location_tbd: bool
     # The end of the time range after the last date ("2-4pm" gives 16:00), when it has one.
     end_time: time | None = None
-    # A leading [...] or (...) group with a date and a time but nothing else (payload 22):
+    # A leading [...] or (...) group with a date and a time but nothing else:
     # "EVENT [10/21/26 6PM-7PM] Resume Review" names no room. Never True with location_tbd.
     location_missing: bool = False
 

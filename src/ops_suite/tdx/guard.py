@@ -6,7 +6,8 @@ the TDX host and matches an ``AllowedRequest``: method, resource type and the UR
 long digit runs masked as ``#`` (fnmatch, case-sensitive). Everything else is aborted.
 
 Each built-in entry is justified in docs/tdx-page-structure.md. Entries from the
-``tdx.allowed_requests`` setting are added only after the architect session reviews them.
+``tdx.allowed_requests`` setting are added only after a person has reviewed each one: an
+allowed write is a write to TDX.
 """
 
 import re

@@ -29,7 +29,7 @@ packages = ["src/ops_suite"]
 [tool.uv]
 # Build .venv on a Python that uv manages (3.12 from .python-version, downloaded when
 # missing), never a system one: the Microsoft Store Python hides what it writes under
-# %LOCALAPPDATA% in a private copy (payload 20).
+# %LOCALAPPDATA% in a private copy that other programs cannot see.
 python-preference = "only-managed"
 
 [tool.ruff]

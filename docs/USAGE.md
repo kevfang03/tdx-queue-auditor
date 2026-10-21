@@ -111,11 +111,11 @@ The queue auditor is a general program: each desk member who uses it runs it on 
    uv run ops-suite tdx set-dashboard
    ```
 
-   In the window it opens, sign in if asked, switch to a dashboard that shows both "Unclaimed Tickets in My Group(s)" and "Active Tickets Claimed by Others in My Group(s)" (on the desk this is the IT Tickets dashboard), wait until both have loaded, and press Enter. The tool clicks nothing; it saves the address of the inner page that holds both widgets, closes the window, and checks in the background that this address shows both widgets on its own. On success it prints `Saved. ...`; if the check fails it saves nothing and says so (exit `5`; report that line to the architect session). Run it again whenever you want `tdx rows` to use a different dashboard. If your widgets have other titles, set them in `[tdx.widgets]` first.
+   In the window it opens, sign in if asked, switch to a dashboard that shows both "Unclaimed Tickets in My Group(s)" and "Active Tickets Claimed by Others in My Group(s)" (on the desk this is the IT Tickets dashboard), wait until both have loaded, and press Enter. The tool clicks nothing; it saves the address of the inner page that holds both widgets, closes the window, and checks in the background that this address shows both widgets on its own. On success it prints `Saved. ...`; if the check fails it saves nothing and says so (exit `5`; choose another dashboard and run it again). Run it again whenever you want `tdx rows` to use a different dashboard. If your widgets have other titles, set them in `[tdx.widgets]` first.
 
 ## TDX structure capture
 
-Two commands for the owner's own computer. They open a visible Chromium window with the tool's own browser profile (never your everyday Chrome profile). You do all the signing in and clicking by hand; the tool only opens the start page, reads what is on screen when you press Enter, and never clicks, types or submits anything in TeamDynamix. It handles no passwords.
+Two commands to run on your own computer. They open a visible Chromium window with the tool's own browser profile (never your everyday Chrome profile). You do all the signing in and clicking by hand; the tool only opens the start page, reads what is on screen when you press Enter, and never clicks, types or submits anything in TeamDynamix. It handles no passwords.
 
 ### First-time setup
 
@@ -153,9 +153,9 @@ Before you share a capture:
 
 1. Open `kept-text.txt`. Only column names (for example `Modified`, `Requestor`) may be there.
 2. Search every `frame-*.html` for the names, email addresses, ticket numbers and ticket titles you saw on screen, and for `@`. None may appear.
-3. If anything personal is left, delete the folder and report the problem instead of sharing it.
+3. If anything personal is left, delete the folder. Describe the problem by its shape ("an email address inside a checkbox id"), never by the text you found.
 
-Then copy the reviewed folder into `tests/fixtures/tdx/captures/` (ignored by git for now) and tell the architect session.
+Keep reviewed captures on your own computer, outside git (`tests/fixtures/tdx/captures/` is ignored). They are what to compare against when a TDX update breaks a selector. When you share what a capture shows, share only what the review found (counts, element and attribute shapes), never page text.
 
 ### Where the files go
 
@@ -186,7 +186,7 @@ The first line says where it started: `setting` (`tdx.dashboard_url`, which wins
 
 Ticket titles, names and links stay in memory; nothing is written to disk, and the output and log hold counts, date shapes (`aaa 9/9/99 9:99 aa`) and request paths only, so the output can be pasted into a chat. Options: `--headed` shows the browser window (use it if the headless run fails), `--verbose` adds a per-path line for the allowed requests, `--config PATH` picks a config file.
 
-**Read-only by design.** The only thing the command ever clicks is a widget's "next page" button. Every request the browser makes passes a guard: page loads and other reads (`GET`) go through, and anything else is aborted unless it is on a short, reviewed allowlist. The built-in entries are the request the dashboard makes to load a widget's rows and, for `tdx audit`, the request a ticket page makes to load its activity feed. If a run reports `Blocked: ...` lines, paste them into the architect chat; a request is added to `tdx.allowed_requests` only after that review. The page structure the selectors rely on is described in [docs/tdx-page-structure.md](tdx-page-structure.md).
+**Read-only by design.** The only thing the command ever clicks is a widget's "next page" button. Every request the browser makes passes a guard: page loads and other reads (`GET`) go through, and anything else is aborted unless it is on a short, reviewed allowlist. The built-in entries are the request the dashboard makes to load a widget's rows and, for `tdx audit`, the request a ticket page makes to load its activity feed. If a run reports `Blocked: ...` lines, review each request before adding it to `tdx.allowed_requests`: what the page was doing when it made the request, and whether the request changes anything in TDX. Allow only reads, and writes the page makes on its own just to display itself, like the built-in entries ([docs/tdx-page-structure.md](tdx-page-structure.md) explains each one). The page structure the selectors rely on is described in [docs/tdx-page-structure.md](tdx-page-structure.md).
 
 Settings (`[tdx]` and `[tdx.widgets]` in [config.example.toml](../config.example.toml)): `dashboard_url` (overrides the dashboard saved by `tdx set-dashboard`), `display_timezone`, `headless`, `max_pages_per_widget`, `page_timeout_seconds`, `browser_launch_timeout_seconds` (seconds Chromium gets to start, 15 to 180, default 60), `allowed_requests`, and the two widget titles.
 
@@ -225,11 +225,11 @@ Unreadable dates: 0. Duplicates: 0. Blocked requests: 0. Live updates blocked: 3
 - **Entries:** what the feeds held, by kind. `unreadable` entries had no author or no readable date; `--verbose` shows their shapes (`no author`, `undated: aaa 99/9/99 ...`), never their text.
 - **Events:** renamed `EVENT [...]` tickets. `without a location` titles have a date and a time in their bracket but no room; they are treated like TBD.
 - **Event forms:** the unclaimed event request forms. `unreadable` forms had no "Response Summary:" block or no readable date; `--show-ids` lists them by id (`  event_form_unreadable  1234567`). Look at one in TDX and describe its shape only (for example "the date is written as a weekday and month name"), never its text. `renamed without a form` are renamed events within 14 days whose page held no form block (made by hand): their space and A/V are unknown (`  event_form_missing  1234567` under `--show-ids`).
-- **Event states (no finding):** the upcoming events whose page was read and that raised nothing, by who wrote last ([docs/tdx-rules.md](tdx-rules.md#event-state-payload-22)). `in progress` means the requester has answered and the desk wrote last: the tool cannot tell finished from unfinished without the events spreadsheet, so it stays quiet.
+- **Event states (no finding):** the upcoming events whose page was read and that raised nothing, by who wrote last ([docs/tdx-rules.md](tdx-rules.md#event-state)). `in progress` means the requester has answered and the desk wrote last: the tool cannot tell finished from unfinished without the events spreadsheet, so it stays quiet.
 - **Desk members known:** how many people the auditor recognised as desk staff in this run: Prim Resp names, private-note and merge-notice authors, authors of replies signed with the desk signature (`tdx.rules.desk_signatures`), anyone other than the requestor seen on 2 or more tickets, and your `extra_staff_names` if you set any.
 - **Live updates blocked:** each ticket page asks for live updates (SignalR: a few requests and a WebSocket). A read-only audit refuses all of them, so this number grows with every ticket opened. That is expected, and it is counted apart from `Blocked requests`, which should stay `0`.
 - **Allowed non-GET:** the dashboard's widget loads plus one feed search per ticket opened.
-- **LLM:** the optional follow-up classifier (off by default). With `llm.enabled` and `llm.allow_drexel_data` set in your own config, each "requestor wrote last" finding is classified once from the scrubbed text of the requestor's latest reply, and the line reads `LLM: 2 to check, 1 cached, 1 classified (expects reply 0, will follow up 1, no reply needed 0, unsure 0); skipped 0, failed 0. Today 812 of 100,000 tokens (~$0.0001).` A client who said they will follow up becomes "follow up with client" (normal priority); anything unclear stays "client waiting". Details in [docs/tdx-rules.md](tdx-rules.md#the-follow-up-classifier-payload-06b).
+- **LLM:** the optional follow-up classifier (off by default). With `llm.enabled` and `llm.allow_institutional_data` set in your own config, each "requestor wrote last" finding is classified once from the scrubbed text of the requestor's latest reply, and the line reads `LLM: 2 to check, 1 cached, 1 classified (expects reply 0, will follow up 1, no reply needed 0, unsure 0); skipped 0, failed 0. Today 812 of 100,000 tokens (~$0.0001).` A client who said they will follow up becomes "follow up with client" (normal priority); anything unclear stays "client waiting". Details in [docs/tdx-rules.md](tdx-rules.md#the-follow-up-classifier).
 - Nothing is sent anywhere unless you add `--send` (see below), and nothing is ever written to TDX. Names, titles and feed text stay in memory and are never printed or logged.
 
 **`--verbose`** adds unreadable-entry shapes, a per-path line for the live updates and allowed requests, and one line about private markers, for checking that private notes are read right:
@@ -280,7 +280,7 @@ This is your own chat, the `personal` destination. For the desk's shared chat, s
 
 ## LLM setup
 
-The optional Claude API step is off by default (`llm.enabled = false`), and text from TDX or the shared mailbox also needs `llm.allow_drexel_data = true`, set only in your own config, and only once sending scrubbed ticket text to the API is approved. Every call goes through the local scrubber first, stops at a daily token budget (`llm.daily_token_budget`) and logs token counts and an estimated cost, never text.
+The optional Claude API step is off by default (`llm.enabled = false`), and text from TDX or the shared mailbox also needs `llm.allow_institutional_data = true`, set only in your own config, and only once sending scrubbed ticket text to the API is approved. Every call goes through the local scrubber first, stops at a daily token budget (`llm.daily_token_budget`) and logs token counts and an estimated cost, never text.
 
 1. Create an API key in the Anthropic Console, and set a monthly spend limit there as a second stop behind the daily budget.
 2. Save the key in the system keychain. The prompt hides what you paste, and it asks before replacing a saved key:
@@ -376,9 +376,9 @@ uv run ops-suite teams test --to desk
 uv run ops-suite tdx demo --send --to desk
 ```
 
-The demo card keeps its DEMO title. Like every desk card, it shows each ticket's id with its link, the finding and its age, and **no ticket title**, because titles can contain names. `teams.desk.show_titles` (default `false`) turns titles back on; leave it off unless the manager has agreed to titles in the desk chat.
+The demo card keeps its DEMO title. Like every desk card, it shows each ticket's id with its link, the finding and its age, and **no ticket title**, because titles can contain names. `teams.desk.show_titles` (default `false`) turns titles back on; leave it off unless the desk has agreed to titles in its chat.
 
-**The approval switch.** Real ticket cards go to the desk chat only when `approved` under `[teams.desk]` is `true` in **your own** config file (never in the repository's example files). Set it only once the desk's manager has approved it in writing. While it is `false` (the default), `tdx audit --send --to desk` and `tdx watch --to desk` stop with exit `2` and one line naming `teams.desk.approved`, before the browser opens. Once it is `true` (on the Mac, under `caffeinate -i` as in [Watching the queue](#watching-the-queue-tdx-watch)):
+**The approval switch.** Real ticket cards go to the desk chat only when `approved` under `[teams.desk]` is `true` in **your own** config file (never in the repository's example files). Set it only once the desk's lead has approved real ticket cards in the shared chat, in writing. While it is `false` (the default), `tdx audit --send --to desk` and `tdx watch --to desk` stop with exit `2` and one line naming `teams.desk.approved`, before the browser opens. Once it is `true` (on the Mac, under `caffeinate -i` as in [Watching the queue](#watching-the-queue-tdx-watch)):
 
 ```bash
 uv run ops-suite tdx audit --send --to desk
@@ -415,7 +415,7 @@ sun = ["12:00"]
 
 These are the defaults. A `[tdx.summary.times]` table in your config replaces all of them, so list every day you want; a day left out has no summaries. Each time must lie inside that weekday's desk hours (the closing time itself is outside), or every command stops with one line naming the time and the day.
 
-**A full summary at the first slot, deltas after (payload 17).** Each day's **first** summary posted is the **full** summary below, with the @mention: it replaces the manual check-in. If the first slot is missed (skipped past its grace window, or the auditor was not running), the next slot posted that day is full instead, so every day gets one full post. Later slots post a short **delta**:
+**A full summary at the first slot, deltas after.** Each day's **first** summary posted is the **full** summary below, with the @mention: it replaces the manual check-in. If the first slot is missed (skipped past its grace window, or the auditor was not running), the next slot posted that day is full instead, so every day gets one full post. Later slots post a short **delta**:
 
 ```text
 Since 07:30: 1 new · 1 cleared · 6 open
@@ -423,7 +423,7 @@ Since 07:30: 1 new · 1 cleared · 6 open
 
 It has a row only for each finding that is new since the last summary posted (marked `(new)`) and each one due again under the [re-alert policy](tdx-rules.md#teams-alerts-tdx-audit---send-tdx-watch) (`· reminder`), grouped by kind; cleared findings are only counted. There is no "Events this week", no "Ready to close" and no mention. A delta with nothing new, nothing cleared and no reminder due is **not posted**: the terminal says `Teams (desk): 12:00 summary skipped (no change).` and nothing goes to your personal chat, because that is not a miss. `Queue clear` is only ever a full summary's heading. New and cleared are counted against the findings open at the last post: a finding whose ticket could not be judged this run (its feed failed, or a widget hit its page limit) is neither new nor cleared, and "Ready to close" findings are left out of both, as they are never `(new)`.
 
-**What the full summary shows.** First **Events this week**, then **every** open finding of that cycle, not only the new ones, grouped by kind in the usual order with each kind's count, and each ticket's linked id, ending with **Ready to close**. The exact rules are in [tdx-rules.md](tdx-rules.md#shift-summaries-payload-14). New findings are marked `(new)`. Desk summaries carry no titles while `teams.desk.show_titles` is `false` (the default); the manager approved titles on 2026-10-19, so the desk runner may set it to `true` in their own config. Past `tdx.alerts.max_rows_per_card` (25) rows, each kind ends with `+N more`. An empty queue still posts, so each shift knows:
+**What the full summary shows.** First **Events this week**, then **every** open finding of that cycle, not only the new ones, grouped by kind in the usual order with each kind's count, and each ticket's linked id, ending with **Ready to close**. The exact rules are in [tdx-rules.md](tdx-rules.md#shift-summaries). New findings are marked `(new)`. Desk summaries carry no titles while `teams.desk.show_titles` is `false` (the default); set it to `true` in the desk runner's own config only once the desk has approved titles in the shared chat. Past `tdx.alerts.max_rows_per_card` (25) rows, each kind ends with `+N more`. An empty queue still posts, so each shift knows:
 
 ```text
 TDX queue at 07:30: 6 open (2 new since yesterday)
@@ -433,17 +433,17 @@ TDX queue at 08:12 (late: due 07:30): 6 open (2 new since yesterday)
 
 "New" means not open at the last summary posted ("since yesterday", or `since Fri 17:00` after a gap; just `(2 new)` before the first post).
 
-**Where alert cards go (payload 17).** While summaries go to the desk chat, the desk runner posts **no alert card to the desk chat** on its 30-minute cycles: the desk gets summaries only. Those cards go to the runner's **personal** chat instead, with the personal chat's own state (`alerts-state.json`) and titles, just as a `tdx watch` to the personal chat would send them. The start line says `Alert cards go to the personal chat; the desk chat gets summaries only.` With no personal webhook saved, `tdx watch` warns once at start and sends no alert cards (`Teams: no alert card (no personal webhook).`).
+**Where alert cards go.** While summaries go to the desk chat, the desk runner posts **no alert card to the desk chat** on its 30-minute cycles: the desk gets summaries only. Those cards go to the runner's **personal** chat instead, with the personal chat's own state (`alerts-state.json`) and titles, just as a `tdx watch` to the personal chat would send them. The start line says `Alert cards go to the personal chat; the desk chat gets summaries only.` With no personal webhook saved, `tdx watch` warns once at start and sends no alert cards (`Teams: no alert card (no personal webhook).`).
 
 ```toml
 [tdx.summary]
-desk_alerts = false      # true: alert cards to the desk chat instead, as before payload 17
+desk_alerts = false      # true: alert cards to the desk chat as well as the summaries
 personal_alerts = true   # false: no alert cards at all while summaries go to the desk chat
 ```
 
 With summaries off (`enabled = false`), `tdx watch --to desk` alerts the desk chat exactly as before. Every new or due finding a summary shows is recorded as alerted in the desk's own state (`alerts-state-desk.json`), so its reminders follow the re-alert policy; a due finding counted only in a `+N more` line stays due. The terminal lines are `Teams (desk): summary posted (6 open, 2 new).` and `Teams (desk): delta posted (1 new, 1 cleared, 6 open).`
 
-**Events this week, ready to close and possible duplicates (payload 16).**
+**Events this week, ready to close and possible duplicates.**
 
 - **Events this week** lists every unclaimed event ticket with a date in the next `events_days` (7, 1 to 30) days from the summary time, sorted by date: `Wed 10/21 15:00–17:00 · Lobby · A/V: yes · no outreach yet`. Space and A/V come from the event request form, renamed `EVENT [...]` tickets' included (`—` without a form). The state comes from the title, the form and who wrote last on the feed: `no outreach yet`, `waiting on requester since Tue 08:26`, `requester replied`, `in progress (requester answered)`, `location missing`, `location TBD`, `marketing only`, `no outreach needed`, or `page not read` when the run could not read the ticket. Never names, and never the form's free-text answers or feed text.
 - **Ready to close** lists tickets where the desk replied last at least `close_after_days` (3, 1 to 30) days ago and the requester has been silent since. By default it appears **only in summaries**, never marked `(new)` and never on an alert card; set `alert_ready_to_close = true` under `[tdx.alerts]` to alert it like any other finding.
@@ -461,7 +461,7 @@ alert_ready_to_close = false
 events_days = 7
 ```
 
-**When.** The loop wakes at the next summary time as well as at its normal interval. A slot is **due** from its time until `grace_minutes` (90, 15 to 240) after it, inside desk hours, until it is posted. `summary-state-desk.json` in the data folder holds the last slot dealt with (posted, or skipped with no change), the last slot posted, and the ticket id and finding kind of each finding open at that post, nothing else. So a restart in the same slot does not post again, and a restart mid-day keeps counting from the last post. A file from before payload 17 keeps its slot, and the next slot posted is full.
+**When.** The loop wakes at the next summary time as well as at its normal interval. A slot is **due** from its time until `grace_minutes` (90, 15 to 240) after it, inside desk hours, until it is posted. `summary-state-desk.json` in the data folder holds the last slot dealt with (posted, or skipped with no change), the last slot posted, and the ticket id and finding kind of each finding open at that post, nothing else. So a restart in the same slot does not post again, and a restart mid-day keeps counting from the last post. A file in the older format (the last slot only) keeps its slot, and the next slot posted is full.
 
 - **Late:** if the slot's cycle could not run (signed out, a busy profile, a browser failure, a failed Teams post), the next successful cycle inside the grace window posts it. One that starts more than 15 minutes after the slot says `(late: due 07:30)` in its title, and one plain notice goes to your **personal** chat: `07:30 summary posted late at 08:12`.
 - **Skipped:** if no cycle posts it within the grace window (or before the desk closes), the slot is skipped, and one notice goes to your personal chat naming the last failure: `07:30 summary not posted: TDX sign-in expired` (or the reason code, such as `BrowserStartError: launch_timeout` or `Teams post failed (http_400)`).
@@ -487,10 +487,10 @@ It posts the synthetic test card with the configured mention (it needs no approv
 
 On macOS, `tdx agent install` sets up a launchd **user** agent that starts `tdx watch` at every login, so the loop no longer needs a Terminal left open. launchd only starts the program: desk hours, sign-in recovery and the "auditor stopped" limit work exactly as in [Watching the queue](#watching-the-queue-tdx-watch). It runs under `caffeinate -i`, and it is **never restarted** by launchd (`KeepAlive` is off), so "auditor stopped" stays stopped until you log in again or reinstall. Windows has its own version, see [Start at login (Windows)](#start-at-login-windows). Linux has no agent: there, `tdx agent` exits `2` with "start at login is for macOS and Windows only", and you run `tdx watch` in a terminal.
 
-Every command runs from the repository folder (adjust the path if you cloned it somewhere else):
+Every command runs from the folder you cloned the repository into (adjust the path to yours):
 
 ```bash
-cd ~/Documents/GitHub/enterprise-ai-ops-suite
+cd ~/tdx-queue-auditor
 ```
 
 **Install.** Stop any `tdx watch` running in a Terminal first (Ctrl+C), because two runners would share one browser profile. Then:
@@ -546,10 +546,10 @@ launchctl bootout gui/$(id -u)/com.ops-suite.tdx-watch
 
 On Windows, `tdx agent install` writes a small script, `ops-suite tdx watch.cmd`, into your **Startup folder** (`%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup`). Windows opens it each time you sign in, and it starts the same `tdx watch` in a **minimised** window titled `ops-suite tdx watch`. Nothing else is set up: no Task Scheduler task and no Windows service. Desk hours, sign-in recovery and the "auditor stopped" limit work exactly as in [Watching the queue](#watching-the-queue-tdx-watch). When the loop stops ("auditor stopped" or Ctrl+C), its window closes, and nothing restarts it until you next sign in.
 
-Every command runs from the repository folder, in PowerShell or a terminal (adjust the path if you cloned it somewhere else):
+Every command runs from the folder you cloned the repository into, in PowerShell or a terminal (adjust the path to yours):
 
 ```powershell
-cd $HOME\Documents\enterprise-ai-ops-suite
+cd $HOME\tdx-queue-auditor
 ```
 
 **Install.** Stop any `tdx watch` running in a terminal first (Ctrl+C), because two runners would share one browser profile and post twice. Then, for the desk runner:
@@ -640,7 +640,7 @@ If Windows says a file is in use, the loop is still running; go back to step 1. 
 uv sync
 ```
 
-**4. Check the new environment.** This prints the project's own interpreter, ending in `enterprise-ai-ops-suite\.venv\Scripts\python.exe`:
+**4. Check the new environment.** This prints the project's own interpreter, `.venv\Scripts\python.exe` inside your clone:
 
 ```powershell
 uv run python -c "import sys; print(sys.executable)"
@@ -700,12 +700,12 @@ This removes only the tool's folder inside the Store package; the Store Python i
 
 ## Recommended setup: one always-on runner
 
-The desk needs **one** runner, a computer that is on through desk hours. The owner's choice (2026-10-19) is their own always-on Windows PC, covered by the manager's "each desk member on their own computer" approval. On that PC:
+The desk needs **one** runner, a computer that is on through desk hours, for example a desk member's own always-on Windows PC. Run it only where your desk's approval covers running the tool. On that PC:
 
 1. Follow [TDX setup](#tdx-setup-any-desk-member), [Teams setup](#teams-setup) for your **personal** webhook (sign-in and "auditor stopped" notices go there), and [Desk chat](#desk-chat) for the desk webhook.
-2. In your own `config.toml`: `approved = true` and `show_titles = true` under `[teams.desk]` (both approved by the manager), and `enabled = true` under `[tdx.summary]` ([Shift summaries](#shift-summaries)). The desk chat then gets **summaries only**: one full summary at the day's first slot and short deltas after, skipped when nothing changed. The 30-minute alert cards come to your **personal** chat (`tdx.summary.desk_alerts = false` and `personal_alerts = true`, the defaults).
+2. In your own `config.toml`: `approved = true` and `show_titles = true` under `[teams.desk]` (each only once the desk has approved it), and `enabled = true` under `[tdx.summary]` ([Shift summaries](#shift-summaries)). The desk chat then gets **summaries only**: one full summary at the day's first slot and short deltas after, skipped when nothing changed. The 30-minute alert cards come to your **personal** chat (`tdx.summary.desk_alerts = false` and `personal_alerts = true`, the defaults).
 3. Install the start-at-login script with `--to desk` ([Start at login (Windows)](#start-at-login-windows)) and keep the PC awake ([Keeping the PC awake](#keeping-the-pc-awake)).
-4. **Remove the Mac's agent.** It is not needed while the PC runs, and two runners on the desk chat post every card twice. On the Mac:
+4. **Remove any other runner.** Two runners on the desk chat post every card twice. On a Mac that ran the login agent before:
 
    ```bash
    uv run ops-suite tdx agent uninstall
@@ -713,7 +713,7 @@ The desk needs **one** runner, a computer that is on through desk hours. The own
 
 5. Use disk encryption and a screen lock on the PC (BitLocker on Windows 11 Pro, or Device encryption; a password or PIN on wake, and Win+L when you step away), because the tool's browser profile holds a live TDX session.
 
-The same PC is where the Claude development sessions run, so the repository's `.claude/settings.json` denies those sessions any reading or editing of the ops-suite data and log folder (`%LOCALAPPDATA%\ops-suite`, and the Microsoft Store Python's private copy of it). Keep the data and log folders at their default location on that PC, or the rule will not cover them.
+If other tools on that PC can read your files (sync clients, coding assistants, backup agents), keep them out of the ops-suite data and log folder (`%LOCALAPPDATA%\ops-suite`): the browser profile there holds a live TDX session. Keep the folders at their default location, so any such rule covers them.
 
 ## TDX session lifetime
 

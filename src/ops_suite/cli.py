@@ -143,7 +143,8 @@ CAPTURE_PROMPT = (
 )
 SESSION_EXPIRED = f'The saved TDX session has expired. Run "{RUN} tdx login" and sign in again.'
 REPORT_BLOCKED = (
-    "Report this line to the architect session before adding it to tdx.allowed_requests."
+    "Review this request before adding it to tdx.allowed_requests "
+    '(docs/USAGE.md, "Read-only by design").'
 )
 SET_DASHBOARD_HINT = (
     f'Run "{RUN} tdx set-dashboard" once to choose the dashboard that shows both widgets.'
@@ -151,7 +152,7 @@ SET_DASHBOARD_HINT = (
 SET_DASHBOARD_RETRY = "Open a dashboard that shows both widgets and try again."
 SET_DASHBOARD_NOT_STANDALONE = (
     "The dashboard does not open on its own outside the TDX page, so it was not saved. "
-    "Report this line to the architect session."
+    'Choose another dashboard, or see docs/USAGE.md, "TDX setup", the "tdx set-dashboard" step.'
 )
 SET_DASHBOARD_OVERRIDDEN = (
     f'Note: tdx.dashboard_url is set, so "{RUN} tdx rows" starts there and ignores the '
@@ -496,14 +497,23 @@ def _load_settings(config_path: Path | None) -> Settings:
     except tomllib.TOMLDecodeError as error:
         raise ConfigProblem(f"the config file is not valid TOML ({error})") from error
     except ValidationError as error:
-        # A whole-settings check (a summary time outside desk hours) has no location.
-        problems = "; ".join(
-            f"{'.'.join(str(part) for part in item['loc'])}: {item['msg']}"
-            if item["loc"]
-            else item["msg"]
-            for item in error.errors()
-        )
-        raise ConfigProblem(f"invalid settings ({problems})") from error
+        raise ConfigProblem(f"invalid settings ({_settings_problems(error)})") from error
+
+
+def _settings_problems(error: ValidationError) -> str:
+    """One line per failed check, joined. A section that refuses unknown keys names the key, so
+    a retired or misspelt setting from the file, the environment or .env is easy to find."""
+    problems = []
+    for item in error.errors():
+        where = ".".join(str(part) for part in item["loc"])
+        if item["type"] == "extra_forbidden":
+            problems.append(f"unknown setting {where}; see config.example.toml for the valid keys")
+        elif where:
+            problems.append(f"{where}: {item['msg']}")
+        else:
+            # A whole-settings check (a summary time outside desk hours) has no location.
+            problems.append(item["msg"])
+    return "; ".join(problems)
 
 
 def _mail_scan(args: argparse.Namespace) -> int:
@@ -1202,7 +1212,7 @@ def _agent_status_lines(status: AgentStatus, *, windows: bool) -> list[str]:
 
 def _agent_log_warnings(status: AgentStatus) -> list[str]:
     """Windows: the Startup script is installed but has not written ``watch.out.log``, for
-    example because cmd could not append to a log in a missing folder (payload 19)."""
+    example because cmd could not append to a log in a missing folder."""
     if not status.installed or status.out_log.is_file():
         return []
     return [AGENT_NO_LOG.format(script=status.plist_path)]
@@ -1487,7 +1497,7 @@ def _llm_status(args: argparse.Namespace) -> int:
     calls = "call" if used.calls == 1 else "calls"
     print(
         f"LLM: enabled {_yes_no(llm.enabled)}; "
-        f"Drexel data allowed {_yes_no(llm.allow_drexel_data)}; "
+        f"Institutional data allowed {_yes_no(llm.allow_institutional_data)}; "
         f"model {llm.model}; key saved {_yes_no(key is not None)}."
     )
     print(
@@ -1556,7 +1566,7 @@ def _llm_eval(args: argparse.Namespace) -> int:
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     if is_store_python():
-        # The Store Python's private AppData copy would hide the session cookies (payload 20).
+        # The Store Python's private AppData copy would hide the session cookies.
         if getattr(args, "live", False):
             return _config_problem(STORE_PYTHON_REFUSED)
         print(f"ops-suite: warning: {STORE_PYTHON_WARNING}", file=sys.stderr)

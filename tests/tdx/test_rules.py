@@ -388,7 +388,7 @@ def test_unclaimed_cci_form_follows_the_normal_rules() -> None:
     assert run(rows).counts["event_tickets"] == 0
 
 
-# --- events with several dates (payload 05c) ---------------------------------------------
+# --- events with several dates -----------------------------------------------------------
 
 
 def test_a_multi_date_event_is_not_over_while_a_later_date_is_ahead() -> None:
@@ -638,7 +638,7 @@ def test_no_personal_data_in_any_output() -> None:
             assert invented not in text
 
 
-# --- merged tickets (payload 04c addendum) -----------------------------------------------
+# --- merged tickets ----------------------------------------------------------------------
 
 
 def test_a_carried_over_requestor_reply_older_than_a_desk_reply_is_not_waiting() -> None:
@@ -673,7 +673,7 @@ def test_a_reassignment_author_counts_as_desk_on_another_ticket() -> None:
 
     result = run(rows, {1: reassigned, 2: ticket_2})
     assert result.counts["desk_replied_last"] == 1
-    # Ticket 1 was opened by a desk member, so it is internal (payload 06c).
+    # Ticket 1 was opened by a desk member, so it is internal.
     assert result.findings == ()
     assert result.counts["internal_requestor"] == 1
 
@@ -681,7 +681,7 @@ def test_a_reassignment_author_counts_as_desk_on_another_ticket() -> None:
     assert sorted(f.reason for f in without.findings) == ["no_reply_yet", "other_last"]
 
 
-# --- the 48-hour gate on other_last (payload 05d) ----------------------------------------
+# --- the 48-hour gate on other_last ------------------------------------------------------
 
 
 def test_a_recent_reply_by_someone_else_is_counted_not_flagged() -> None:
@@ -717,7 +717,7 @@ def test_other_recent_is_not_on_the_default_summary_line() -> None:
     assert not any("recent" in line for line in format_audit_summary(result, show_ids=True))
 
 
-# --- strong desk names (payload 05d) -----------------------------------------------------
+# --- strong desk names -------------------------------------------------------------------
 
 
 def test_strong_desk_names_are_prim_resp_private_notes_and_merge_notices() -> None:
@@ -747,7 +747,7 @@ def test_strong_desk_names_leave_out_the_two_ticket_guess_and_extra_staff() -> N
     assert strong_desk_names([unclaimed(1, ago(120))], {}) == []
 
 
-# --- evaluate with known_desk (payload 05d) ----------------------------------------------
+# --- evaluate with known_desk ------------------------------------------------------------
 
 
 def _knows(*names: str) -> Callable[[str], bool]:
@@ -803,7 +803,7 @@ def test_known_desk_none_behaves_as_before() -> None:
     assert (default.counts["desk_replied_last"], default.counts["other_recent"]) == (1, 1)
 
 
-# --- tickets a desk member opened (payload 06c) ------------------------------------------
+# --- tickets a desk member opened --------------------------------------------------------
 
 PRIM_RESP = "Dana Desk"
 MANAGER = "Max Manager"
@@ -965,7 +965,7 @@ def test_the_checked_line_shows_internal_tickets_only_when_there_are_some() -> N
     assert "Internal" not in format_audit_summary(mixed_run(), show_ids=False)[1]
 
 
-# --- follow-up verdicts (payload 06b) -----------------------------------------------------
+# --- follow-up verdicts -------------------------------------------------------------------
 
 
 def _result(*findings: Finding) -> AuditResult:
@@ -1052,7 +1052,7 @@ def test_no_verdicts_leave_the_result_as_it_was() -> None:
     assert dict(after.counts) == dict(before.counts)
 
 
-# --- event request forms (payload 10) -----------------------------------------------------
+# --- event request forms ------------------------------------------------------------------
 
 FORM_TITLE = "CCI Event Request Form"
 
@@ -1202,7 +1202,7 @@ def test_a_requester_message_alone_is_not_outreach() -> None:
 
 
 def test_details_pending_when_the_desk_asked_2_days_ago_and_the_event_is_within_7_days() -> None:
-    """Payload 22: normal priority now; high only at the near-event override."""
+    """Normal priority; high only at the near-event override."""
     result = form_run(event_form(5, room=True, av=False), entry(DESK, 72))
 
     finding = only(result)
@@ -1227,7 +1227,7 @@ def test_outreach_done_when_the_desk_replied(days: float, desk_hours_ago: float)
 
 
 def test_the_requester_waiting_on_the_desk_is_client_waiting() -> None:
-    """Payload 22: the event's own reason, normal priority, and no follow-up classifier."""
+    """The event's own reason, normal priority, and no follow-up classifier."""
     result = form_run(event_form(5), entry(REQUESTOR, 60), entry(DESK, 100))
 
     finding = only(result)
@@ -1317,7 +1317,7 @@ def test_the_checked_line_counts_the_forms() -> None:
     )
 
 
-# --- ready to close (payload 16) ----------------------------------------------------------
+# --- ready to close -----------------------------------------------------------------------
 
 
 def _desk_last(hours: float, *, rules: RuleSettings = STAFF, requestor: str = REQUESTOR):
@@ -1386,7 +1386,7 @@ def test_ready_to_close_is_on_the_findings_line() -> None:
     assert "  ready_to_close  1  desk_replied_last  80h" in line
 
 
-# --- event state from the feed (payload 22) -----------------------------------------------
+# --- event state from the feed ------------------------------------------------------------
 
 # Thursday 2026-10-08 12:00. Renamed early, at first handling: the title says nothing about
 # whether the details are in.
@@ -1562,7 +1562,7 @@ def test_a_renamed_event_needing_no_outreach_raises_no_event_finding(
     assert kinds(waiting) == [("client_waiting", "event_requester_replied", "normal")]
 
 
-# --- the payload 22 review: a requester-last event always raises client waiting ----------
+# --- a requester-last event always raises client waiting ---------------------------------
 
 
 @pytest.mark.parametrize(

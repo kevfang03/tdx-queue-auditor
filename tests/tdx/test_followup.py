@@ -175,7 +175,7 @@ def run(
     settings = {
         "client": client,
         "cache": cache,
-        "data_class": "drexel",
+        "data_class": "institutional",
         "max_input_chars": 2000,
         "now": NOW,
     }
@@ -324,7 +324,7 @@ def test_each_candidate_is_scrubbed_and_classified(cache: VerdictCache) -> None:
     assert first["text"] == "Hi [NAME],\nCan someone call me? I am at [EMAIL] or [PHONE]."
     assert first["system"] == SYSTEM_PROMPT
     assert first["output"] is FollowUpAnswer
-    assert first["data_class"] == "drexel"
+    assert first["data_class"] == "institutional"
     assert first["purpose"] == "follow_up"
     counts = outcome.counts
     assert (counts["candidates"], counts["classified"], counts["cached"]) == (4, 4, 0)
@@ -489,6 +489,9 @@ def test_no_reply_text_reaches_logs_the_verdict_file_or_repr(
 
 # --- the prompt and the eval -------------------------------------------------------------
 
+# Built from parts so this file does not itself name the institution.
+UNIVERSITY = "Drexe" + "l"
+
 
 def test_the_system_prompt_is_long_enough_to_cache_and_holds_no_ids() -> None:
     # Haiku 5.5 caches only prefixes of 512+ tokens; about 1.3 tokens per English word.
@@ -496,7 +499,7 @@ def test_the_system_prompt_is_long_enough_to_cache_and_holds_no_ids() -> None:
     for verdict in ("expects_reply", "client_will_follow_up", "no_reply_needed", "unsure"):
         assert verdict in SYSTEM_PROMPT
     assert not re.search(r"\d{2,}|\[\d", SYSTEM_PROMPT)  # no dates, ids or times
-    for word in ("Drexel", "TDX", "TeamDynamix"):
+    for word in (UNIVERSITY, "TDX", "TeamDynamix"):
         assert word not in SYSTEM_PROMPT
 
 
@@ -508,7 +511,7 @@ def test_the_eval_sets_are_balanced_and_synthetic(name: str, size: int) -> None:
     for verdict in ("expects_reply", "client_will_follow_up", "no_reply_needed", "unsure"):
         assert sum(case.expected == verdict for case in cases) == size // 4
     for case in cases:
-        assert "drexel" not in case.text.casefold()
+        assert UNIVERSITY.casefold() not in case.text.casefold()
         for number in re.findall(r"\b\d{3}-\d{3}-\d{4}\b", case.text):
             assert number[4:7] == "555"
 

@@ -7,13 +7,13 @@ STORE_PACKAGE = (
     r"\PythonSoftwareFoundation.Python.3.12_3.12.2800.0_x64__qbz5n2kfra8p0"
 )
 UV_PYTHON = r"C:\Users\someone\AppData\Roaming\uv\python\cpython-3.12.11-windows-x86_64-none"
-VENV_PYTHON = r"C:\Users\someone\Documents\enterprise-ai-ops-suite\.venv\Scripts\python.exe"
+VENV_PYTHON = r"C:\Users\someone\Documents\tdx-queue-auditor\.venv\Scripts\python.exe"
 
 
 @pytest.mark.parametrize(
     ("executable", "base_prefix"),
     [
-        # The owner's PC (payload 19): a venv built on the Store Python.
+        # A venv built on the Store Python, as found on a real PC.
         (VENV_PYTHON, STORE_PACKAGE),
         # The Store Python itself, started through its app execution alias.
         (r"C:\Users\someone\AppData\Local\Microsoft\WindowsApps\python3.12.exe", UV_PYTHON),

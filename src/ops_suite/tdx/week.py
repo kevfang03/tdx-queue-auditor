@@ -1,9 +1,9 @@
-"""The shift summary's "Events this week" (payload 16): the coming week's agenda of
+"""The shift summary's "Events this week": the coming week's agenda of
 unclaimed event tickets. Pure functions.
 
 Every unclaimed event ticket with a date between the summary time and ``days`` later: event
-request forms (payload 10) and renamed ``EVENT [...]`` tickets. One row per event, at its next
-date in that window, with its state (payload 22):
+request forms and renamed ``EVENT [...]`` tickets. One row per event, at its next
+date in that window, with its state:
 
 - a renamed title with TBD, or with a date and time but no location: ``location TBD`` or
   ``location missing``;
