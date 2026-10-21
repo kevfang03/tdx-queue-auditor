@@ -1,0 +1,15 @@
+{
+  "schema": 1,
+  "id": "AAMkAGI2synthetic0005",
+  "internet_message_id": "<f05.20261001151200@mail.example.edu>",
+  "conversation_id": "AAQkAGI2conversation0005",
+  "received_at": "2026-10-01T15:12:00Z",
+  "from": "sam.whitfield@example.edu",
+  "to": "shared-mailbox@example.edu",
+  "cc": "",
+  "subject": "Automatic reply: Out of the office until Monday",
+  "body": "I am away from campus and will answer messages when I return next week.",
+  "is_html": false,
+  "has_attachments": false,
+  "headers": {"Auto-Submitted": "auto-replied"}
+}

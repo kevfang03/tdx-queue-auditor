@@ -1,0 +1,11 @@
+{
+  "schema": 1,
+  "id": "AAMkAGI2synthetic0008",
+  "conversation_id": "AAQkAGI2conversation0008",
+  "received_at": "2026-10-01T16:45:10",
+  "from": "Priya Natarajan <Priya.Natarajan@Example.EDU>",
+  "to": ["Shared-Mailbox@Example.edu", "Help Desk <HelpDesk@example.edu>"],
+  "cc": [],
+  "subject": "Cannot open the shared drive from off campus",
+  "body": "Good afternoon,\n\nSince yesterday the department shared drive refuses my sign-in whenever I work from home. It still opens normally in the office.\n\nPriya Natarajan"
+}

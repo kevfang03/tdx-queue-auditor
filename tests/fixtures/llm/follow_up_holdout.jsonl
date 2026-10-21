@@ -1,0 +1,12 @@
+{"text": "Hello, I followed the steps you sent but Outlook still asks for my password every few minutes. What should I try next?", "expected": "expects_reply"}
+{"text": "The projector in the lecture hall is still flickering after the cable swap. Can someone come look before my 2pm class tomorrow?", "expected": "expects_reply"}
+{"text": "Thanks for checking. I still haven't received the replacement charger you mentioned last week. Do you know when it will arrive?", "expected": "expects_reply"}
+{"text": "I'm traveling for a conference this week, so I can't test the new settings until I'm back next Tuesday. I'll let you know how it goes then.", "expected": "client_will_follow_up"}
+{"text": "Thanks. I need to check with my advisor which software license the lab uses, and I'll get back to you with the details.", "expected": "client_will_follow_up"}
+{"text": "I'll stop by the help desk on Friday morning with the laptop so you can take a look.", "expected": "client_will_follow_up"}
+{"text": "That did the trick, the printer works again. Thank you so much!", "expected": "no_reply_needed"}
+{"text": "Got it, thanks for letting me know.", "expected": "no_reply_needed"}
+{"text": "All set now. I was able to reset my password and sign in. Appreciate the help!", "expected": "no_reply_needed"}
+{"text": "Sent from my iPhone", "expected": "unsure"}
+{"text": "...", "expected": "unsure"}
+{"text": "https://example.com/s/a1b2c3", "expected": "unsure"}

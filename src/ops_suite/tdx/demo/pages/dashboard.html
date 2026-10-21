@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<!--
+  Synthetic dashboard frame, served at /TDWorkManagement/WorkManagement/Dashboard/Dashboard.
+  Its structure copies the reviewed dashboard capture (see docs/tdx-page-structure.md); every
+  title, name and date is invented.
+
+  ?d=... picks the dashboard, as switching dashboards in TDX changes only this frame's address:
+    (none)  the homepage: the Unclaimed widget and My Open Tasks, no Claimed by Others widget
+    2       IT Tickets: all four widgets
+    3       IT Tickets, but it renders only inside a parent frame; opened on its own it shows
+            an error instead of widgets (the failure path of tdx set-dashboard)
+
+  Each widget starts with a loading animation. The script then loads its grid with
+  POST /TDWorkManagement/WorkManagement/Widgets/<widget id>, as the real dashboard does, and
+  the pager's "next" button posts again for the next page. ?variant=... picks a test case:
+    (none)          all four widgets load
+    closed-loading  the Closed widget never finishes loading
+    empty           the unclaimed widget has no rows; the claimed widget has one page
+    missing         the claimed widget has no Prim Resp column
+    stuck           the claimed widget's pager never moves past page 1
+  The data-widget-id attribute exists only for this script; the code under test never uses it.
+-->
+<html class="k-webkit">
+<head><meta charset="utf-8"><title>Dashboard</title></head>
+<body class="tdx-single-page-container tdx-single-page-container--framed">
+<div class="tdx-body"><main><div id="page_container" class="tdx-workmgmt-page-container">
+<div class="modal" id="globalModalWindow"></div>
+<div id="dashboard-app"><div><div><div class="tdx-dashboard">
+  <div class="tdx-dashboard__row tdx-dashboard__row--layout-medium">
+    <div class="tdx-dashboard__column"><div>
+      <div class="tdx-dashboard__widget-container" data-widget-id="40101">
+        <header class="tdx-header-container"><div class="tdx-control-bar tdx-control-bar--filter tdx-control-bar--widget-header">
+          <h1 class="tdx-control-bar__title tdx-control-bar__title--no-overflow">Unclaimed Tickets in My Group(s)</h1>
+          <div class="tdx-control-bar__flex-end-container">
+            <div class="tdx-control-bar tdx-control-bar--filter"><div class="tdx-dropdown"><div class="tdx-icon tdx-icon--filter"></div><span>Filter results<span></span></span>
+              <div class="tdx-dropdown-popout"><form class="tdx-dropdown-popout__menu"><ul role="menu" class="tdx-dropdown-popout__menu report-filter-container">
+                <li class="tdx-dropdown-popout__menu-item-container report-filter-row"><div class="filter-label"><label class="control-label">Title contains</label></div><div class="filter-input"><input type="text" class="tdx-input-group__textbox"></div></li>
+              </ul><div class="tdx-dropdown-popout__menu-item-container filter-button-container"><button type="submit" class="tdx-btn tdx-btn--primary">Apply</button><button type="button" class="tdx-btn tdx-btn--secondary">Clear</button></div></form></div>
+            </div></div>
+            <button class="icon-button"><span class="fa-question-circle fa-solid fa-lg"></span></button>
+            <button class="icon-button"><span class="fa-refresh fa-solid fa-lg"></span></button>
+          </div>
+        </div></header>
+        <div><div class="tdx-loading-animation tdx-loading-animation--inline"></div></div>
+      </div>
+    </div></div>
+    <div class="tdx-dashboard__column"><div>
+      <div class="tdx-dashboard__widget-container" data-widget-id="40102">
+        <header class="tdx-header-container"><div class="tdx-control-bar tdx-control-bar--filter tdx-control-bar--widget-header">
+          <h1 class="tdx-control-bar__title tdx-control-bar__title--no-overflow">Active Tickets Claimed
+            by Others in My Group(s)</h1>
+          <div class="tdx-control-bar__flex-end-container">
+            <button class="icon-button"><span class="fa-question-circle fa-solid fa-lg"></span></button>
+            <button class="icon-button"><span class="fa-refresh fa-solid fa-lg"></span></button>
+          </div>
+        </div></header>
+        <div><div class="tdx-loading-animation tdx-loading-animation--inline"></div></div>
+      </div>
+    </div></div>
+  </div>
+  <div class="tdx-dashboard__row tdx-dashboard__row--layout-medium">
+    <div class="tdx-dashboard__column"><div class="tdx-dashboard__widget-placeholder"><div>
+      <div class="tdx-dashboard__widget-container" data-widget-id="40103">
+        <h1 class="tdx-control-bar__title tdx-control-bar__title--no-overflow">Closed Tickets in My Group(s)</h1>
+        <div><div class="tdx-loading-animation tdx-loading-animation--inline"></div></div>
+      </div>
+    </div></div></div>
+    <div class="tdx-dashboard__column"><div>
+      <div class="tdx-dashboard__widget-container" data-widget-id="40104">
+        <header class="tdx-header-container"><div class="tdx-control-bar tdx-control-bar--widget-header">
+          <h1 class="tdx-control-bar__title tdx-control-bar__title--no-overflow">My Open Tasks</h1>
+        </div></header>
+        <div><div class="tdx-loading-animation tdx-loading-animation--inline"></div></div>
+      </div>
+    </div></div>
+  </div>
+</div></div></div></div>
+</div></main></div>
+<script>
+  (function () {
+    var params = new URLSearchParams(location.search);
+    var variant = params.get("variant") || "";
+    var dashboard = params.get("d") || "";
+
+    if (dashboard === "3" && window.top === window) {
+      document.getElementById("dashboard-app").innerHTML =
+        '<p class="tdx-error">This dashboard can only be shown inside Work Management.</p>';
+      return;
+    }
+    if (dashboard !== "2" && dashboard !== "3") {
+      ["40102", "40103"].forEach(function (id) {
+        var widget = document.querySelector('[data-widget-id="' + id + '"]');
+        widget.parentNode.removeChild(widget);
+      });
+    }
+
+    function body(container) {
+      return container.querySelector(":scope > div:last-child");
+    }
+
+    function load(container, page) {
+      var id = container.getAttribute("data-widget-id");
+      fetch("/TDWorkManagement/WorkManagement/Widgets/" + id, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ page: page, variant: variant })
+      })
+        .then(function (response) { return response.text(); })
+        .then(function (html) {
+          // Kendo replaces the grid a moment after the data arrives.
+          setTimeout(function () {
+            body(container).innerHTML = html;
+            wire(container, page);
+          }, 100);
+        })
+        .catch(function () {});
+    }
+
+    function wire(container, page) {
+      var icon = container.querySelector(
+        ".k-pager .k-pager-nav:not(.k-pager-first):not(.k-pager-last) .k-svg-i-caret-alt-right"
+      );
+      if (!icon) return;
+      var button = icon.closest("button");
+      button.addEventListener("click", function () {
+        if (button.classList.contains("k-disabled")) return;
+        container.querySelector(".k-grid").insertAdjacentHTML(
+          "beforeend", '<div class="k-loading-mask"><span class="k-loading-text">Loading...</span></div>'
+        );
+        load(container, page + 1);
+      });
+    }
+
+    setTimeout(function () {
+      document.querySelectorAll(".tdx-dashboard__widget-container").forEach(function (container) {
+        if (variant === "closed-loading" && container.getAttribute("data-widget-id") === "40103") return;
+        load(container, 1);
+      });
+    }, 150);
+  })();
+</script>
+</body>
+</html>

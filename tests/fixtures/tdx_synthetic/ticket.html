@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<!-- Synthetic ticket page with an activity feed. Every person and detail here is invented. -->
+<html>
+<head>
+  <title>3119232 - Projector in Room 204 shows no picture</title>
+  <script>window.ticketRequestor = "Jordan Sample";</script>
+</head>
+<body class="ticket-detail">
+  <div id="divHeader" class="ticket-header">
+    <h1 id="thTicket_spnTitle" class="ticket-title">Projector in Room 204 shows no picture</h1>
+    <span id="lblTicketID" class="ticket-id">Ticket ID: 3119232</span>
+  </div>
+
+  <div id="divDetails" class="ticket-details">
+    <dl>
+      <dt>Requestor</dt>
+      <dd><a href="/TDNext/Apps/People/PersonDet.aspx?U=8f1c2e44" title="Jordan Sample">Jordan Sample</a></dd>
+      <dt>Requestor Email</dt>
+      <dd><a href="mailto:jordan.sample@example.edu">jordan.sample@example.edu</a></dd>
+      <dt>Requestor Phone</dt>
+      <dd>215-555-0199</dd>
+      <dt>Student ID</dt>
+      <dd>14567890</dd>
+      <dt>Primary Responsibility</dt>
+      <dd>Riley Testperson</dd>
+      <dt>Created</dt>
+      <dd>Fri 10/2/26 3:30 PM</dd>
+    </dl>
+  </div>
+
+  <div id="divFeed" class="feed" role="feed" aria-label="Activity for ticket 3119232">
+    <article id="feedEntry-55123401" class="feed-item feed-item-client" data-author="Jordan Sample">
+      <div class="feed-author"><a href="/TDNext/Apps/People/PersonDet.aspx?U=8f1c2e44">Jordan Sample</a></div>
+      <div class="feed-date">Sat 10/3/26 10:12 AM</div>
+      <div class="feed-body">
+        <p>Hi, it still shows no picture. You can reach me at (215) 555-0142 or jordan.sample@example.edu.</p>
+        <blockquote>On Fri, Riley Testperson wrote: Could you try the HDMI input?</blockquote>
+      </div>
+    </article>
+    <article id="feedEntry-55120077" class="feed-item feed-item-tech" data-author="Riley Testperson">
+      <div class="feed-author">Riley Testperson</div>
+      <div class="feed-date">Fri 10/2/26 4:05 PM</div>
+      <div class="feed-body"><p>Could you try the HDMI input on the wall plate and let us know?</p></div>
+    </article>
+  </div>
+
+  <form id="frmComment" action="/TDNext/Apps/43/Tickets/Update?TicketID=3119232" method="post">
+    <textarea id="txtComment" name="Comments" placeholder="Reply to Jordan Sample">Draft reply to Jordan Sample about Room 204</textarea>
+    <input type="checkbox" id="chkNotify" name="Notify" value="jordan.sample@example.edu" checked>
+    <label>Notify Jordan Sample</label>
+    <ul id="notifyList" class="notify-list">
+      <li><input type="checkbox" id="notify_Riley Testperson" name="notify_riley.testperson@example.edu"><label>Riley Testperson</label></li>
+      <li><input type="checkbox" id="chkNotifyCaseyPlaceholder" name="rt47"><label>Casey Placeholder</label></li>
+    </ul>
+  </form>
+
+  <div id="avatar-JordanSample" class="avatar avatar-jordan-sample feed-item-client">JS</div>
+  <div class="notified">Notified: Riley Testperson <riley.testperson@example.edu></div>
+</body>
+</html>

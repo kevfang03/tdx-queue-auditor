@@ -1,0 +1,15 @@
+{
+  "schema": 1,
+  "id": "AAMkAGI2synthetic0001",
+  "internet_message_id": "<f01.20261001140322@mail.example.edu>",
+  "conversation_id": "AAQkAGI2conversation0001",
+  "received_at": "2026-10-01T14:03:22Z",
+  "from": "jordan.rivera@example.edu",
+  "to": "shared-mailbox@example.edu",
+  "cc": "",
+  "subject": "Laptop will not join the library Wi-Fi",
+  "body": "<html><body><p>Hi,</p><p>My laptop keeps dropping off the wireless network on the second floor of the library. Could someone take a look this week? You can reach me on 215-555-0142.</p><p>Thanks,<br>Jordan Rivera</p></body></html>",
+  "is_html": true,
+  "has_attachments": false,
+  "headers": {}
+}

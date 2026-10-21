@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<!--
+  Synthetic TDWorkManagement shell, served at /TDWorkManagement/. Like the real app, the
+  dashboard is not in this page but in an application iframe that the shell adds after it
+  has loaded, and it starts on the homepage dashboard. Choosing another dashboard changes only
+  the iframe's address, never this page's: tests call switchDashboard("d=2") with
+  page.evaluate, standing in for a person using the dashboard menu. Invented content only.
+-->
+<html>
+<head><meta charset="utf-8"><title>Work Management</title></head>
+<body>
+  <nav class="tdx-app-nav">
+    <button type="button" class="icon-button"><span class="fa-bars fa-solid"></span></button>
+    <a class="tdx-app-nav__link" href="#">Home</a>
+    <select class="tdx-dashboard-picker" onchange="switchDashboard(this.value)">
+      <option value="">My Homepage</option>
+      <option value="d=2">IT Tickets</option>
+    </select>
+  </nav>
+  <div class="tdx-app-container-collection" id="app-container-collection">
+    <div class="tdx-app-container" id="ai_1_container">
+      <div class="tdx-app-container__main">
+        <div class="tdx-app-container__content">
+          <div class="tdx-app-container__content-iframe" id="app-frame-holder"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <script>
+    // A write the guard must abort: it is not on the allowlist.
+    fetch("/TDWorkManagement/api/12345/feed", { method: "POST", body: "{}" }).catch(function () {});
+    var frame = document.createElement("iframe");
+    frame.className = "tdx-app-container__iframe";
+    window.switchDashboard = function (query) {
+      frame.src = "WorkManagement/Dashboard/Dashboard" + (query ? "?" + query : "");
+    };
+    setTimeout(function () {
+      frame.src = "WorkManagement/Dashboard/Dashboard" + location.search;
+      document.getElementById("app-frame-holder").appendChild(frame);
+    }, 200);
+  </script>
+</body>
+</html>

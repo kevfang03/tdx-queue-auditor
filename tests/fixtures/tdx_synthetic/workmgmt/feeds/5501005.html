@@ -1,0 +1,61 @@
+<!--
+  Feed of ticket 5501005: every entry carries a private marker, but only some show it, the way
+  the live page may (see docs/tdx-page-structure.md, "Private notes: rendered, not present").
+  Markers are hidden by a class that this inline style sets to display: none, or by the
+  hidden attribute. Invented content. Page order, newest first:
+    E3   status change only, marker hidden (hidden attribute)    Wed 10/7/26 11:00 AM  system
+    E2   private note, marker shown                               Wed 10/7/26 9:00 AM   private
+    E2a    reply by the note's author, no marker of its own       Wed 10/7/26 9:30 AM   private (inherited)
+    E2b    reply by someone else, own marker hidden (class)       Wed 10/7/26 10:00 AM  reply
+    E1   desk reply, marker hidden (class)                        Mon 10/5/26 9:00 AM   reply
+    E1a    requestor's reply, own marker hidden (hidden attr)     Tue 10/6/26 8:00 AM   reply
+-->
+<style>.feed-private.private-off { display: none; }</style>
+<div class="feed-item" role="group">
+  <div class="feed-body">
+    <div class="feed-heading">
+      <span class="feed-participant-name"><a href="/TDNext/Apps/People/Details?U=3">Pat Helpdesk</a></span>
+      <span class="feed-private" hidden>Private</span>
+    </div>
+    <div class="wrap-text feed-comment-text">Changed Status from <b>New</b> to <b>In Process</b>.</div>
+    <div class="feed-context"><span class="feed-timestamp gray"><span>Wed 10/7/26 11:00 AM</span><span>(1 day ago)</span></span></div>
+  </div>
+</div>
+<div class="feed-item" role="group">
+  <div class="feed-body">
+    <div class="feed-heading">
+      <span class="feed-participant-name"><a href="/TDNext/Apps/People/Details?U=2">Riley Testperson</a></span>
+      <span class="feed-private">Private</span>
+    </div>
+    <div class="wrap-text feed-comment-text">Checked the room booking; nothing on our side.</div>
+    <div class="feed-context"><span class="feed-timestamp gray"><span>Wed 10/7/26 9:00 AM</span><span>(1 day ago)</span></span></div>
+    <div class="feed-reply feed-reply-box">
+      <span class="feed-participant-name"><a href="/TDNext/Apps/People/Details?U=2">Riley Testperson</a></span>
+      <div class="wrap-text feed-comment-text"><div>Also asked facilities.</div></div>
+      <div class="reply-context"><span class="feed-timestamp gray"><span>Wed 10/7/26 9:30 AM</span><span>(1 day ago)</span></span></div>
+    </div>
+    <div class="feed-reply feed-reply-box">
+      <span class="feed-participant-name"><a href="/TDNext/Apps/People/Details?U=1">Alex Example</a></span>
+      <span class="feed-private private-off">Private</span>
+      <div class="wrap-text feed-comment-text"><div>Any news on the projector?</div></div>
+      <div class="reply-context"><span class="feed-timestamp gray"><span>Wed 10/7/26 10:00 AM</span><span>(1 day ago)</span></span></div>
+    </div>
+  </div>
+</div>
+<div class="feed-item" role="group">
+  <div class="feed-body">
+    <div class="feed-heading">
+      <span class="feed-participant-name"><a href="/TDNext/Apps/People/Details?U=3">Pat Helpdesk</a></span>
+      <span class="feed-private private-off">Private</span>
+    </div>
+    <div class="wrap-text feed-comment-text">Hi Alex, could you send a photo of the input panel?</div>
+    <div class="truncate gray feed-context">Notified: alex.example@example.edu <button type="button" class="btn btn-link">Show all</button></div>
+    <div class="feed-context"><span class="feed-timestamp gray"><span>Mon 10/5/26 9:00 AM</span><span>(3 days ago)</span></span></div>
+    <div class="feed-reply feed-reply-box">
+      <span class="feed-participant-name"><a href="/TDNext/Apps/People/Details?U=1">Alex Example</a></span>
+      <span class="feed-private" hidden>Private</span>
+      <div class="wrap-text feed-comment-text"><div>Photo attached.</div></div>
+      <div class="reply-context"><span class="feed-timestamp gray"><span>Tue 10/6/26 8:00 AM</span><span>(2 days ago)</span></span></div>
+    </div>
+  </div>
+</div>

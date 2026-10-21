@@ -1,0 +1,58 @@
+# Lint and test on every push and pull request. Uses no secrets and uploads nothing.
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      # setup-uv publishes no moving major tag, so pin the full release.
+      - uses: astral-sh/setup-uv@v10.3.0
+        with:
+          python-version: "3.12"
+          enable-cache: true
+      - run: uv sync --locked
+      - run: uv run ruff check .
+
+  test:
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # The full suite, browser tests included; xvfb gives the headed capture tests a display.
+          - os: ubuntu-latest
+            browser: true
+          - os: windows-latest
+            browser: false
+          - os: macos-latest
+            browser: false
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@v10.3.0
+        with:
+          python-version: "3.12"
+          enable-cache: true
+      - run: uv sync --locked
+      - name: Install Chromium
+        if: matrix.browser
+        run: uv run playwright install --with-deps chromium
+      - name: Test (full suite)
+        if: matrix.browser
+        run: xvfb-run -a uv run pytest -q -rs
+      - name: Test (without browser tests)
+        if: ${{ !matrix.browser }}
+        run: uv run pytest -q -rs -m "not browser"

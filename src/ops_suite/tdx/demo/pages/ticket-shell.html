@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<!--
+  Synthetic TDWorkManagement shell with a ticket open as an in-app tab, served at
+  /TDWorkManagement/Apps/43/Tickets/TicketDet?TicketID=<id> (the grid's ID link in the synthetic
+  widgets). As in the reviewed ticket capture, the dashboard stays loaded in a background frame
+  and the ticket is the older TDNext page in another frame, so the feed is two frames deep in
+  the page's frame list. Both frames are added after the shell has loaded. Invented content only.
+-->
+<html>
+<head><meta charset="utf-8"><title>Work Management</title></head>
+<body>
+  <nav class="tdx-app-nav">
+    <a class="tdx-app-nav__link" href="#">Home</a>
+    <span class="tdx-app-nav__tab">Ticket</span>
+  </nav>
+  <div class="tdx-app-container-collection">
+    <div class="tdx-app-container tdx-app-container--hidden">
+      <div class="tdx-app-container__content" id="dashboard-holder"></div>
+    </div>
+    <div class="tdx-app-container">
+      <div class="tdx-app-container__content" id="ticket-holder"></div>
+    </div>
+  </div>
+  <script>
+    setTimeout(function () {
+      var dashboard = document.createElement("iframe");
+      dashboard.className = "tdx-app-container__iframe";
+      dashboard.src = "/TDWorkManagement/WorkManagement/Dashboard/Dashboard?d=2";
+      document.getElementById("dashboard-holder").appendChild(dashboard);
+      var ticket = document.createElement("iframe");
+      ticket.className = "tdx-app-container__iframe";
+      ticket.src = "/TDNext/Apps/43/Tickets/TicketDet.aspx" + location.search;
+      document.getElementById("ticket-holder").appendChild(ticket);
+    }, 200);
+  </script>
+</body>
+</html>

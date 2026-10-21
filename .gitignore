@@ -1,0 +1,53 @@
+# --- Secrets: never commit ---
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+secrets/
+credentials*.json
+token*.json
+
+# --- Browser automation state (contains live session cookies) ---
+.browser-profile/
+browser-profile/
+playwright-state/
+storage_state*.json
+*.har
+
+# --- Generated output that may contain ticket/student data ---
+drafts/
+logs/
+*.log
+data/
+cache/
+screenshots/
+traces/
+# TDX structure captures; the owner decides later whether reviewed ones get committed.
+tests/fixtures/tdx/captures/
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+build/
+dist/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# --- OS / editor ---
+.DS_Store
+Thumbs.db
+desktop.ini
+.vscode/
+.idea/
+*.swp
+
+# --- Public snapshot (scripts/export_public.py) ---
+.export-manifest

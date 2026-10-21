@@ -1,0 +1,124 @@
+<!--
+  Feed of ticket 5501001, as POST /TDNext/Apps/Feed/Search returns it in the synthetic app.
+  Structure as in the ticket capture (docs/tdx-page-structure.md, "Entries"); invented content.
+  The classes the capture masked (the entry's own class, the comment's classes) are invented
+  here too, and the code under test never uses them. Page order, newest first, like TDX:
+    A  private note with a status change           Wed 10/7/26 9:15 AM    private
+    B  desk reply with a status change             Tue 10/6/26 4:40 PM    reply
+    B1   requestor's email reply to B              Wed 10/7/26 11:30 AM   reply (after A)
+    C  third party, timestamp not a date           (undated)              reply, unreadable
+    D  status change only                          Mon 10/5/26 2:00 PM    system
+    E  reply with an attachment                    Mon 10/5/26 1:58 PM    reply
+    F  no author                                   Sat 10/3/26 11:00 AM   dropped, unreadable
+    G  private note                                Sat 10/3/26 10:00 AM   private
+    G1   another author's reply to private note G  Sat 10/3/26 10:05 AM   reply (not inherited)
+-->
+<div class="feed-item" role="group">
+  <div class="feed-profile-picture"><div class="profile-image clickable blue-bg initials" role="link">RT</div></div>
+  <div class="feed-body">
+    <div class="feed-heading">
+      <span class="feed-participant-name"><a href="/TDNext/Apps/People/Details?U=2">Riley Testperson</a></span>
+      <span class="feed-private">Private</span>
+    </div>
+    <div class="feed-breadcrumbs gray wrap-text feed-context"></div>
+    <div class="wrap-text feed-comment-text">Changed Status from <b>In Process</b> to <b>On Hold</b>.<br><br>Called the AV team about Room 204, waiting on a part.</div>
+    <div class="feed-context"><span class="feed-timestamp gray"><span>Wed 10/7/26 9:15 AM</span><span>(1 day ago)</span></span></div>
+    <div class="feed-actions NoPrint"><div class="clearfix"><button type="button" class="btn btn-link">Reply</button><button type="button" class="btn btn-link">Like</button></div></div>
+  </div>
+</div>
+<div class="feed-item" role="group">
+  <div class="feed-profile-picture"><div class="profile-image clickable gray-bg initials" role="link">PH</div></div>
+  <div class="feed-body">
+    <div class="feed-heading">
+      <span class="feed-participant-name"><a href="/TDNext/Apps/People/Details?U=3">Pat Helpdesk</a></span>
+    </div>
+    <div class="feed-breadcrumbs gray wrap-text feed-context"></div>
+    <div class="wrap-text feed-comment-text">Changed Status from <b>New</b> to <b>In Process</b>.<br><br>Hi Alex,<br><br>Could you try the HDMI input on the wall plate and let us know?<br><br>Pat<br><span>IT Service Desk</span><br></div>
+    <div class="truncate gray feed-context">Notified: alex.example@example.edu, pat.helpdesk@example.edu <button type="button" class="btn btn-link">Show all</button></div>
+    <div class="feed-context"><span class="feed-timestamp gray"><span>Tue 10/6/26 4:40 PM</span><span>(2 days ago)</span></span></div>
+    <div class="feed-actions NoPrint"><div class="clearfix"><button type="button" class="btn btn-link">Reply</button><button type="button" class="btn btn-link">Like</button>
+      <div class="dropdown pull-left"><button type="button" class="btn btn-link"><span>More</span><span class="sr-only">More actions for this update</span></button>
+        <ul class="dropdown-menu" role="menu"><li role="presentation"><button type="button" class="btn btn-link" role="menuitem">Copy link</button></li></ul>
+      </div>
+    </div></div>
+    <div class="feed-reply feed-reply-box">
+      <span class="feed-participant-name"><a href="/TDNext/Apps/People/Details?U=1">Alex Example</a></span>
+      <div class="wrap-text feed-comment-text">
+        <div>Hi,</div><div><br></div>
+        <div>The HDMI input shows no picture either. I am in Room 204 until 3pm.</div><div><br></div>
+        <div><div>Alex</div></div>
+        <div><div><b>From: Pat Helpdesk</b></div><div>pat.helpdesk@example.edu</div><div>Sent: Tuesday</div><div>alex.example@example.edu</div></div>
+        <div><br></div>
+        <div><div><div><br><br>Could you try the HDMI input?<br>Pat</div></div></div>
+      </div>
+      <div class="reply-context"><span class="feed-timestamp gray"><span>Wed 10/7/26 11:30 AM</span><span>(1 day ago)</span></span></div>
+    </div>
+  </div>
+</div>
+<div class="feed-item" role="group">
+  <div class="feed-profile-picture"><div class="profile-image clickable yellow-bg initials" role="link">JT</div></div>
+  <div class="feed-body">
+    <div class="feed-heading">
+      <span class="feed-participant-name"><a href="/TDNext/Apps/People/Details?U=4">Jordan Thirdparty</a></span>
+    </div>
+    <div class="feed-breadcrumbs gray wrap-text feed-context"></div>
+    <div class="wrap-text feed-comment-text">Adding myself so I can follow along.</div>
+    <div class="truncate gray feed-context">Notified: jordan.thirdparty@example.edu <button type="button" class="btn btn-link">Show all</button></div>
+    <div class="feed-context"><span class="feed-timestamp gray"><span>Yesterday evening</span><span>(1 day ago)</span></span></div>
+    <div class="feed-actions NoPrint"><div class="clearfix"><button type="button" class="btn btn-link">Reply</button></div></div>
+  </div>
+</div>
+<div class="feed-item" role="group">
+  <div class="feed-profile-picture"><div class="profile-image clickable gray-bg initials" role="link">PH</div></div>
+  <div class="feed-body">
+    <div class="feed-heading">
+      <span class="feed-participant-name"><a href="/TDNext/Apps/People/Details?U=3">Pat Helpdesk</a></span>
+    </div>
+    <div class="feed-breadcrumbs gray wrap-text feed-context"></div>
+    <div class="wrap-text feed-comment-text">Changed Status from <b>Open</b> to <b>New</b>.</div>
+    <div class="feed-context"><span class="feed-timestamp gray"><span>Mon 10/5/26 2:00 PM</span><span>(3 days ago)</span></span></div>
+    <div class="feed-actions NoPrint"><div class="clearfix"><button type="button" class="btn btn-link">Reply</button></div></div>
+  </div>
+</div>
+<div class="feed-item" role="group">
+  <div class="feed-profile-picture"><div class="profile-image clickable gray-bg initials" role="link">PH</div></div>
+  <div class="feed-body">
+    <div class="feed-heading">
+      <span class="feed-participant-name"><a href="/TDNext/Apps/People/Details?U=3">Pat Helpdesk</a></span>
+    </div>
+    <div class="feed-breadcrumbs gray wrap-text feed-context"></div>
+    <div class="wrap-text feed-comment-text">Here is the room schedule for next week.<br>
+      <div class="feed-attachments"><span class="fa fa-paperclip"></span> <a href="/TDNext/Apps/43/Tickets/Attachment?id=2">room-204-schedule.pdf</a></div>
+    </div>
+    <div class="truncate gray feed-context">Notified: alex.example@example.edu <button type="button" class="btn btn-link">Show all</button></div>
+    <div class="feed-context"><span class="feed-timestamp gray"><span>Mon 10/5/26 1:58 PM</span><span>(3 days ago)</span></span></div>
+    <div class="feed-actions NoPrint"><div class="clearfix"><button type="button" class="btn btn-link">Reply</button></div></div>
+  </div>
+</div>
+<div class="feed-item" role="group">
+  <div class="feed-profile-picture"><div class="profile-image clickable gray-bg initials" role="link">??</div></div>
+  <div class="feed-body">
+    <div class="feed-heading"></div>
+    <div class="feed-breadcrumbs gray wrap-text feed-context"></div>
+    <div class="wrap-text feed-comment-text">An update from an account that no longer exists.</div>
+    <div class="feed-context"><span class="feed-timestamp gray"><span>Sat 10/3/26 11:00 AM</span><span>(5 days ago)</span></span></div>
+  </div>
+</div>
+<div class="feed-item" role="group">
+  <div class="feed-profile-picture"><div class="profile-image clickable blue-bg initials" role="link">RT</div></div>
+  <div class="feed-body">
+    <div class="feed-heading">
+      <span class="feed-participant-name"><a href="/TDNext/Apps/People/Details?U=2">Riley Testperson</a></span>
+      <span class="feed-private">Private</span>
+    </div>
+    <div class="feed-breadcrumbs gray wrap-text feed-context"></div>
+    <div class="wrap-text feed-comment-text">Requestor says the projector was moved last month.</div>
+    <div class="feed-context"><span class="feed-timestamp gray"><span>Sat 10/3/26 10:00 AM</span><span>(5 days ago)</span></span></div>
+    <div class="feed-actions NoPrint"><div class="clearfix"><button type="button" class="btn btn-link">Reply</button></div></div>
+    <div class="feed-reply feed-reply-box">
+      <span class="feed-participant-name"><a href="/TDNext/Apps/People/Details?U=3">Pat Helpdesk</a></span>
+      <div class="wrap-text feed-comment-text"><div>Thanks, I will check the inventory.</div></div>
+      <div class="reply-context"><span class="feed-timestamp gray"><span>Sat 10/3/26 10:05 AM</span><span>(5 days ago)</span></span></div>
+    </div>
+  </div>
+</div>

@@ -1,0 +1,15 @@
+{
+  "schema": 1,
+  "id": "AAMkAGI2synthetic0002",
+  "internet_message_id": "<f02.20260930131500@mail.example.edu>",
+  "conversation_id": "AAQkAGI2conversation0002",
+  "received_at": "2026-09-30T09:15:00-04:00",
+  "from": "maria.okafor@example.edu",
+  "to": "shared-mailbox@example.edu; frontdesk@example.edu",
+  "cc": "tomas.lindqvist@example.edu",
+  "subject": "Printer on floor 3 is jammed again",
+  "body": "Hello,\n\nThe colour printer outside room 310 has a paper jam that we cannot clear ourselves. A photo of the error panel is attached.\n\n-- \nMaria Okafor\nCirculation Services",
+  "is_html": false,
+  "has_attachments": true,
+  "headers": {}
+}

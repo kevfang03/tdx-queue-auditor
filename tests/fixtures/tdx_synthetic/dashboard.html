@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<!-- Synthetic TDX-like dashboard. Every name, address, number and title here is invented. -->
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>IT Tickets - Alex Example - TDNext</title>
+  <link rel="stylesheet" href="/TDNext/styles/site.css?v=20261002">
+  <style>
+    .secret-style-marker { color: #c0ffee; }
+  </style>
+  <script>
+    var currentUser = "Alex Example";
+    var currentUserEmail = "alex.example@example.edu";
+  </script>
+</head>
+<body class="tdx-app theme-2" data-user-id="14567890">
+  <noscript>Hello Alex Example, please enable JavaScript.</noscript>
+  <header id="appHeader" class="app-header" role="banner">
+    <a class="brand" href="/TDNext/Home/Desktop/Default.aspx?user=alex.example">IT Tickets</a>
+    <span class="user-name" title="Alex Example (alex.example@example.edu)">Alex Example</span>
+    <svg class="icon icon-bell" viewBox="0 0 16 16" aria-label="3 alerts for Alex Example">
+      <title>Notifications for Alex Example</title>
+      <path d="M8 1a5 5 0 0 0-5 5v3l-1 2h12l-1-2V6a5 5 0 0 0-5-5z"></path>
+    </svg>
+  </header>
+
+  <nav id="leftNav" class="left-menu" role="navigation" aria-label="Reports for Alex Example">
+    <ul>
+      <li><a href="/TDNext/Apps/43/Tickets/Report.aspx?ReportID=88123">Active Tickets in My Group(s)</a></li>
+      <li><a href="/TDNext/Apps/43/Tickets/Report.aspx?ReportID=88124">Closed Tickets in My Group(s)</a></li>
+    </ul>
+  </nav>
+
+  <main id="ctl00_mainContent" class="dashboard" role="main">
+    <ul class="nav nav-tabs" role="tablist">
+      <li role="presentation" class="active"><a role="tab" href="#desktop">Desktop</a></li>
+      <li role="presentation"><a role="tab" href="#ticket-3119232">3119232 - Projector in Room 204 shows no picture</a></li>
+    </ul>
+
+    <section id="widget_unclaimed" class="widget report-widget">
+      <h2 class="widget-title">Unclaimed Tickets in My Group(s)</h2>
+      <iframe id="ctl00_col2_frame" name="ifrUnclaimed" class="widget-frame" src="widget.html?ReportID=88125&amp;user=alex.example" title="Unclaimed tickets for Alex Example"></iframe>
+    </section>
+
+    <section id="widget_claimed" class="widget report-widget">
+      <h2 class="widget-title">Active Tickets Claimed by Others in My Group(s)</h2>
+      <div class="grid" role="grid" aria-label="Claimed tickets">
+        <div class="grid-row grid-head" role="row">
+          <div class="grid-cell" role="columnheader"><a href="?sort=Modified">Modified</a></div>
+          <div class="grid-cell" role="columnheader">ID</div>
+          <div class="grid-cell" role="columnheader">Title</div>
+          <div class="grid-cell" role="columnheader">Prim Resp</div>
+          <div class="grid-cell" role="columnheader">Status</div>
+        </div>
+        <div class="grid-row" role="row" id="row-3120045" data-ticket-id="3120045">
+          <div class="grid-cell" role="gridcell">Thu 10/1/26 9:05 AM</div>
+          <div class="grid-cell" role="gridcell"><a href="/TDNext/Apps/43/Tickets/TicketDet?TicketID=3120045">3120045</a></div>
+          <div class="grid-cell" role="gridcell" title="Cannot connect laptop to campus Wi-Fi">Cannot connect laptop to campus Wi-Fi</div>
+          <div class="grid-cell" role="gridcell">Morgan Fictional</div>
+          <div class="grid-cell" role="gridcell">In Process</div>
+        </div>
+      </div>
+      <div class="pager" data-page="1">
+        <a class="page-link" href="javascript:__doPostBack('ctl00$col2$pager','Page$2')">2</a>
+        <span class="page-info">Page 1 of 3</span>
+      </div>
+    </section>
+
+    <form id="aspnetForm" action="/TDNext/Home/Desktop/Default.aspx?user=alex.example" method="post">
+      <input type="hidden" name="__VIEWSTATE" value="dXNlcj1BbGV4IEV4YW1wbGU7aWQ9MTQ1Njc4OTA=">
+      <input type="text" id="quickSearch" name="ctl00$search" placeholder="Search Alex Example's tickets" value="Jordan Sample" aria-label="Search">
+      <select id="assignTo" name="ctl00$assign">
+        <option value="alex.example@example.edu" selected>Alex Example</option>
+        <option value="morgan.fictional@example.edu">Morgan Fictional</option>
+      </select>
+      <button type="button" onclick="alert('Alex Example')" style="color:red">Go</button>
+    </form>
+  </main>
+
+  <footer class="app-footer">
+    Questions? Call the desk at (215) 555-0100 or write to desk-team@example.edu.
+  </footer>
+
+  <script>
+    // Paging in TDX may post back; this simulates a call the capture should list.
+    fetch("api/tickets.json?page=2&ticket=3119232", { method: "POST", body: "user=alex.example" })
+      .catch(function () {});
+  </script>
+  <img src="http://localhost:65535/tracker.gif?user=alex.example" alt="Tracker for Alex Example" width="1" height="1">
+</body>
+</html>

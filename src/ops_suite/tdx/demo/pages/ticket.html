@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<!--
+  Synthetic TDNext ticket page, served at /TDNext/Apps/43/Tickets/TicketDet.aspx?TicketID=<id>.
+  Its structure copies the reviewed ticket capture (see docs/tdx-page-structure.md, "Ticket page
+  and feed"); every name, address, title and date is invented.
+
+  Like the real page, the feed starts empty with its refresh indicator showing. After a short
+  delay the script loads it with POST /TDNext/Apps/Feed/Search (the request the guard allows),
+  inserts the entries the server returns (feeds/<id>.html from the app's page source)
+  and hides the indicator with style="display: none". If the search fails (no such file), the
+  indicator keeps showing: a feed that never loads. Like the real page, it also loads SignalR:
+  the hub script, a negotiate GET and a WebSocket under /TDSignalR/, all of which guarded runs
+  refuse. The feed does not depend on them.
+
+  The description is rendered by the server, as on the real page: the app puts the page
+  source's descriptions/<id>.html in place of the "ticket description" comment (empty when there
+  is none). Event request forms are read from it (payload 10).
+
+  ?variant=... picks a test case:
+    (none)  as above
+    stray   also fires a POST to a ticket-update path on load, which the guard must abort
+-->
+<html class="k-webkit">
+<head><meta charset="utf-8"><title>Ticket</title></head>
+<body>
+<form action="TicketDet.aspx" id="Form1" onsubmit="return false;">
+  <div id="UpdateProgress1" role="status" style="display: none;">
+    <div><span class="tdx-loading-animation active"></span></div>
+  </div>
+  <div class="NoPrint">
+    <div id="divHeader" class="fixed white-bg heading">
+      <div class="container-fluid gutter-top-sm gutter-bottom">
+        <div class="row"><div class="col-sm-9">
+          <h1 id="thTicket_spnTitle">Projector in Room 204 shows no picture</h1>
+        </div></div>
+      </div>
+    </div>
+  </div>
+
+  <div id="divAttachments" class="js-ticket-attachments">
+    <div class="panel panel-default js-attachments-panel">
+      <div class="panel-heading js-attachments-header">
+        <span class="js-attachments-title">Attachments</span> <span class="js-attachments-count">(1)</span>
+      </div>
+      <div class="panel-collapse collapse">
+        <div class="panel-body js-attachments-body">
+          <a href="/TDNext/Apps/43/Tickets/Attachment?id=1">room-204-photo.jpg</a>
+          <input type="checkbox" class="fa-regular fa-fw fa-nopad js-attachment-private">
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="divTicketDescription">
+    <div id="divDescription" class="gutter-bottom-lg">
+      <h2>Description</h2>
+      <div class="gutter-top-sm"></div>
+      <div class="wrap-text ticket-desc"><!-- ticket description --></div>
+    </div>
+  </div>
+
+  <div class="row"><div class="col-sm-12">
+    <div id="divFeed" class="gutter-bottom">
+      <h2><span class="text-nowrap">Feed for <span>4</span> items</span>
+        <span id="commentActions" class="pull-right feed-button-group">
+          <button id="btnComment" type="button" class="btn btn-primary btn-sm"><span class="fa-solid fa-comment fa-fw"></span><span class="hidden-xs">Comment</span></button>
+        </span>
+      </h2>
+      <div id="divComment" class="comment gutter-bottom">
+        <div class="gutter">
+          <div class="checkbox"><label><input id="chkPrivate" type="checkbox" name="chkPrivate"> Make this a private comment that only staff can see</label></div>
+          <div class="gutter-top">
+            <select name="selNotify" id="selNotify" class="js-multiselect" multiple>
+              <option>Alex Example (alex.example@example.edu)</option>
+              <option>Pat Helpdesk (pat.helpdesk@example.edu)</option>
+            </select>
+          </div>
+          <textarea id="txtComments" name="txtComments">Draft reply to Alex Example</textarea>
+          <input type="submit" name="btnSave" id="btnSave" class="btn btn-primary btn-sm" value="Save">
+          <iframe title="Comment editor"></iframe>
+          <div id="divWarnCommentsPrivate" class="alert alert-danger gutter-top hidden"></div>
+        </div>
+      </div>
+      <div id="ticketFeed">
+        <div class="feed">
+          <div class="gutter-top-sm gutter-bottom-sm">
+            <div class="form-group"><ul class="nav nav-pills">
+              <li class="nav-item"><button type="button" class="btn btn-default active">Feed</button></li>
+              <li class="nav-item"><button type="button" class="btn btn-default">Timeline</button></li>
+            </ul></div>
+          </div>
+          <div class="gutter-top-sm gutter-bottom-sm">
+            <form class="form-inline"><fieldset><legend class="sr-only">Filter the feed</legend>
+              <div class="form-group">
+                <label class="checkbox-inline"><input type="checkbox"> Comments</label>
+                <label class="checkbox-inline"><input type="checkbox"> Private notes</label>
+                <label class="checkbox-inline"><input type="checkbox"> System</label>
+              </div>
+              <div class="form-group gutter-left"><div class="input-group">
+                <input type="text" class="form-control">
+                <span class="input-group-btn"><button type="button" class="btn btn-default"><span class="fa fa-search fa-nopad fa-fw"></span><span class="sr-only">Search feed</span></button></span>
+              </div></div>
+            </fieldset></form>
+            <p class="alert alert-info gutter-bottom-none">Updates to this ticket appear here as they happen.</p>
+          </div>
+          <div class="refresh-indicator-wrapper NoPrint">
+            <div class="refresh-indicator"><span class="fa fa-spinner fa-pulse fa-nopad fa-4x"></span><span class="sr-only">Loading</span></div>
+          </div>
+          <div class="text-center NoPrint"><button type="button" class="btn btn-link sr-only sr-only-focusable"><span class="fa fa-clock-o"></span>Show new updates</button></div>
+          <div class="text-center NoPrint js-feed-end"></div>
+          <object type="text/html"></object>
+        </div>
+      </div>
+    </div>
+  </div></div>
+</form>
+<script src="/TDSignalR/signalr/hubs"></script>
+<script>
+  (function () {
+    var params = new URLSearchParams(location.search);
+    var ticketId = params.get("TicketID");
+    if (params.get("variant") === "stray") {
+      // A write the guard must abort: it is not on the allowlist.
+      fetch("/TDNext/Apps/43/Tickets/Update?TicketID=" + ticketId, { method: "POST", body: "{}" })
+        .catch(function () {});
+    }
+    // SignalR's negotiate call, a GET that guarded runs refuse like the rest of /TDSignalR/.
+    fetch("/TDSignalR/signalr/negotiate?clientProtocol=2.1").catch(function () {});
+    try {
+      // SignalR's live updates; guarded runs close this socket.
+      var socket = new WebSocket("ws://" + location.host + "/TDSignalR/signalr/connect?transport=webSockets&connectionToken=x1");
+      socket.onclose = function () { document.body.setAttribute("data-socket", "closed"); };
+    } catch (error) {}
+    setTimeout(function () {
+      var request = new XMLHttpRequest();
+      request.open("POST", "/TDNext/Apps/Feed/Search");
+      request.setRequestHeader("Content-Type", "application/json");
+      request.onload = function () {
+        if (request.status !== 200) return;  // the indicator keeps showing
+        var end = document.querySelector(".js-feed-end");
+        end.insertAdjacentHTML("beforebegin", request.responseText);
+        document.querySelector(".refresh-indicator-wrapper").style.display = "none";
+      };
+      request.send(JSON.stringify({ TicketID: Number(ticketId) }));
+    }, 300);
+  })();
+</script>
+</body>
+</html>

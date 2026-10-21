@@ -1,0 +1,15 @@
+{
+  "schema": 1,
+  "id": "AAMkAGI2synthetic0007",
+  "internet_message_id": "<f07.20261001154500@mail.example.edu>",
+  "conversation_id": "AAQkAGI2conversation0001",
+  "received_at": "2026-10-01T15:45:00Z",
+  "from": "shared-mailbox@example.edu",
+  "to": "jordan.rivera@example.edu",
+  "cc": "",
+  "subject": "RE: Laptop will not join the library Wi-Fi",
+  "body": "<html><body><p>Hello Jordan,</p><p>Please bring the laptop to the service desk so that we can check its wireless settings in person.</p></body></html>",
+  "is_html": true,
+  "has_attachments": false,
+  "headers": {}
+}

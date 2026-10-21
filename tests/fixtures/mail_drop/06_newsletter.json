@@ -1,0 +1,15 @@
+{
+  "schema": 1,
+  "id": "AAMkAGI2synthetic0006",
+  "internet_message_id": "<f06.20261001153000@lists.example.edu>",
+  "conversation_id": "AAQkAGI2conversation0006",
+  "received_at": "2026-10-01T15:30:00Z",
+  "from": "Campus News <campus-news@lists.example.edu>",
+  "to": "shared-mailbox@example.edu",
+  "cc": "",
+  "subject": "This week on campus: homecoming schedule and parking changes",
+  "body": "<html><body><h1>This week on campus</h1><p>Homecoming events begin on Friday evening at the main quad. Several parking lots close early on Saturday.</p></body></html>",
+  "is_html": true,
+  "has_attachments": false,
+  "headers": {"List-Unsubscribe": "<mailto:leave-campus-news@lists.example.edu>"}
+}

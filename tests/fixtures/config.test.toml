@@ -1,0 +1,5 @@
+# Settings for the synthetic fixtures in tests/fixtures/mail_drop.
+
+[mail.work]
+mailbox_address = "shared-mailbox@example.edu"
+automated_senders = ["notifications@tdx.example.edu"]

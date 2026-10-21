@@ -1,0 +1,15 @@
+{
+  "schema": 1,
+  "id": "AAMkAGI2synthetic0003",
+  "internet_message_id": "<f03.20261001141000@tdx.example.edu>",
+  "conversation_id": "AAQkAGI2conversation0003",
+  "received_at": "2026-10-01T14:10:00Z",
+  "from": "notifications@tdx.example.edu",
+  "to": "shared-mailbox@example.edu",
+  "cc": "",
+  "subject": "Ticket 1234567 has been updated",
+  "body": "<html><body><p>A comment was added to ticket 1234567 by the requestor. Open the ticket in the service portal to read it.</p></body></html>",
+  "is_html": true,
+  "has_attachments": false,
+  "headers": {}
+}

@@ -1,0 +1,15 @@
+{
+  "schema": 1,
+  "id": "AAMkAGI2synthetic0004",
+  "internet_message_id": "<f04.20261001150000@vendor.example.com>",
+  "conversation_id": "AAQkAGI2conversation0004",
+  "received_at": "2026-10-01T15:00:00Z",
+  "from": "no-reply@vendor.example.com",
+  "to": "shared-mailbox@example.edu",
+  "cc": "",
+  "subject": "Your licence renewal invoice is ready",
+  "body": "<html><body><p>The annual renewal invoice for your scanning software subscription can now be downloaded from the customer portal.</p></body></html>",
+  "is_html": true,
+  "has_attachments": false,
+  "headers": {}
+}
