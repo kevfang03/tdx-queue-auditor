@@ -26,6 +26,7 @@ from ops_suite.tdx.alerts import (
     fit_card,
     fit_delta_card,
     fit_summary_card,
+    fit_urgent_card,
     format_age,
     plan_alerts,
     since_text,
@@ -837,12 +838,14 @@ def test_summary_state_remembers_the_slot_the_post_and_the_open_set(tmp_path: Pa
     assert again.full_due(SLOT + timedelta(days=1))  # a new day starts full
     assert again.open == {(101, "client_waiting"), (102, "event_over")}
     assert json.loads(path.read_text(encoding="utf-8")) == {
-        "schema": 2,
+        "schema": 3,
         "last_slot": "2026-10-19T07:30:00-04:00",
         "last_posted": "2026-10-19T07:30:00-04:00",
         "open": ["101:client_waiting", "102:event_over"],
+        "known": ["101:client_waiting", "102:event_over"],
     }
     assert "client_waiting" not in repr(again) and "open=2" in repr(again)
+    assert "known=2" in repr(again)
 
 
 def test_a_skipped_delta_moves_the_slot_but_not_the_last_post(tmp_path: Path) -> None:
@@ -868,6 +871,61 @@ def test_a_schema_1_summary_state_keeps_its_slot_and_makes_the_next_post_full(
     assert state.posted(SLOT)  # no second 07:30 post after the upgrade
     assert state.last_posted is None and state.open == frozenset()
     assert state.full_due(SLOT + timedelta(hours=4, minutes=30))
+
+
+def test_a_schema_2_summary_state_starts_known_as_its_open_set(tmp_path: Path) -> None:
+    path = tmp_path / "summary-state-desk.json"
+    data = {
+        "schema": 2,
+        "last_slot": SLOT.isoformat(),
+        "last_posted": SLOT.isoformat(),
+        "open": ["101:client_waiting"],
+    }
+    path.write_text(json.dumps(data), encoding="utf-8")
+
+    state = SummaryState(path)
+
+    assert state.posted(SLOT) and state.last_posted == SLOT
+    assert state.open == state.known == {(101, "client_waiting")}
+
+
+def test_known_drops_cleared_findings_and_an_urgent_post_joins_open_and_known(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "summary-state-desk.json"
+    state = SummaryState(path)
+    state.record(SLOT, posted=True, open_keys={(101, "client_waiting")})
+    urgent = (103, "event_details_pending")
+
+    state.update_known(frozenset(), shown={urgent})  # 101 cleared, 103 posted
+
+    again = SummaryState(path)
+    assert again.known == {urgent}
+    assert again.open == {(101, "client_waiting"), urgent}  # the next delta counts from here
+    assert again.last_slot == again.last_posted == SLOT
+    before = path.read_text(encoding="utf-8")
+    again.update_known({urgent})  # nothing changed: the file is not rewritten
+    assert path.read_text(encoding="utf-8") == before
+
+
+def test_the_urgent_card_lists_its_rows_like_the_summary_with_no_mention() -> None:
+    findings = [
+        Finding(103, "event_details_pending", "high", "details_pending_near", 20, 6),
+        Finding(104, "location_tbd_soon", "normal", "tbd_soon", 30),
+    ]
+    rows_by_id = {i: row(i) for i in (103, 104)}
+
+    shown, card = fit_urgent_card(
+        findings, rows_by_id, {}, SLOT_RUN, TZ, 2, title_chars=60, show_titles=True, max_rows=10
+    )
+
+    lines = [block["text"] for block in card["body"]]
+    assert lines[0] == "Event soon: 2 need action"
+    assert lines[1].startswith("Read-only audit Mon 07:31: events within 2 days")
+    assert "Event details pending (1)" in lines and "Location TBD soon (1)" in lines
+    assert card["fallbackText"] == "ops-suite: Event soon: 2 need action"
+    assert "entities" not in card["msteams"]
+    assert {f.ticket_id for f in shown} == {103, 104}
 
 
 def test_an_unreadable_summary_state_is_moved_aside(tmp_path: Path) -> None:
@@ -953,9 +1011,11 @@ def test_events_this_week_rows_are_linked_with_details_and_counted_apart() -> No
     assert lines[0] == "TDX queue at 07:30: 1 open (0 new)"  # events are not findings
     assert lines[2] == "Events this week (2)"
     assert lines[3].startswith("[#102](https://tdx.example.edu/")
-    assert lines[3].endswith(") · Wed 10/21 15:00–17:00 · Lobby · A/V: yes · no outreach yet")
+    assert lines[3].endswith(
+        ") · Wed 10/21 15:00–17:00 · Lobby · A/V on form: yes · no outreach yet"
+    )
     assert lines[4].endswith(
-        ") · Fri 10/23 15:00–17:00 · Lobby · A/V: yes · in progress (requester answered)"
+        ") · Fri 10/23 15:00–17:00 · Lobby · A/V on form: yes · in progress (requester answered)"
     )
     assert lines[5] == "Client waiting (1)"
     assert [f.ticket_id for f in shown] == [101]
@@ -976,7 +1036,7 @@ def test_events_show_titles_only_with_show_titles() -> None:
     assert TITLES[102] not in json.dumps(plain)
     lines = texts(titled)
     assert lines[3].endswith(escape_markdown(TITLES[102]))
-    assert lines[4] == "Wed 10/21 15:00–17:00 · Lobby · A/V: yes · no outreach yet"
+    assert lines[4] == "Wed 10/21 15:00–17:00 · Lobby · A/V on form: yes · no outreach yet"
 
 
 def test_events_past_the_cap_are_counted_as_more() -> None:

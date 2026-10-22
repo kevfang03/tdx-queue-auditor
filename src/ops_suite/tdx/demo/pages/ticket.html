@@ -17,8 +17,21 @@
   is none). Event request forms are read from it.
 
   ?variant=... picks a test case:
-    (none)  as above
-    stray   also fires a POST to a ticket-update path on load, which the guard must abort
+    (none)     as above
+    stray      also fires a POST to a ticket-update path on load, which the guard must abort
+    collapsed  the page collapses a long description on load: every line after the first 28
+               moves into a block hidden with style="display: none", and a "Show more" link
+               follows the description. The rendered text (innerText) then stops after the
+               event's times, before the space and the services; the HTML still holds it all
+    clamped    the description is capped in height with its overflow hidden
+  The next variants show a long description as a preview: its first 28 lines, which stop
+  after the event's times, and a "Show more" link. The full description, from its Recipient
+  Data block on, is kept elsewhere on the page:
+    preview    in a block hidden with style="display: none" inside the description
+    textbox    as source text in a hidden text box inside the description
+    attribute  in an attribute of the description, with a hidden "..." in it
+    sibling    in a hidden block next to the description, outside it
+    script     as a string in a script next to the description, with a hidden "..." in it
 -->
 <html class="k-webkit">
 <head><meta charset="utf-8"><title>Ticket</title></head>
@@ -123,6 +136,61 @@
       // A write the guard must abort: it is not on the allowlist.
       fetch("/TDNext/Apps/43/Tickets/Update?TicketID=" + ticketId, { method: "POST", body: "{}" })
         .catch(function () {});
+    }
+    var description = document.querySelector(".ticket-desc");
+    if (params.get("variant") === "collapsed" && description.children.length > 28) {
+      var rest = document.createElement("div");
+      rest.className = "js-desc-more";
+      rest.style.display = "none";
+      while (description.children.length > 28) rest.appendChild(description.children[28]);
+      description.appendChild(rest);
+      var toggle = document.createElement("a");
+      toggle.href = "#";
+      toggle.className = "js-desc-toggle";
+      toggle.textContent = "Show more";
+      toggle.onclick = function () { rest.style.display = ""; toggle.remove(); return false; };
+      description.parentNode.appendChild(toggle);
+    }
+    if (params.get("variant") === "clamped") {
+      description.style.maxHeight = "4em";
+      description.style.overflow = "hidden";
+    }
+    var previews = ["preview", "textbox", "attribute", "sibling", "script"];
+    var variant = params.get("variant");
+    if (previews.indexOf(variant) >= 0 && description.children.length > 28) {
+      var full = description.innerHTML;
+      var head = Array.prototype.slice.call(description.children, 0, 28)
+        .map(function (line) { return line.outerHTML; }).join("");
+      var more = '<span class="js-desc-more" style="display: none;">...</span>';
+      if (variant === "preview") {
+        description.innerHTML = head + '<div class="js-desc-full" style="display: none;">' + full + "</div>";
+      } else if (variant === "textbox") {
+        description.innerHTML = head;
+        var box = document.createElement("textarea");
+        box.style.display = "none";
+        box.textContent = full;
+        description.appendChild(box);
+      } else if (variant === "attribute") {
+        description.innerHTML = head + more;
+        description.setAttribute("data-full-description", full);
+      } else if (variant === "sibling") {
+        description.innerHTML = head;
+        var copy = document.createElement("div");
+        copy.className = "js-desc-full";
+        copy.style.display = "none";
+        copy.innerHTML = full;
+        description.parentNode.appendChild(copy);
+      } else {
+        description.innerHTML = head + more;
+        var holder = document.createElement("script");
+        holder.textContent = "window.ticketDescription = " + JSON.stringify(full) + ";";
+        description.parentNode.appendChild(holder);
+      }
+      var link = document.createElement("a");
+      link.href = "#";
+      link.className = "js-desc-toggle";
+      link.textContent = "Show more";
+      description.parentNode.appendChild(link);
     }
     // SignalR's negotiate call, a GET that guarded runs refuse like the rest of /TDSignalR/.
     fetch("/TDSignalR/signalr/negotiate?clientProtocol=2.1").catch(function () {});

@@ -125,6 +125,7 @@ def test_the_dataset_gives_the_expected_findings_at_any_time(now: datetime) -> N
     # Renamed events within 14 days are read too.
     assert counts["event_in_progress"] == 1 and counts["event_location_missing"] == 1
     assert result.event_form_missing_ids == (1000007, 1000025)
+    assert counts["event_renamed_with_form"] == 2
 
 
 @pytest.mark.parametrize(
@@ -404,14 +405,16 @@ def test_demo_summary_shows_events_duplicates_and_ready_to_close(
         f"[#{ticket_id}" for ticket_id in EXPECTED_WEEK_EVENTS
     ]
     # One row per state, in date order; space and A/V from the form when known.
-    assert week[0].endswith("11:00–12:00 · Classroom · A/V: yes · requester replied")
-    assert week[1].endswith("18:00–19:00 · — · A/V: — · location missing")
-    assert week[2].endswith("15:00 · — · A/V: — · location TBD")
-    assert week[3].endswith("12:00–14:00 · Lobby · A/V: no · no outreach needed")
-    assert week[4].endswith("14:00–16:00 · Classroom · A/V: yes · in progress (requester answered)")
-    assert " · Classroom · A/V: no · waiting on requester since " in week[5]
-    assert week[6].endswith("15:00–17:00 · Lobby · A/V: yes · no outreach yet")
-    assert week[7].endswith("18:00–20:00 · Other · A/V: no · marketing only")
+    assert week[0].endswith("11:00–12:00 · Classroom · A/V on form: yes · requester replied")
+    assert week[1].endswith("18:00–19:00 · — · A/V on form: — · location missing")
+    assert week[2].endswith("15:00 · — · A/V on form: — · location TBD")
+    assert week[3].endswith("12:00–14:00 · Lobby · A/V on form: no · no outreach needed")
+    assert week[4].endswith(
+        "14:00–16:00 · Classroom · A/V on form: yes · in progress (requester answered)"
+    )
+    assert " · Classroom · A/V on form: no · waiting on requester since " in week[5]
+    assert week[6].endswith("15:00–17:00 · Lobby · A/V on form: yes · no outreach yet")
+    assert week[7].endswith("18:00–20:00 · Other · A/V on form: no · marketing only")
     assert any(
         "[#1000023](" in line and "(possible duplicate of #1000001)" in line for line in lines
     )

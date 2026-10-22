@@ -17,7 +17,7 @@ from ops_suite.common.exitcodes import (
 from ops_suite.common.teams import TeamsPostError, set_webhook_url
 from ops_suite.tdx import browser as browser_module
 from ops_suite.tdx import watch as watch_module
-from ops_suite.tdx.alerts import AlertState
+from ops_suite.tdx.alerts import AlertState, urgent_event, urgent_heading
 from ops_suite.tdx.browser import PROFILE_IN_USE_MESSAGE, BrowserStartError, TdxBrowser
 from ops_suite.tdx.dashboard import (
     DashboardRead,
@@ -1176,10 +1176,11 @@ def test_a_due_summary_replaces_the_alert_card_and_records_its_findings(
         watch_module.summary_state_path(settings, "desk").read_text(encoding="utf-8")
     )
     assert summary_state == {
-        "schema": 2,
+        "schema": 3,
         "last_slot": "2026-10-19T07:30:00-04:00",
         "last_posted": "2026-10-19T07:30:00-04:00",
         "open": ["101:client_waiting", "102:client_waiting"],
+        "known": ["101:client_waiting", "102:client_waiting"],
     }
 
 
@@ -1420,10 +1421,10 @@ def test_the_summary_draft_adds_events_and_duplicates_from_the_run(
     lines = [block["text"] for block in draft.card["body"]]
     assert lines[2] == "Events this week (2)"
     assert lines[3].endswith(
-        ") · Wed 10/21 14:00–16:00 · — · A/V: — · waiting on requester since Sun 08:00"
+        ") · Wed 10/21 14:00–16:00 · — · A/V on form: — · waiting on requester since Sun 08:00"
     )
     assert lines[4].endswith(
-        ") · Fri 10/23 15:00 · Other · A/V: yes · in progress (requester answered)"
+        ") · Fri 10/23 15:00 · Other · A/V on form: yes · in progress (requester answered)"
     )
     (duplicate,) = [line for line in lines if "duplicate" in line]
     assert duplicate.startswith("[#102](") and "(possible duplicate of #101)" in duplicate
@@ -1658,3 +1659,256 @@ def test_summary_outcome_lines_for_deltas_and_skips() -> None:
     skipped = SendOutcome("no_change", destination="desk", summary=True, slot=noon)
     assert format_send_outcome(delta) == "Teams (desk): delta posted (1 new, 1 cleared, 3 open)."
     assert format_send_outcome(skipped) == "Teams (desk): 12:00 summary skipped (no change)."
+
+
+# --- urgent event findings go to the desk at once ------------------------------------------
+
+
+def soon(ticket_id: int, hours: int = 6) -> Finding:
+    """Waiting on the requester, the event ``hours`` away: urgent within near_event_days."""
+    return Finding(ticket_id, "event_details_pending", "high", "details_pending_near", 20, hours)
+
+
+def urgent_cards(poster: Poster) -> list[dict]:
+    return [card for card in desk_cards(poster) if heading(card).startswith("Event soon")]
+
+
+@pytest.mark.usefixtures("both_webhooks")
+def test_an_urgent_event_between_slots_posts_one_desk_card_and_the_summaries_follow(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    poster = Poster()
+    monkeypatch.setattr(watch_module, "post_card", poster)
+    settings = summary_settings()
+
+    def runs(now: datetime) -> AuditRun:
+        if now < at(10, 19, 9):
+            return day_run([waiting(101)], now)
+        return day_run([waiting(101), soon(103)], now)  # the event is 6 hours away
+
+    clock = Clock(at(10, 19, 7, 30), stop_at=at(10, 20, 7, 35))
+    cycles = SummaryCycles(clock, settings, runs=runs)
+
+    code, notices = run_desk_watch(settings, clock, cycles)
+
+    assert code == 0 and notices == []
+    full, urgent, next_full = desk_cards(poster)  # 12:00 and 17:00 had nothing new
+    assert heading(full) == "TDX queue at 07:30: 1 open (1 new)"
+    lines = lines_of(urgent)
+    assert lines[0] == "Event soon: 1 needs action"
+    assert lines[2] == "Event details pending (1)"
+    assert lines[3].startswith("[#103](") and "follow up now" in lines[3]
+    assert "(new)" not in lines[3] and len(lines) == 4
+    assert urgent["fallbackText"] == "ops-suite: Event soon: 1 needs action"
+    assert "entities" not in urgent["msteams"]  # never a mention
+    assert TITLE not in json.dumps(urgent) and EVENT_TITLE not in json.dumps(urgent)
+    # The next day's full summary still lists it as open, not as new.
+    assert heading(next_full) == "TDX queue at 07:30: 2 open (0 new since yesterday)"
+    (row,) = [
+        line for line in lines_of(next_full) if line.startswith("[#103](") and "follow" in line
+    ]
+    assert "(new)" not in row and "(event soon)" not in row
+    # The personal chat got its alert cards as before, the event's included.
+    assert [heading(card) for card in personal_cards(poster)[:2]] == [
+        "TDX queue: 1 new, 0 reminders",
+        "TDX queue: 1 new, 0 reminders",
+    ]
+    assert "#103" in json.dumps(personal_cards(poster)[1])
+    out = capsys.readouterr().out
+    assert (
+        "09:00 4 unclaimed, 0 feeds, 2 findings; Teams: sent 1 card (1 new, 0 reminders). "
+        "Teams (desk): urgent event card (1). Next run 09:30." in out
+    )
+    assert out.count("urgent event card") == 1
+    assert "12:00 summary skipped (no change)" in out
+    desk_state = AlertState(watch_module.alert_state_path(settings, "desk"))
+    assert (103, "event_details_pending") in desk_state.keys()
+
+
+@pytest.mark.usefixtures("both_webhooks")
+def test_an_urgent_event_posts_once_until_it_clears_and_again_when_it_returns(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    poster = Poster()
+    monkeypatch.setattr(watch_module, "post_card", poster)
+    settings = summary_settings()
+
+    def runs(now: datetime) -> AuditRun:
+        # The requester's answer clears it at 10:00; a desk question at 10:30 brings it back.
+        back = at(10, 19, 9) <= now < at(10, 19, 10) or now >= at(10, 19, 10, 30)
+        return day_run([waiting(101), *([soon(103)] if back else [])], now)
+
+    clock = Clock(at(10, 19, 7, 30), stop_at=at(10, 19, 11, 35))
+    run_desk_watch(settings, clock, SummaryCycles(clock, settings, runs=runs))
+
+    assert len(urgent_cards(poster)) == 2  # 09:00 and 10:30; not 09:30, 11:00 or 11:30
+    state = watch_module.SummaryState(watch_module.summary_state_path(settings, "desk"))
+    assert (103, "event_details_pending") in state.known
+    assert (103, "event_details_pending") in state.open  # so the 12:00 delta skips it
+
+
+@pytest.mark.usefixtures("both_webhooks")
+def test_an_urgent_event_in_a_summary_run_goes_into_the_delta_with_no_card_of_its_own(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    poster = Poster()
+    monkeypatch.setattr(watch_module, "post_card", poster)
+    settings = summary_settings()
+
+    def runs(now: datetime) -> AuditRun:
+        late = now >= at(10, 19, 12)
+        return day_run([waiting(101), *([soon(103)] if late else [])], now)
+
+    clock = Clock(at(10, 19, 7, 30), stop_at=at(10, 19, 13, 5))
+    run_desk_watch(settings, clock, SummaryCycles(clock, settings, runs=runs))
+
+    assert urgent_cards(poster) == []
+    _, noon = desk_cards(poster)
+    lines = lines_of(noon)
+    assert lines[0] == "Since 07:30: 1 new · 0 cleared · 2 open"
+    assert lines[3].startswith("[#103](") and "(new) (event soon) · " in lines[3]
+    out = capsys.readouterr().out
+    assert (
+        "Teams (desk): delta posted (1 new, 0 cleared, 2 open). "
+        "Teams (desk): urgent events in the summary (1)." in out
+    )
+
+
+@pytest.mark.usefixtures("both_webhooks")
+def test_an_urgent_event_at_the_first_slot_is_marked_in_the_full_summary(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    poster = Poster()
+    monkeypatch.setattr(watch_module, "post_card", poster)
+    settings = summary_settings()
+    clock = Clock(at(10, 19, 7, 30), stop_at=at(10, 19, 8, 35))
+    cycles = SummaryCycles(
+        clock, settings, runs=lambda now: day_run([waiting(101), soon(103)], now)
+    )
+
+    run_desk_watch(settings, clock, cycles)
+
+    (full,) = desk_cards(poster)
+    (row,) = [line for line in lines_of(full) if line.startswith("[#103](") and "follow" in line]
+    assert "(new) (event soon)" in row
+    (other,) = [line for line in lines_of(full) if line.startswith("[#101](")]
+    assert "(event soon)" not in other
+
+
+def far_and_other_findings() -> list[Finding]:
+    return [
+        waiting(101),
+        Finding(102, "event_outreach_due", "normal", "outreach_due", 200, 200),
+        Finding(103, "client_waiting", "normal", "event_requester_replied", 60, 100),
+        Finding(104, "location_tbd_soon", "normal", "tbd_soon", 72),
+        Finding(105, "event_over", "low", "event_over", 30),
+        Finding(106, "event_details_pending", "normal", "details_pending", 80, 120),
+    ]
+
+
+def test_only_event_findings_near_their_event_are_urgent() -> None:
+    near = [
+        soon(1, 48),
+        Finding(2, "event_outreach_due", "high", "outreach_due", 30, 30),
+        Finding(3, "client_waiting", "high", "event_requester_replied", 50, 10),
+        Finding(4, "location_tbd_soon", "normal", "location_missing", 20),
+    ]
+    assert all(urgent_event(finding, 2) for finding in near)
+    assert not any(urgent_event(finding, 2) for finding in far_and_other_findings())
+    assert not urgent_event(soon(1, 49), 2) and urgent_event(soon(1, 49), 3)
+    assert not urgent_event(Finding(7, "client_waiting", "high", "requestor_last", 50), 2)
+
+
+@pytest.mark.usefixtures("both_webhooks")
+def test_far_events_and_other_findings_never_post_to_the_desk(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    poster = Poster()
+    monkeypatch.setattr(watch_module, "post_card", poster)
+    run = day_run(far_and_other_findings(), at(10, 19, 9), ids=(101, 102, 103, 104, 105, 106))
+
+    outcome = watch_module.send_cycle(run, summary_settings(), "desk")
+
+    assert outcome.urgent is None and desk_cards(poster) == []
+    assert len(personal_cards(poster)) == 1
+
+
+@pytest.mark.parametrize(
+    "case", ["off", "desk not approved", "summaries to personal", "summaries off"]
+)
+@pytest.mark.usefixtures("both_webhooks")
+def test_no_urgent_cards_unless_desk_summaries_are_on_approved_and_the_setting_is_true(
+    case: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    poster = Poster()
+    monkeypatch.setattr(watch_module, "post_card", poster)
+    settings = {
+        "off": lambda: summary_settings(urgent_events_to_desk=False),
+        "desk not approved": lambda: Settings(
+            tdx={"base_url": "https://tdx.example.edu/TDNext/", "summary": {"enabled": True}}
+        ),
+        "summaries to personal": lambda: summary_settings(destination="personal"),
+        "summaries off": lambda: summary_settings(enabled=False),
+    }[case]()
+
+    outcome = watch_module.send_cycle(day_run([soon(103)], at(10, 19, 9)), settings, "desk")
+
+    assert outcome.urgent is None and urgent_cards(poster) == []
+    assert not watch_module.urgent_events_on(settings, "desk")
+    assert not watch_module.summary_state_path(settings, "desk").exists()
+
+
+def test_urgent_events_go_only_with_a_desk_watch() -> None:
+    assert watch_module.urgent_events_on(summary_settings(), "desk")
+    assert not watch_module.urgent_events_on(summary_settings(), "personal")
+
+
+@pytest.mark.usefixtures("both_webhooks")
+def test_the_personal_alert_card_is_the_same_with_urgent_events_on_or_off(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    run = day_run([waiting(101), soon(103)], at(10, 19, 9))
+    personal: list[dict] = []
+    for setting in (True, False):
+        poster = Poster()
+        monkeypatch.setattr(watch_module, "post_card", poster)
+        settings = summary_settings(urgent_events_to_desk=setting)
+        for path in (
+            watch_module.alert_state_path(settings),
+            watch_module.summary_state_path(settings, "desk"),
+        ):
+            path.unlink(missing_ok=True)
+
+        watch_module.send_cycle(run, settings, "desk")
+
+        personal.extend(personal_cards(poster))
+        assert len(urgent_cards(poster)) == (1 if setting else 0)
+    on, off = personal
+    assert on == off
+
+
+@pytest.mark.usefixtures("both_webhooks")
+def test_a_failed_urgent_post_records_nothing_and_is_tried_again_next_run(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    poster = Poster(202, TeamsPostError(400, "http_400"))  # the personal card, then the desk's
+    monkeypatch.setattr(watch_module, "post_card", poster)
+    settings = summary_settings()
+
+    first = watch_module.send_cycle(day_run([soon(103)], at(10, 19, 9)), settings, "desk")
+    again = watch_module.send_cycle(day_run([soon(103)], at(10, 19, 9, 30)), settings, "desk")
+
+    assert first.urgent == watch_module.UrgentOutcome("failed", 1, "http_400")
+    assert watch_module.format_urgent(first.urgent) == (
+        "Teams (desk): urgent event card not posted (http_400); will retry next run."
+    )
+    assert again.urgent == watch_module.UrgentOutcome("sent", 1)
+    assert len(urgent_cards(poster)) == 2  # the failed try and the retry
+
+
+def test_urgent_card_headings_and_lines() -> None:
+    assert urgent_heading(1) == "Event soon: 1 needs action"
+    assert urgent_heading(3) == "Event soon: 3 need action"
+    assert watch_module.format_urgent(watch_module.UrgentOutcome("sent", 2)) == (
+        "Teams (desk): urgent event card (2)."
+    )

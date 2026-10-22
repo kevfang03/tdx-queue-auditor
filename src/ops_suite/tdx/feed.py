@@ -301,6 +301,40 @@ def _note_kind(parts: Sequence[Tag | NavigableString]) -> NoteKind | None:
     return None
 
 
+# --- one comment's HTML on its own (the Web API reader) ----------------------------------
+
+
+@dataclass(frozen=True, slots=True)
+class CommentFacts:
+    """What one comment says, without its text: the facts the feed reader uses."""
+
+    visible: bool  # comment text other than TDX field-change lines
+    note: NoteKind | None  # opens with a merge notice or a reassignment
+    signed: bool  # its own text (quoted mail cut) holds a desk signature
+
+
+def _fragment_parts(html: str) -> list[Tag | NavigableString]:
+    wrapper = _soup(f"<div>{html}</div>").div
+    return [wrapper] if wrapper is not None else []
+
+
+def comment_facts(html: str, signatures: Sequence[str] = ()) -> CommentFacts:
+    """The facts of one comment given as HTML (a feed entry's or reply's body), judged by the
+    same rules as the feed page's comments. Only the answers leave; the text is dropped."""
+    parts = _fragment_parts(html)
+    return CommentFacts(
+        visible=_has_visible_comment(parts),
+        note=_note_kind(parts),
+        signed=_has_signature(parts, signature_phrases(signatures)),
+    )
+
+
+def comment_text(html: str) -> str | None:
+    """One comment's text, as ``TicketFeed.latest_reply_text`` holds it. Student data: the
+    caller keeps it in memory only."""
+    return _comment_text(_fragment_parts(html))
+
+
 # --- entries -----------------------------------------------------------------------------
 
 

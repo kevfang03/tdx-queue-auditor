@@ -295,6 +295,192 @@ def test_description_text_is_none_without_the_container() -> None:
     assert description_text("<html><body><div class='feed'></div></body></html>") is None
 
 
+def test_description_text_keeps_the_parts_the_page_hides() -> None:
+    """The live miss: a long description collapsed behind a toggle. Its HTML still holds the
+    space and the services, and the reader takes the HTML, not the rendered text."""
+    lines = form_text().splitlines()
+    cut = next(i for i, line in enumerate(lines) if line.startswith("I am looking:"))
+    shown = "".join(f"<div>{escape(line)}</div>" for line in lines[:cut])
+    hidden = "".join(f"<div>{escape(line)}</div>" for line in lines[cut:])
+    html = (
+        '<div id="divDescription"><div class="wrap-text ticket-desc" style="max-height: 4em; '
+        f'overflow: hidden">{shown}<div class="js-desc-more" style="display: none">{hidden}'
+        '</div></div><a href="#" class="js-desc-toggle">Show more</a></div>'
+    )
+
+    text = description_text(html)
+
+    assert text is not None and "Show more" not in text
+    form = parse(text)
+    assert form is not None and (form.wants_av, form.wants_room) == (True, True)
+
+
+def test_description_to_text_is_the_same_for_entities_and_line_ends() -> None:
+    html = (
+        "<div>What type of space are you&nbsp;looking for:</div>\r\n"
+        "<div>Classroom&nbsp;Space</div><ul><li>A/V&nbsp;&amp;&nbsp;Technical Support</li>"
+        "<li>Event Catering</li></ul><table><tr><td>Label:</td><td>Answer</td></tr></table>"
+    )
+
+    text = event_form.description_to_text(html)
+
+    assert "\xa0" not in text and "\r" not in text
+    lines = [line for line in text.splitlines() if line.strip()]
+    assert lines == [
+        "What type of space are you looking for:",
+        "Classroom Space",
+        "A/V & Technical Support",
+        "Event Catering",
+        "Label:",
+        "Answer",
+    ]
+
+
+def test_description_to_text_drops_what_is_never_description() -> None:
+    """Code, styles, buttons and text boxes (read as copies on their own) are dropped; a
+    template or noscript block may hold a copy of the description, so it is kept."""
+    html = (
+        "<div>Kept</div><script>var x = 1;</script><style>.a{}</style>"
+        "<button>Show more</button><textarea>&lt;div&gt;Source&lt;/div&gt;</textarea>"
+        "<template><div>T</div></template><noscript>N</noscript>"
+    )
+
+    lines = [line for line in event_form.description_to_text(html).splitlines() if line]
+    assert lines == ["Kept", "T", "N"]
+
+
+# --- copies of the form on one page --------------------------------------------------------
+
+
+def _page(inner: str, *, around: str = "", attribute: str = "") -> str:
+    return (
+        f'<div id="divTicketDescription"><div id="divDescription"><h2>Description</h2>'
+        f'<div class="wrap-text ticket-desc"{attribute}>{inner}</div>{around}</div></div>'
+    )
+
+
+def _preview_and_full() -> tuple[str, str]:
+    """A preview that stops after the event's times, and the full form, as HTML lines."""
+    lines = [f"<div>{escape(line)}</div>" for line in form_text(space=CLASSROOM).splitlines()]
+    cut = next(i for i, line in enumerate(lines) if "I am looking:" in line)
+    return "".join(lines[:cut]), "".join(lines)
+
+
+def _read(html: str) -> event_form.FormRead:
+    parts = event_form.description_parts(html)
+    assert parts is not None
+    return event_form.read_event_form(parts, TZ, NOW, OPTIONS)
+
+
+@pytest.mark.parametrize(
+    ("shape", "source"),
+    [
+        ("hidden copy", "container"),
+        ("text box", "text box"),
+        ("attribute", "attribute"),
+        ("sibling", "outside"),
+        ("template", "template"),
+        ("script", "script"),
+    ],
+)
+def test_a_preview_with_the_full_form_elsewhere_on_the_page_is_read_in_full(
+    shape: str, source: str
+) -> None:
+    """The full copy starts with its own Recipient Data block. Cutting the preview's
+    Response Summary at the next Recipient Data, as the reader once did, kept only the
+    preview: the dates, but no space and no services."""
+    preview, full = _preview_and_full()
+    hidden = '<span style="display: none">...</span>'
+    pages = {
+        "hidden copy": _page(preview + f'<div style="display: none">{full}</div>'),
+        "text box": _page(preview + f'<textarea style="display: none">{escape(full)}</textarea>'),
+        "attribute": _page(preview + hidden, attribute=f' data-full="{escape(full)}"'),
+        "sibling": _page(preview, around=f'<div style="display: none">{full}</div>'),
+        "template": _page(preview + hidden) + f"<template><div>{full}</div></template>",
+        "script": _page(
+            preview + hidden, around=f"<script>var description = {json.dumps(full)};</script>"
+        ),
+    }
+
+    read = _read(pages[shape])
+
+    assert read.form is not None and read.source == source
+    assert (read.form.wants_av, read.form.wants_room, read.form.space) == (True, True, "classroom")
+    assert read.form.dates == (at(10, 28, 14),)
+    assert read.blocks == 2 and read.answers == len(event_form.READ_FIELDS)
+    assert FAKE_IP not in repr(read) and FAKE_NAMES[0] not in repr(read)
+
+
+def test_a_full_copy_kept_as_escaped_html_text_is_read_as_html() -> None:
+    """Escaped once more than the page renders it, the copy's DOM text shows its own tags;
+    read as text, its space answer would start with a tag and A/V would be "&amp;"."""
+    preview, full = _preview_and_full()
+    hidden_source = f'<div style="display: none">{escape(full)}</div>'
+
+    read = _read(_page(preview + hidden_source))
+
+    assert read.source == "container" and read.form is not None
+    assert (read.form.wants_av, read.form.wants_room, read.form.space) == (True, True, "classroom")
+
+
+def test_entity_spaces_in_a_source_copy_still_mark_it_as_the_form() -> None:
+    preview, full = _preview_and_full()
+    source = escape(full.replace("Response Summary", "Response&nbsp;Summary"))
+
+    read = _read(_page(preview + f"<textarea>{source}</textarea>"))
+
+    assert read.source == "text box" and read.form is not None and read.form.wants_av
+
+
+def test_only_copies_that_hold_the_form_are_read() -> None:
+    preview, _ = _preview_and_full()
+    html = _page(preview, attribute=' data-note="no form here"') + (
+        '<textarea>Other text</textarea><script>var x = "Response time";</script>'
+    )
+
+    parts = event_form.description_parts(html)
+
+    assert parts is not None and [part.source for part in parts] == ["container"]
+    assert "text=" not in repr(parts[0])  # the text never shows in a repr
+
+
+def test_the_most_complete_block_wins_and_ties_keep_the_first() -> None:
+    preview, full = _preview_and_full()
+    one = form_text(services=(AV,))
+    other = form_text(services=(CATERING,))
+
+    # A preview cut inside its last answer has every label but is shorter: the full copy wins.
+    cut_short = full[: full.index("A/V &amp;")]
+    assert _read(_page(cut_short + f'<div style="display:none">{full}</div>')).form.wants_av
+    # Two whole copies: the first one is used.
+    both = _page(
+        "".join(f"<div>{escape(line)}</div>" for line in (one + "\n" + other).splitlines())
+    )
+    assert _read(both).form.wants_av
+
+
+def test_a_block_never_runs_into_the_next_recipient_data() -> None:
+    """Each block stops at the next Recipient Data, so metadata is never read as an answer:
+    a services answer cut short by a metadata block stays without A/V."""
+    text = (
+        "Response Summary:\nWhat is your proposed event date(s):\n10/28/2026\n"
+        "Please select all that apply:\nEvent Catering\n"
+        f"{RECIPIENT_DATA}A/V & Technical Support\n"
+    )
+
+    form = parse(text)
+
+    assert form is not None and not form.wants_av
+
+
+def test_description_to_text_keeps_plain_text_as_it_is() -> None:
+    plain = "Response Summary:\r\nI am looking:\xa0To host <an> event & more"
+
+    assert event_form.description_to_text(plain, rich_html=False) == (
+        "Response Summary:\nI am looking: To host <an> event & more"
+    )
+
+
 # --- nothing leaks -------------------------------------------------------------------------
 
 

@@ -12,15 +12,21 @@ from zoneinfo import ZoneInfo
 import pytest
 
 from ops_suite.common.config import TdxRulesSettings, TdxSettings
-from ops_suite.tdx import tickets
+from ops_suite.tdx import api_source, tickets
 from ops_suite.tdx.browser import TdxBrowser
 from ops_suite.tdx.dashboard import DashboardStructureError, NotSignedInError
 from ops_suite.tdx.demo.app import FEED_SEARCH_PATH, WorkMgmtServer
-from ops_suite.tdx.event_form import EventFormOptions
+from ops_suite.tdx.event_form import (
+    PART_SOURCES,
+    EventForm,
+    EventFormOptions,
+    description_parts,
+    parse_event_form,
+)
 from ops_suite.tdx.guard import BUILT_IN_ALLOWED
 from ops_suite.tdx.rows import TicketRow
 from ops_suite.tdx.rules import RuleSettings, plan_feeds
-from ops_suite.tdx.tickets import FeedRead, read_feeds, ticket_addresses
+from ops_suite.tdx.tickets import LABEL_PLACES, FeedRead, read_feeds, ticket_addresses
 
 pytestmark = pytest.mark.browser
 
@@ -350,11 +356,8 @@ def test_the_form_is_read_from_the_description_behind_the_guard(
     workmgmt_server: WorkMgmtServer,
     tmp_path: Path,
     caplog: pytest.LogCaptureFixture,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     caplog.set_level(logging.DEBUG)
-    # Without the HTML fallback, so the form must come from the browser's innerText.
-    monkeypatch.setattr(tickets, "description_text", lambda html: None)
     server = workmgmt_server
     rows = [
         # The grid's link: the shell, the ticket two frames deep.
@@ -371,7 +374,9 @@ def test_the_form_is_read_from_the_description_behind_the_guard(
     assert form.dates == (datetime(2026, 10, 20, 14, 0, tzinfo=TZ),)
     assert (form.wants_av, form.wants_room, form.marketing_only) == (True, True, False)
     assert (form.recurring, form.unknown_options) == (False, 0)
-    assert not any(record.msg == "description not read by script" for record in caplog.records)
+    assert not any(record.msg == "description shape not read" for record in caplog.records)
+    # Both form tickets' pages have the container (one empty): shapes only, nothing hidden.
+    assert _shape_counts(read) == {"read": 2, "hidden": 0, "clipped": 0, "toggle": 0}
     # The description is part of the page: no request beyond the usual ones, none blocked.
     assert read.blocked == ()
     assert set(read.allowed_non_get) == {FEED_POST, WIDGET_POST}
@@ -389,6 +394,224 @@ def test_the_form_is_read_from_the_description_behind_the_guard(
         True,
         False,
     ]
+
+
+# --- browser and Web API parity -----------------------------------------------------------
+
+LIST_OPTIONS, TABLE_LAYOUT = 5501014, 5501015
+# The other form fixtures' invented values that must never leave the parser either.
+MORE_FORM_SECRETS = (
+    "R_3FakeResponse0002",
+    "fake-report-0002",
+    "Lee Placeholder",
+    "lee.placeholder@example.edu",
+    "R_3FakeResponse0003",
+    "fake-report-0003",
+    "Robin Invented",
+    "19990002",
+    "Fake Chess Club",
+)
+WORKMGMT = Path(__file__).parents[1] / "fixtures" / "tdx_synthetic" / "workmgmt"
+
+
+class _DescriptionApi:
+    """The Web API's ticket record for the parity tests: the same description fragment the
+    synthetic page renders, as the API's rich-text ``Description``."""
+
+    def get(self, path: str) -> object:
+        ticket_id = path.rsplit("/", 1)[-1]
+        fragment = (WORKMGMT / "descriptions" / f"{ticket_id}.html").read_text(encoding="utf-8")
+        return {"ID": int(ticket_id), "Description": fragment, "IsRichHtml": True}
+
+
+def _api_form(ticket_id: int) -> object:
+    return api_source.read_form(
+        _DescriptionApi(),  # type: ignore[arg-type]
+        43,
+        ticket_id,
+        TZ,
+        NOW,
+        EventFormOptions(),
+    )
+
+
+@pytest.mark.parametrize(
+    ("variant", "ticket_ids", "shapes"),
+    [
+        ("", (FORM, LIST_OPTIONS, TABLE_LAYOUT), {"hidden": 0, "clipped": 0, "toggle": 0}),
+        # The page collapses each long description behind a "Show more" link.
+        ("collapsed", (FORM, LIST_OPTIONS), {"hidden": 2, "clipped": 0, "toggle": 2}),
+        ("clamped", (FORM, TABLE_LAYOUT), {"hidden": 0, "clipped": 2, "toggle": 0}),
+    ],
+)
+def test_the_browser_reads_the_same_form_as_the_web_api(
+    workmgmt_server: WorkMgmtServer,
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+    variant: str,
+    ticket_ids: tuple[int, ...],
+    shapes: dict[str, int],
+) -> None:
+    """Both readers turn the same description into the same EventForm, however the page
+    shows it: collapsed, clamped, options as list items or inline elements, &nbsp; and &amp;."""
+    caplog.set_level(logging.DEBUG)
+    server = workmgmt_server
+    rows = [_row(ticket_id, server.ticket_shell(ticket_id, variant)) for ticket_id in ticket_ids]
+
+    read = _read_forms(tmp_path, server, rows, set(ticket_ids))
+
+    assert set(read.forms) == set(ticket_ids)
+    for ticket_id in ticket_ids:
+        assert read.forms[ticket_id] == _api_form(ticket_id), ticket_id
+    assert _shape_counts(read) == {"read": len(ticket_ids), **shapes}
+    # Nothing expanded, nothing new asked of the server.
+    assert read.blocked == () and set(read.allowed_non_get) <= {FEED_POST, WIDGET_POST}
+    shown = repr(read) + "".join(
+        f"{record.getMessage()} {record.__dict__}" for record in caplog.records
+    )
+    for secret in (*FORM_SECRETS, *MORE_FORM_SECRETS):
+        assert secret not in shown
+
+
+def test_the_form_s_answers_are_known_for_each_parity_fixture() -> None:
+    """What the parity test compares: forms that differ in A/V, space and room."""
+    summary = {}
+    for ticket_id in (FORM, LIST_OPTIONS, TABLE_LAYOUT):
+        form = _api_form(ticket_id)
+        assert isinstance(form, EventForm)
+        summary[ticket_id] = (
+            form.wants_av,
+            form.wants_room,
+            form.marketing_only,
+            form.space,
+            len(form.dates),
+        )
+    assert summary == {
+        FORM: (True, True, False, "classroom", 1),
+        LIST_OPTIONS: (True, False, False, "lobby", 1),
+        TABLE_LAYOUT: (False, True, False, "classroom", 1),
+    }
+
+
+def test_a_collapsed_description_no_longer_hides_the_services_and_the_space(
+    workmgmt_server: WorkMgmtServer, tmp_path: Path
+) -> None:
+    """The live failure: the page collapses a long form after the event's times, so the
+    rendered text (innerText, as the reader used to take it) holds the dates but not the
+    space or the services, and the form read as needing no outreach. Read from the page's
+    HTML, the same ticket asks for A/V and a classroom, as the Web API says."""
+    server = workmgmt_server
+    settings = _settings(server)
+    browser = TdxBrowser(
+        tmp_path / "profile", settings.base_url, headless=True, allowed_requests=BUILT_IN_ALLOWED
+    )
+    with browser:
+        page = browser.open_page(server.ticket_page(FORM, "collapsed"), timeout_ms=10_000)
+        page.wait_for_selector(".js-desc-toggle", state="attached")
+        rendered = page.evaluate("() => document.querySelector('.ticket-desc').innerText")
+        browser.close_page(page)
+        read = read_feeds(
+            browser,
+            settings,
+            {FORM: _row(FORM, server.ticket_page(FORM, "collapsed"))},
+            [FORM],
+            NOW,
+            form_ticket_ids={FORM},
+            form_options=EventFormOptions(),
+        )
+
+    old = parse_event_form(rendered, TZ, NOW, EventFormOptions())
+    assert old is not None and len(old.dates) == 1  # the dates were read ...
+    assert (old.wants_av, old.wants_room, old.space) == (False, False, None)  # ... the rest not
+    new = read.forms[FORM]
+    assert (new.wants_av, new.wants_room, new.space) == (True, True, "classroom")
+    assert new == _api_form(FORM)
+    assert read.description_shapes["hidden"] == read.description_shapes["toggle"] == 1
+
+
+# A page that shows a long form as a preview (its first lines, up to the event's times) and
+# keeps the full form, Recipient Data block first, somewhere else: the variant, where the
+# reader finds the block it uses, and where the shape script finds the two labels.
+PREVIEW_SHAPES = [
+    ("preview", "container", {"container", "anywhere"}),
+    ("textbox", "text box", {"container", "text box", "anywhere"}),
+    ("attribute", "attribute", {"attribute", "anywhere"}),
+    ("sibling", "outside", {"outside", "anywhere"}),
+    ("script", "script", {"outside", "script", "anywhere"}),
+]
+
+
+def _shape_counts(read: FeedRead) -> dict[str, int]:
+    return {key: read.description_shapes[key] for key in ("read", "hidden", "clipped", "toggle")}
+
+
+@pytest.mark.parametrize(("variant", "source", "places"), PREVIEW_SHAPES)
+def test_a_preview_with_the_full_form_elsewhere_reads_like_the_web_api(
+    workmgmt_server: WorkMgmtServer,
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+    variant: str,
+    source: str,
+    places: set[str],
+) -> None:
+    """The second live miss: hidden text and a toggle in every description, yet still no
+    space and no services. A full copy that starts with its own Recipient Data block used to
+    end the preview's Response Summary there, so only the preview's answers were read. Every
+    block of every copy is read now, and the most complete one is used."""
+    caplog.set_level(logging.DEBUG)
+    server = workmgmt_server
+    ticket_ids = (FORM, LIST_OPTIONS)
+    rows = [_row(ticket_id, server.ticket_shell(ticket_id, variant)) for ticket_id in ticket_ids]
+
+    read = _read_forms(tmp_path, server, rows, set(ticket_ids))
+
+    for ticket_id in ticket_ids:
+        assert read.forms[ticket_id] == _api_form(ticket_id), ticket_id
+    shapes = read.description_shapes
+    assert _shape_counts(read)["read"] == shapes["forms"] == 2
+    assert shapes["toggle"] == 2 and shapes["complete"] == 2
+    assert shapes["blocks"] >= 4  # the preview's block and the full copy's, per ticket
+    assert {key: shapes[key] for key in shapes if key.startswith("from_")} == {
+        f"from_{name}": 2 if name == source else 0 for name in PART_SOURCES
+    }
+    for label in ("space", "services"):
+        assert {place for place in LABEL_PLACES if shapes[f"{label}_{place}"]} == places
+        assert all(shapes[f"{label}_{place}"] in (0, 2) for place in LABEL_PLACES)
+    assert read.blocked == () and set(read.allowed_non_get) <= {FEED_POST, WIDGET_POST}
+    shown = repr(read) + "".join(
+        f"{record.getMessage()} {record.__dict__}" for record in caplog.records
+    )
+    for secret in (*FORM_SECRETS, *MORE_FORM_SECRETS):
+        assert secret not in shown
+
+
+def test_the_previous_reading_of_a_preview_page_is_the_live_miss(
+    workmgmt_server: WorkMgmtServer, tmp_path: Path
+) -> None:
+    """Reproduces the second live result on the "preview" page: hidden text and a toggle in
+    the description; the container's text, cut at its first Response Summary and again at
+    the next Recipient Data as the reader used to, gives the dates but no A/V and no space."""
+    server = workmgmt_server
+    settings = _settings(server)
+    browser = TdxBrowser(
+        tmp_path / "profile", settings.base_url, headless=True, allowed_requests=BUILT_IN_ALLOWED
+    )
+    with browser:
+        page = browser.open_page(server.ticket_page(FORM, "preview"), timeout_ms=10_000)
+        page.wait_for_selector(".js-desc-toggle", state="attached")
+        html = page.content()
+        browser.close_page(page)
+
+    parts = description_parts(html)
+    assert parts is not None and [part.source for part in parts] == ["container"]
+    text = parts[0].text
+    start = text.index("Response Summary:")
+    first_block = text[start : text.index("Recipient Data:", start)]
+    old = parse_event_form(first_block, TZ, NOW, EventFormOptions())
+    assert old is not None and len(old.dates) == 1
+    assert (old.wants_av, old.wants_room, old.space) == (False, False, None)
+    new = parse_event_form(text, TZ, NOW, EventFormOptions())
+    assert new == _api_form(FORM) and (new.wants_av, new.space) == (True, "classroom")
 
 
 def test_the_row_s_requester_and_the_desk_signatures_reach_the_feed_reader(

@@ -1,4 +1,5 @@
 from collections.abc import Callable
+from dataclasses import replace
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
@@ -12,6 +13,7 @@ from ops_suite.tdx.rules import (
     COUNT_KEYS,
     FINDING_KINDS,
     AuditResult,
+    EventRead,
     EventStatus,
     Finding,
     RuleSettings,
@@ -519,6 +521,7 @@ def test_every_count_key_is_present() -> None:
         "event_marketing_only",
         "event_no_outreach",
         "event_form_missing",
+        "event_renamed_with_form",
         "event_in_progress",
         "event_location_missing",
         "desk_members_known",
@@ -598,7 +601,7 @@ def test_summary_default_lines() -> None:
         "ready to close 0.",
         "Checked: 10 unclaimed (6 feeds needed, 3 missing), 2 claimed (counted only). "
         "Events: 5, 1 recurring, 1 multi-date, 1 with an unreadable date, 0 without a location. "
-        "Event forms: 0 (0 recurring, 0 unreadable); 0 renamed without a form. "
+        "Form-titled tickets: 0 (0 recurring, 0 unreadable); renamed: 0 with a form, 0 without. "
         "Event states (no finding): 0 waiting on requester, 0 in progress, "
         "0 outreach not due yet, 0 marketing only, 0 no outreach. "
         "Desk members known: 1.",
@@ -954,7 +957,7 @@ def test_the_checked_line_shows_internal_tickets_only_when_there_are_some() -> N
         "Checked: 2 unclaimed (2 feeds needed, 0 missing), 0 claimed (counted only). "
         "Internal (desk requester): 1. "
         "Events: 0, 0 recurring, 0 multi-date, 0 with an unreadable date, 0 without a location. "
-        "Event forms: 0 (0 recurring, 0 unreadable); 0 renamed without a form. "
+        "Form-titled tickets: 0 (0 recurring, 0 unreadable); renamed: 0 with a form, 0 without. "
         "Event states (no finding): 0 waiting on requester, 0 in progress, "
         "0 outreach not due yet, 0 marketing only, 0 no outreach. "
         "Desk members known: 1."
@@ -1311,7 +1314,7 @@ def test_the_checked_line_counts_the_forms() -> None:
     assert format_audit_summary(result, show_ids=False)[1] == (
         "Checked: 6 unclaimed (6 feeds needed, 0 missing), 0 claimed (counted only). "
         "Events: 0, 0 recurring, 0 multi-date, 0 with an unreadable date, 0 without a location. "
-        "Event forms: 6 (1 recurring, 1 unreadable); 0 renamed without a form. "
+        "Form-titled tickets: 6 (1 recurring, 1 unreadable); renamed: 0 with a form, 0 without. "
         "Event states (no finding): 1 waiting on requester, 0 in progress, "
         "1 outreach not due yet, 1 marketing only, 1 no outreach. Desk members known: 1."
     )
@@ -1525,6 +1528,22 @@ def test_a_renamed_title_without_a_room_is_location_missing_like_tbd() -> None:
     assert soon.counts["event_location_missing"] == later.counts["event_location_missing"] == 1
 
 
+def test_the_checked_line_counts_renamed_tickets_with_and_without_a_form() -> None:
+    """A queue of renamed tickets with forms must not read as "no forms": the title-form count
+    and the renamed counts are separate."""
+    with_form = renamed_run(IN_10_DAYS, form=event_form(1))
+    without = renamed_run(IN_10_DAYS)
+
+    assert with_form.counts["event_renamed_with_form"] == 1
+    assert with_form.counts["event_form_missing"] == 0
+    assert without.counts["event_renamed_with_form"] == 0
+    assert (
+        "Form-titled tickets: 0 (0 recurring, 0 unreadable); renamed: 1 with a form, 0 "
+        "without." in format_audit_summary(with_form, show_ids=False)[1]
+    )
+    assert "renamed: 0 with a form, 1 without." in format_audit_summary(without, show_ids=False)[1]
+
+
 def test_a_renamed_ticket_without_a_form_is_counted_and_raises_no_outreach() -> None:
     result = renamed_run(IN_10_DAYS)
 
@@ -1532,7 +1551,36 @@ def test_a_renamed_ticket_without_a_form_is_counted_and_raises_no_outreach() -> 
     assert result.counts["event_form_missing"] == 1
     assert result.event_form_missing_ids == (1,)
     assert result.event_states[1] == EventStatus("no_outreach_yet")
-    assert format_audit_summary(result, show_ids=True)[-1] == "  event_form_missing  1"
+    assert format_audit_summary(result, show_ids=True)[-2:] == [
+        "  event_form_missing  1",
+        # Services unknown without a form: the feed state stands, A/V and space are "—".
+        "  event_state  1  no_outreach_yet  A/V on form: —  —",
+    ]
+    assert result.event_reads == (EventRead(1, "no_outreach_yet", None, None),)
+
+
+def test_show_ids_lists_every_upcoming_event_read_with_its_state_av_and_space() -> None:
+    """So every event can be checked by hand, findings or not; ascending by id."""
+    rows = [form_row(4), form_row(2), form_row(3), form_row(1), form_row(5)]
+    forms = {
+        1: replace(event_form(3, av=True), space="classroom"),  # outreach due: a finding too
+        2: replace(event_form(3, av=False, room=False), space="lobby"),
+        3: replace(event_form(3, marketing=True, av=False), space="other"),
+        4: replace(event_form(20, av=False, room=True), space="classroom"),  # not due yet
+        5: event_form(-3),  # over: no event state
+    }
+    feeds = {ticket_id: feed(ticket_id) for ticket_id in forms}
+
+    result = evaluate(rows, feeds, NOW, STAFF, TZ, forms=forms)
+
+    lines = format_audit_summary(result, show_ids=True)
+    assert [line for line in lines if line.startswith("  event_state")] == [
+        "  event_state  1  no_outreach_yet  A/V on form: yes  classroom",
+        "  event_state  2  no_outreach  A/V on form: no  lobby",
+        "  event_state  3  marketing_only  A/V on form: no  other",
+        "  event_state  4  no_outreach_yet  A/V on form: no  classroom",
+    ]
+    assert not any("event_state" in line for line in format_audit_summary(result, show_ids=False))
 
 
 def test_a_renamed_ticket_without_a_form_still_gets_the_feed_state_findings() -> None:

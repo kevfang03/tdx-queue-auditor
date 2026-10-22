@@ -99,7 +99,7 @@ Claimed by others: 6 ticket(s) on 1 page(s).
 Feeds: 17 needed, 17 read, 0 failed, 0 deferred. Entries: 21 (20 reply, 1 private, 0 system), 0 unreadable.
 Findings: client waiting 6, follow up with client 0, event outreach due 1, event details pending 1, event over 1, location TBD soon 2, needs review 1, ready to close 1.
 LLM: off; 3 "requestor wrote last" findings keep their wording.
-Checked: 21 unclaimed (17 feeds needed, 0 missing), 6 claimed (counted only). Events: 6, 1 recurring, 1 multi-date, 0 with an unreadable date, 1 without a location. Event forms: 4 (0 recurring, 0 unreadable); 2 renamed without a form. Event states (no finding): 0 waiting on requester, 1 in progress, 0 outreach not due yet, 1 marketing only, 1 no outreach. Desk members known: 2.
+Checked: 21 unclaimed (17 feeds needed, 0 missing), 6 claimed (counted only). Events: 6, 1 recurring, 1 multi-date, 0 with an unreadable date, 1 without a location. Form-titled tickets: 4 (0 recurring, 0 unreadable); renamed: 2 with a form, 2 without. Event states (no finding): 0 waiting on requester, 1 in progress, 0 outreach not due yet, 1 marketing only, 1 no outreach. Desk members known: 2.
   client_waiting  1000002  requestor_last  76h
   client_waiting  1000003  requestor_last  75h
   client_waiting  1000001  no_reply_yet  74h
@@ -115,10 +115,18 @@ Checked: 21 unclaimed (17 feeds needed, 0 missing), 6 claimed (counted only). Ev
   ready_to_close  1000022  desk_replied_last  100h
   event_form_missing  1000007
   event_form_missing  1000025
+  event_state  1000007  no_outreach_yet  A/V on form: —  —
+  event_state  1000019  no_outreach_yet  A/V on form: yes  lobby
+  event_state  1000020  waiting_on_requester  A/V on form: no  classroom
+  event_state  1000021  marketing_only  A/V on form: no  other
+  event_state  1000024  in_progress  A/V on form: yes  classroom
+  event_state  1000025  no_outreach_yet  A/V on form: —  —
+  event_state  1000026  requester_replied  A/V on form: yes  classroom
+  event_state  1000027  no_outreach  A/V on form: no  lobby
 Unreadable dates: 0. Duplicates: 0. Blocked requests: 0. Live updates blocked: 51. Allowed non-GET: 91.
 ```
 
-Each finding is listed by ticket id, kind, reason code and age in hours (for *event outreach due*, the hours until the event). `--summary` builds the shift summary instead, `--card-json PATH` writes the card for the [Adaptive Cards Designer](https://adaptivecards.io/designer/), and `--send` posts it, marked "DEMO · synthetic data", to your own Teams chat. With an API key saved and without `--no-llm`, the demo also runs the optional LLM step on its synthetic messages. All options: [docs/USAGE.md](docs/USAGE.md#demo).
+Each finding is listed by ticket id, kind, reason code and age in hours (for *event outreach due*, the hours until the event). Then every upcoming event whose page was read, with its state, whether the request form asked for A/V, and the type of space. `--summary` builds the shift summary instead, `--card-json PATH` writes the card for the [Adaptive Cards Designer](https://adaptivecards.io/designer/), and `--send` posts it, marked "DEMO · synthetic data", to your own Teams chat. With an API key saved and without `--no-llm`, the demo also runs the optional LLM step on its synthetic messages. All options: [docs/USAGE.md](docs/USAGE.md#demo).
 
 ## Design highlights
 

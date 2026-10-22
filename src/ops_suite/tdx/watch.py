@@ -28,14 +28,21 @@ the coming week's events and marks possible duplicates, both worked out in memor
 from this run; "ready to close" findings go on it but, unless ``tdx.alerts.alert_ready_to_close``,
 never on an alert card or into the alert state.
 
+Urgent event findings (``tdx.summary.urgent_events_to_desk``): an event finding within
+``tdx.events.near_event_days`` of its event reaches the desk chat in the run it first appears,
+on one short "Event soon" card per run (``send_urgent``), or marked "(event soon)" in the
+summary when one is due that run. The summary state remembers it, so the next delta does not
+list it as new and it is not posted again until it clears.
+
 Output and log records carry counts, kinds, reason codes, times and error class names only:
 never a ticket title, a name or the webhook URL.
 """
 
 import logging
 import sys
+import time
 from collections import Counter
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence, Set
 from dataclasses import dataclass, replace
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
@@ -64,6 +71,7 @@ from ops_suite.common.teams import (
     set_webhook_command,
     text_card,
 )
+from ops_suite.tdx import api_source
 from ops_suite.tdx.alerts import (
     DESK_STATE_FILE_NAME,
     STATE_FILE_NAME,
@@ -79,10 +87,14 @@ from ops_suite.tdx.alerts import (
     fit_card,
     fit_delta_card,
     fit_summary_card,
+    fit_urgent_card,
     open_findings,
     plan_alerts,
     summary_change,
+    urgent_event,
 )
+from ops_suite.tdx.api_client import TdxApiClient
+from ops_suite.tdx.api_token import TokenError, TokenSource, browser_fetcher
 from ops_suite.tdx.browser import BrowserStartError, TdxBrowser
 from ops_suite.tdx.dashboard import (
     DashboardRead,
@@ -105,6 +117,7 @@ from ops_suite.tdx.guard import BUILT_IN_ALLOWED, parse_allowed
 from ops_suite.tdx.rows import TicketRow
 from ops_suite.tdx.rules import (
     AuditResult,
+    Finding,
     RuleSettings,
     apply_verdicts,
     evaluate,
@@ -154,6 +167,10 @@ NO_PERSONAL_FOR_ALERTS = (
 )
 
 
+# Where an audit reads the queue: the browser (the default) or the TDX Web API.
+Source = Literal["browser", "api"]
+
+
 @dataclass(frozen=True, slots=True)
 class AuditRun:
     dashboard: DashboardRead
@@ -164,6 +181,11 @@ class AuditRun:
     desk_remembered: int | None = None  # members in desk-members.json; None when it is off
     llm: FollowUpOutcome | None = None
     llm_today: LlmDayUsage | None = None  # today's LLM totals after the step; None when off
+    read_seconds: float | None = None  # the read and the rules, before any LLM step
+    source: Source = "browser"  # the reader that read this run
+    # tdx.source = "api": the API's reason code when the browser read this cycle instead.
+    fallback: str | None = None
+    api_requests: int | None = None  # requests the API read sent; None for the browser
 
 
 @dataclass(frozen=True, slots=True)
@@ -181,6 +203,19 @@ class SendOutcome:
     slot: datetime | None = None  # summaries only: the slot
     # Summaries only: the (ticket id, kind) set to remember as open at this post.
     open_keys: frozenset[StateKey] = frozenset()
+    # The urgent event findings this cycle took to the desk chat, on their own card or in the
+    # summary; None when there were none.
+    urgent: "UrgentOutcome | None" = None
+
+
+@dataclass(frozen=True, slots=True)
+class UrgentOutcome:
+    """Urgent event findings new for the desk chat: on their own card (``sent`` or
+    ``failed``, retried next run) or marked in this cycle's summary (``in_summary``)."""
+
+    status: Literal["sent", "failed", "in_summary"]
+    rows: int
+    reason: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -371,14 +406,29 @@ def run_audit(
     headless: bool,
     progress: Callable[[int, int], None] | None,
     use_llm: bool = True,
+    source: Source = "browser",
 ) -> AuditRun:
     """Read the dashboard and the feeds that need it (read-only), apply the rules, then the
     follow-up classifier (see ``follow_up``, always ``institutional`` here).
 
+    ``source`` "api" reads the same data through the TDX Web API (``read_and_judge_api``).
     Raises BrowserStartError, NotSignedInError and DashboardStructureError (with
-    ``failed_step``) as ``tdx audit`` always has. Settings are checked by the caller.
+    ``failed_step``) as ``tdx audit`` always has, and with "api" also ApiError and
+    TokenError. Settings are checked by the caller.
     """
-    run = read_and_judge(settings, headless=headless, progress=progress)
+    started = time.monotonic()
+    if source == "api":
+        run = read_and_judge_api(settings, progress=progress)
+    else:
+        run = read_and_judge(settings, headless=headless, progress=progress)
+    return finish_audit(settings, run, time.monotonic() - started, use_llm=use_llm)
+
+
+def finish_audit(
+    settings: Settings, run: AuditRun, read_seconds: float, *, use_llm: bool
+) -> AuditRun:
+    """A read's run with its time and the follow-up step (see ``follow_up``) applied."""
+    run = replace(run, read_seconds=read_seconds)
     result, outcome, today = follow_up(
         settings,
         run.result,
@@ -399,12 +449,27 @@ def read_and_judge(
 ) -> AuditRun:
     """The browser read and the rules, shared by ``run_audit`` and ``tdx demo``; no LLM step
     (``llm`` is None). Raises as ``run_audit`` does."""
+    now = datetime.now(ZoneInfo(settings.tdx.display_timezone))
+    dashboard, feeds, rows = read_browser(settings, headless=headless, now=now, progress=progress)
+    return _judged(settings, dashboard, feeds, rows, now)
+
+
+def read_browser(
+    settings: Settings,
+    *,
+    headless: bool,
+    now: datetime,
+    progress: Callable[[int, int], None] | None,
+    plan_rows: Sequence[TicketRow] | None = None,
+) -> tuple[DashboardRead, FeedRead, list[TicketRow]]:
+    """The browser read at ``now``: the dashboard's rows, then the feeds and event forms of
+    the tickets the rules plan for: on ``plan_rows`` when given (another source's rows, so
+    both read the same tickets), else on the dashboard's own. Raises as ``run_audit`` does."""
     tdx = settings.tdx.model_copy(update={"base_url": settings.tdx.base_url.strip()})
     allowed = BUILT_IN_ALLOWED + parse_allowed(tdx.allowed_requests)
     _, start_url = start_address(settings, tdx)
     rules = rule_settings(tdx)
     tz = ZoneInfo(tdx.display_timezone)
-    now = datetime.now(tz)
     step = "the dashboard"
     try:
         with TdxBrowser(
@@ -416,12 +481,13 @@ def read_and_judge(
         ) as browser:
             dashboard = read_dashboard(browser, tdx, now, start_url=start_url)
             rows = [row for widget in dashboard.widgets.values() for row in widget.rows]
-            plan = plan_feeds(rows, now, rules, tz)
+            plan = plan_feeds(rows if plan_rows is None else plan_rows, now, rules, tz)
             step = "the ticket pages"
+            # The page's own rows win; the other source's fill in a ticket the page lacks.
             feeds = read_feeds(
                 browser,
                 tdx,
-                {row.ticket_id: row for row in rows},
+                {row.ticket_id: row for row in (*(plan_rows or ()), *rows)},
                 plan.feed_ticket_ids,
                 now,
                 progress,
@@ -431,8 +497,54 @@ def read_and_judge(
     except DashboardStructureError as error:
         error.audit_step = step  # type: ignore[attr-defined]
         raise
+    return dashboard, feeds, rows
+
+
+def read_and_judge_api(
+    settings: Settings,
+    *,
+    progress: Callable[[int, int], None] | None,
+    client: TdxApiClient | None = None,
+) -> AuditRun:
+    """``read_and_judge`` through the TDX Web API: the two reports instead of the widgets,
+    the feed and ticket endpoints instead of the ticket pages; the same rules after. The
+    client asks for a fresh token headless when it needs one. Raises ApiError, TokenError
+    (``needs_sign_in``: a fresh token needs the API's own sign-in; see ``ApiSignInNotices``)
+    and DashboardStructureError."""
+    tdx = settings.tdx.model_copy(update={"base_url": settings.tdx.base_url.strip()})
+    now = datetime.now(ZoneInfo(tdx.display_timezone))
+    if client is None:
+        client = TdxApiClient(tdx, TokenSource(browser_fetcher(settings)))
+    step = "the reports"
+    try:
+        api_source.report_ids(tdx)  # ConfigProblem before any request
+        queue = api_source.read_queue(
+            tdx, client, now, rule_settings(tdx), form_options(tdx), progress
+        )
+    except DashboardStructureError as error:
+        error.audit_step = step  # type: ignore[attr-defined]
+        raise
+    log.info("api requests", extra={"requests": dict(queue.requests)})
+    run = _judged(settings, queue.dashboard, queue.feeds, list(queue.rows), now)
+    return replace(run, source="api", api_requests=sum(queue.requests.values()))
+
+
+def _judged(
+    settings: Settings,
+    dashboard: DashboardRead,
+    feeds: FeedRead,
+    rows: list[TicketRow],
+    now: datetime,
+) -> AuditRun:
+    tdx = settings.tdx
     result, remembered = judge(
-        rows, feeds.feeds, now, rules, tz, open_desk_memory(settings), feeds.forms
+        rows,
+        feeds.feeds,
+        now,
+        rule_settings(tdx),
+        ZoneInfo(tdx.display_timezone),
+        open_desk_memory(settings),
+        feeds.forms,
     )
     return AuditRun(
         dashboard=dashboard,
@@ -479,6 +591,16 @@ def format_send_outcome(outcome: SendOutcome) -> str:
     if outcome.status == "not_approved":
         return f"{label}: not sent; teams.desk.approved is false."
     return f'{label}: not sent; run "{set_webhook_command(outcome.destination)}" first.'
+
+
+def format_urgent(urgent: UrgentOutcome) -> str:
+    """The desk chat's urgent event part of the cycle line: counts and a reason code only."""
+    label = teams_label("desk")
+    if urgent.status == "sent":
+        return f"{label}: urgent event card ({urgent.rows})."
+    if urgent.status == "in_summary":
+        return f"{label}: urgent events in the summary ({urgent.rows})."
+    return f"{label}: urgent event card not posted ({urgent.reason}); will retry next run."
 
 
 @dataclass(frozen=True, slots=True)
@@ -561,6 +683,7 @@ class SummaryDraft:
     kind: SummaryKind = "full"
     cleared: int = 0
     open_keys: frozenset[StateKey] = frozenset()  # what the post leaves as the open set
+    urgent: int = 0  # rows marked "(event soon)"
 
 
 def draft_summary(
@@ -569,6 +692,7 @@ def draft_summary(
     state: AlertState,
     destination: Destination,
     request: SummaryRequest,
+    urgent: Set[StateKey] = frozenset(),
 ) -> SummaryDraft:
     """The summary card for ``request``, with titles only if ``destination`` shows them.
 
@@ -580,6 +704,10 @@ def draft_summary(
     - **Delta** (later slots): rows only for the new findings and the reminders due under the
       alert policy (``state``), the cleared ones as a count; no events and no mention. Its
       ``card`` is None when nothing is new, cleared or due: the slot is skipped.
+
+    ``urgent``: urgent event findings new for the chat this cycle. They go into this summary,
+    marked "(event soon)", instead of on a card of their own; a delta lists them even when
+    they were open at the last post (cleared and back since).
     """
     tdx = settings.tdx
     rows_by_id = {row.ticket_id: row for row in run.rows}
@@ -606,7 +734,7 @@ def draft_summary(
         reminder_keys = {
             (d.finding.ticket_id, d.finding.kind) for d in plan.on_card if d.why == "reminder"
         } - change.new
-        listed = change.new | reminder_keys
+        listed = change.new | reminder_keys | urgent
         rows = [f for f in alert_on if (f.ticket_id, f.kind) in listed]
         if not rows and not change.cleared:
             empty = AlertPlan(on_card=(), overflow=0, cleared=())
@@ -628,6 +756,7 @@ def draft_summary(
             show_titles=show_titles,
             max_rows=tdx.alerts.max_rows_per_card,
             duplicates=duplicates,
+            urgent_keys=urgent,
         )
     else:
         events = events_this_week(
@@ -659,6 +788,7 @@ def draft_summary(
             events=events,
             duplicates=duplicates,
             since=request.since,
+            urgent_keys=urgent,
         )
     shown_keys = {(finding.ticket_id, finding.kind) for finding in shown}
     record = AlertPlan(
@@ -678,6 +808,7 @@ def draft_summary(
         request.kind,
         len(change.cleared),
         change.open,
+        len(shown_keys & set(urgent)),
     )
 
 
@@ -688,6 +819,7 @@ def send_summary(
     url: str | None,
     destination: Destination,
     request: SummaryRequest,
+    urgent: Set[StateKey] = frozenset(),
 ) -> SendOutcome:
     """Post the shift summary (full or delta, ``request.kind``) to ``destination`` instead of
     this cycle's alert card.
@@ -697,7 +829,8 @@ def send_summary(
     in a "+N more" line stay due. Cleared records are dropped (and saved) whatever happens to
     the post. A delta with nothing new, cleared or due posts nothing (``no_change``). ``desk``
     without ``teams.desk.approved`` sends nothing and touches no state. The caller records the
-    slot and the outcome's ``open_keys`` itself (``SummaryState``).
+    slot and the outcome's ``open_keys`` itself (``SummaryState``). ``urgent``: the urgent
+    event findings new for the chat, marked on the summary instead of a card of their own.
     """
     if not desk_allowed(settings, destination):
         log.info("tdx summary", extra={"outcome": "not_approved", "destination": destination})
@@ -705,7 +838,7 @@ def send_summary(
     if url is None:
         return SendOutcome("no_webhook", destination=destination, summary=True)
     state = AlertState(state_path)
-    draft = draft_summary(run, settings, state, destination, request)
+    draft = draft_summary(run, settings, state, destination, request, urgent)
     record = draft.record
     delta = draft.kind == "delta"
     counts = {
@@ -721,6 +854,7 @@ def send_summary(
         "late": request.late,
         "mention": "none" if delta else settings.tdx.summary.mention,
         "destination": destination,
+        "urgent": draft.urgent,
     }
 
     def outcome(
@@ -739,6 +873,11 @@ def send_summary(
             cleared=draft.cleared,
             slot=request.slot,
             open_keys=draft.open_keys,
+            urgent=(
+                UrgentOutcome("in_summary", draft.urgent)
+                if status == "sent" and draft.urgent
+                else None
+            ),
         )
 
     if draft.card is None:
@@ -774,6 +913,115 @@ def alert_destination(settings: Settings, destination: Destination) -> Destinati
     return "personal" if summary.personal_alerts else None
 
 
+def urgent_events_on(settings: Settings, destination: Destination) -> bool:
+    """Whether a ``tdx watch --to <destination>`` cycle takes urgent event findings to the desk
+    chat at once: only a desk watch, while summaries go to the desk chat, with
+    ``tdx.summary.urgent_events_to_desk`` and ``teams.desk.approved``."""
+    summary = settings.tdx.summary
+    return (
+        destination == "desk"
+        and summary.enabled
+        and summary.destination == "desk"
+        and summary.urgent_events_to_desk
+        and settings.teams.desk.approved
+    )
+
+
+def desk_urgent(
+    run: AuditRun, settings: Settings, known: Set[StateKey]
+) -> tuple[frozenset[StateKey], tuple[Finding, ...]]:
+    """(``known`` less the findings that cleared this run, the urgent event findings not in
+    it): what the desk chat has been shown and still stands, and what it needs now.
+
+    Urgent means an event finding within ``tdx.events.near_event_days`` of its event
+    (``urgent_event``). Clearing follows the alert state's rule: a finding gone from a ticket
+    judged this run, or from a queue read in full."""
+    rows_by_id = {row.ticket_id: row for row in run.rows}
+    alert_on = alertable(
+        open_findings(run.result.findings),
+        alert_ready_to_close=settings.tdx.alerts.alert_ready_to_close,
+    )
+    change = summary_change(
+        alert_on,
+        known,
+        seen_ticket_ids=set(rows_by_id),
+        unsettled_ticket_ids=set(run.feeds.failed) | set(run.feeds.deferred),
+        queue_complete=not any(w.hit_page_limit for w in run.dashboard.widgets.values()),
+    )
+    still = frozenset(known) - change.cleared
+    near = settings.tdx.events.near_event_days
+    urgent = tuple(
+        finding
+        for finding in alert_on
+        if urgent_event(finding, near) and (finding.ticket_id, finding.kind) not in still
+    )
+    return still, urgent
+
+
+def send_urgent(
+    run: AuditRun,
+    settings: Settings,
+    summary_state: SummaryState,
+    url: str | None,
+    urgent: Sequence[Finding],
+    known: Set[StateKey],
+) -> UrgentOutcome | None:
+    """Post the urgent event findings to the desk chat on one short card (none when there
+    are none), then remember them: in ``summary_state`` (shown, so the next delta does not
+    list them as new and they are not posted again until they clear) and in the desk's alert
+    state, as a summary post would. A failed post records nothing, so the next run tries
+    again. ``known`` (cleared findings dropped) is saved either way."""
+    if not urgent:
+        summary_state.update_known(known)
+        return None
+    tdx = settings.tdx
+    if url is None:
+        summary_state.update_known(known)
+        return UrgentOutcome("failed", len(urgent), "no_webhook")
+    rows_by_id = {row.ticket_id: row for row in run.rows}
+    alert_state = AlertState(alert_state_path(settings, "desk"))
+    plan = _plan_all(run, settings, alert_state)
+    links = card_links(rows_by_id, [finding.ticket_id for finding in urgent], tdx)
+    shown, card = fit_urgent_card(
+        urgent,
+        rows_by_id,
+        links,
+        run.now,
+        ZoneInfo(tdx.display_timezone),
+        tdx.events.near_event_days,
+        title_chars=tdx.alerts.title_chars,
+        show_titles=settings.teams.show_titles("desk"),
+        max_rows=tdx.alerts.max_rows_per_card,
+    )
+    counts = {
+        "rows": len(shown),
+        "kinds": dict(Counter(finding.kind for finding in shown)),
+        "destination": "desk",
+    }
+    try:
+        status = post_card(url, card, timeout=settings.teams.timeout_seconds)
+    except TeamsPostError as error:
+        alert_state.save()  # only the cleared records changed
+        summary_state.update_known(known)
+        log.info(
+            "tdx urgent events",
+            extra={"outcome": "failed", "status": error.status, "reason": error.reason, **counts},
+        )
+        return UrgentOutcome("failed", len(shown), error.reason)
+    shown_keys = {(finding.ticket_id, finding.kind) for finding in shown}
+    AlertPlan(
+        on_card=tuple(
+            due for due in plan.on_card if (due.finding.ticket_id, due.finding.kind) in shown_keys
+        ),
+        overflow=0,
+        cleared=(),
+    ).record(alert_state, run.now)
+    alert_state.save()
+    summary_state.update_known(known, shown=shown_keys)
+    log.info("tdx urgent events", extra={"outcome": "sent", "status": status, **counts})
+    return UrgentOutcome("sent", len(shown))
+
+
 def send_cycle(
     run: AuditRun,
     settings: Settings,
@@ -784,11 +1032,33 @@ def send_cycle(
     given, otherwise the alert card to ``alert_destination``, each against that chat's own
     alert state and saved webhook. Alert cards moved to the personal chat are not sent
     (``off``) when no personal webhook is saved, and neither are alert cards with nowhere to
-    go."""
+    go.
+
+    With ``urgent_events_on``, urgent event findings new for the desk chat also go there at
+    once: marked in the summary when one is due, else on one short card of their own beside
+    the alert card, which is unchanged. Either way the desk summary state remembers them."""
+    summary_state: SummaryState | None = None
+    known: frozenset[StateKey] = frozenset()
+    urgent: tuple[Finding, ...] = ()
+    if urgent_events_on(settings, destination):
+        summary_state = SummaryState(summary_state_path(settings, "desk"))
+        known, urgent = desk_urgent(run, settings, summary_state.known)
     if summary is not None:
+        if summary_state is not None:
+            # The post's open set joins ``known`` when the caller records the slot.
+            summary_state.update_known(known)
         url = _saved_url(destination)
         state_path = alert_state_path(settings, destination)
-        return send_summary(run, settings, state_path, url, destination, summary)
+        keys = frozenset((finding.ticket_id, finding.kind) for finding in urgent)
+        return send_summary(run, settings, state_path, url, destination, summary, keys)
+    outcome = _send_alert_card(run, settings, destination)
+    if summary_state is None:
+        return outcome
+    sent = send_urgent(run, settings, summary_state, _saved_url("desk"), urgent, known)
+    return outcome if sent is None else replace(outcome, urgent=sent)
+
+
+def _send_alert_card(run: AuditRun, settings: Settings, destination: Destination) -> SendOutcome:
     alerts_to = alert_destination(settings, destination)
     if alerts_to is None:
         return SendOutcome("off", reason="summaries_only", destination=destination)
@@ -877,6 +1147,37 @@ def sign_in_notice(retry_minutes: int) -> str:
     )
 
 
+API_SIGN_IN_NOTICE = f'TDX API token needs a sign-in: run "{RUN} tdx api token --headed".'
+
+
+class ApiSignInNotices:
+    """A headless token refresh that reached the identity provider (TokenError
+    ``needs_sign_in``) in a background loop: a plain notice to the personal chat, at most
+    once a day.
+
+    It is the Web API's own sign-in, not the TDX session's, which may be fine. So it is never
+    a cycle failure, never counts toward a stop, and never touches the browser's signed-out
+    state or the session log: the caller records nothing else for it.
+    """
+
+    def __init__(self, notify: Callable[[str], None], tz: ZoneInfo) -> None:
+        self._notify = notify
+        self._tz = tz
+        self.day: date | None = None  # the day of the last notice
+
+    def handled(self, error: Exception, now: datetime) -> bool:
+        """True if ``error`` is ``needs_sign_in``: noticed (once a day) and nothing else to
+        do. False for any other error, which the caller handles as before."""
+        if not (isinstance(error, TokenError) and error.reason == "needs_sign_in"):
+            return False
+        today = now.astimezone(self._tz).date()
+        if self.day != today:
+            self.day = today
+            log.info("api token needs a sign-in; notice sent")
+            self._notify(API_SIGN_IN_NOTICE)
+        return True
+
+
 def _profile_in_use(error: Exception) -> bool:
     """The ``tdx login`` window has the profile open (someone is signing in)."""
     return isinstance(error, BrowserStartError) and error.reason == "profile_in_use"
@@ -897,14 +1198,55 @@ def busy_line(retry_minutes: int) -> str:
     )
 
 
-def _cycle_line(run: AuditRun, outcome: SendOutcome) -> str:
+def source_part(run: AuditRun) -> str:
+    """``source: api`` or ``source: browser (fallback: needs_sign_in)``."""
+    if run.fallback is not None:
+        return f"source: {run.source} (fallback: {run.fallback})"
+    return f"source: {run.source}"
+
+
+def _cycle_line(
+    run: AuditRun, outcome: SendOutcome, shadow: str | None = None, *, show_source: bool = False
+) -> str:
     unclaimed = run.result.counts.get("rows_unclaimed", 0)
     feeds = len(run.feeds.feeds)
     findings = len(run.result.findings)
+    after = f" {shadow}" if shadow else ""
+    before = f"{source_part(run)}; " if show_source else ""
+    urgent = f" {format_urgent(outcome.urgent)}" if outcome.urgent is not None else ""
     return (
-        f"{unclaimed} unclaimed, {feeds} feed{'' if feeds == 1 else 's'}, "
+        f"{before}{unclaimed} unclaimed, {feeds} feed{'' if feeds == 1 else 's'}, "
         f"{findings} finding{'' if findings == 1 else 's'}; {format_send_outcome(outcome)}"
+        f"{urgent}{after}"
     )
+
+
+SHADOW_ON = (
+    "API shadow mode: each run also reads the same tickets through the TDX Web API and records "
+    f'counts only; cards come from the browser. "{RUN} tdx api compare" shows the comparison.'
+)
+SHADOW_ERROR = "API shadow: not compared (error)."
+API_PRIMARY_ON = (
+    "Reading the queue through the TDX Web API; the browser reads any run the API cannot "
+    "(each run's line names its source)."
+)
+BROWSER_SHADOW_ON = (
+    "Browser shadow: each run also reads the same tickets through the browser and records "
+    f'counts only; cards come from the API. "{RUN} tdx api compare" shows the comparison.'
+)
+BROWSER_SHADOW_ERROR = "Browser shadow: not compared (error)."
+
+
+def _shadow_line(
+    shadow: Callable[[AuditRun], str | None], run: AuditRun, error_line: str
+) -> str | None:
+    """The shadow step's line, or None when it has none. It handles its own failures;
+    anything that still escapes it is logged by class name and never touches the cycle."""
+    try:
+        return shadow(run)
+    except Exception as error:  # the comparison must never fail a cycle
+        log.info("api shadow failed", extra={"reason": type(error).__name__})
+        return error_line
 
 
 def summary_skipped_notice(slot: datetime, reason: str) -> str:
@@ -929,6 +1271,7 @@ def watch(
     run_cycle: Callable[..., tuple[AuditRun, SendOutcome]],
     notify: Callable[[str], None],
     destination: Destination = "personal",
+    shadow: Callable[[AuditRun], str | None] | None = None,
 ) -> int:
     """Run ``run_cycle`` every ``interval_minutes`` during desk hours until Ctrl+C.
 
@@ -961,6 +1304,17 @@ def watch(
     While summaries go to the desk chat, ``alert_destination`` says where a desk
     watch's alert cards go (the personal chat by default, with a start warning when no
     personal webhook is saved); ``run_cycle`` is expected to follow it (``send_cycle``).
+    ``send_cycle`` may also post urgent event findings to the desk chat and update the
+    summary state's ``known`` set, so the loop re-reads the state before and after a cycle.
+
+    ``shadow``: called with each successful cycle's run after its post, it reads the same
+    tickets through the other source, records the comparison and returns one line for the
+    cycle's output (or None). It never posts, never touches the alert, summary or failure
+    state, and nothing it raises fails the cycle.
+
+    ``tdx.source = "api"``: ``run_cycle`` reads through the API and falls back to the browser
+    for the cycle by itself (``ApiFirst``), so only the browser's errors reach this loop and
+    are handled as above. Each cycle's line starts with its source.
     """
     hours = DeskHours.from_settings(settings.schedule)
     interval = timedelta(minutes=settings.tdx.watch.interval_minutes)
@@ -989,10 +1343,12 @@ def watch(
     summary = settings.tdx.summary
     grace = timedelta(minutes=summary.grace_minutes)
     slots: SummarySlots | None = None
+    summary_path: Path | None = None
     summary_state: SummaryState | None = None
     if summary.enabled and summary.destination == destination:
         slots = SummarySlots.from_settings(summary, settings.schedule)
-        summary_state = SummaryState(summary_state_path(settings, destination))
+        summary_path = summary_state_path(settings, destination)
+        summary_state = SummaryState(summary_path)
 
     def next_run(cycle_start: datetime, step: timedelta) -> datetime:
         due = cycle_start + step
@@ -1034,6 +1390,14 @@ def watch(
             f"this watch posts to the {destination} chat, so it sends none.",
             flush=True,
         )
+    api_first = settings.tdx.source == "api"
+    if api_first:
+        print(API_PRIMARY_ON, flush=True)
+        if shadow is not None and settings.tdx.shadow.enabled:
+            print(BROWSER_SHADOW_ON, flush=True)
+    elif shadow is not None:
+        print(SHADOW_ON, flush=True)
+    shadow_error = BROWSER_SHADOW_ERROR if api_first else SHADOW_ERROR
     # The summary slot due now and not yet posted, and why its last attempt failed.
     pending: datetime | None = None
     pending_reason: str | None = None
@@ -1045,6 +1409,9 @@ def watch(
     try:
         while True:
             now = clock()
+            if summary_path is not None:
+                # A cycle's urgent event card updates the file too: always start from it.
+                summary_state = SummaryState(summary_path)
             due = due_slot(now)
             if pending is not None and due != pending:
                 # Grace ran out, the desk closed or a newer slot came: this one is skipped.
@@ -1144,11 +1511,17 @@ def watch(
                 continue
             if signed_out:
                 notice_day = None
-                print(f"{local(now):%H:%M} Signed in again; resuming.", flush=True)
-                log.info("tdx watch signed in again")
+                if run.source == "api":
+                    # The API answered; the browser's own sign-in may still be expired.
+                    print(f"{local(now):%H:%M} The TDX Web API answered; resuming.", flush=True)
+                    log.info("tdx watch reading through the api again")
+                else:
+                    print(f"{local(now):%H:%M} Signed in again; resuming.", flush=True)
+                    log.info("tdx watch signed in again")
             busy = False
             failures = 0
-            if request is not None and summary_state is not None:
+            if request is not None and summary_path is not None:
+                summary_state = SummaryState(summary_path)  # as this cycle left it
                 if outcome.status == "sent":
                     summary_state.record(request.slot, posted=True, open_keys=outcome.open_keys)
                     pending = pending_reason = None
@@ -1164,11 +1537,10 @@ def watch(
                         if outcome.status == "failed"
                         else f"Teams {outcome.status}"
                     )
+            shadow_line = _shadow_line(shadow, run, shadow_error) if shadow is not None else None
             wake = next_run(now, interval)
-            print(
-                f"{local(now):%H:%M} {_cycle_line(run, outcome)} Next run {local(wake):%H:%M}.",
-                flush=True,
-            )
+            line = _cycle_line(run, outcome, shadow_line, show_source=api_first)
+            print(f"{local(now):%H:%M} {line} Next run {local(wake):%H:%M}.", flush=True)
             log.info(
                 "tdx watch cycle",
                 extra={
@@ -1185,6 +1557,10 @@ def watch(
                     "reason": outcome.reason,
                     "summary": request.slot.isoformat() if request is not None else None,
                     "summary_kind": request.kind if request is not None else None,
+                    "urgent": outcome.urgent.status if outcome.urgent is not None else None,
+                    "urgent_rows": outcome.urgent.rows if outcome.urgent is not None else 0,
+                    "source": run.source,
+                    "fallback": run.fallback,
                     "next_run": wake.isoformat(),
                 },
             )

@@ -28,7 +28,7 @@ from types import MappingProxyType
 from typing import Literal, get_args
 from zoneinfo import ZoneInfo
 
-from ops_suite.tdx.event_form import EventForm
+from ops_suite.tdx.event_form import EventForm, SpaceType
 from ops_suite.tdx.events import is_event_title, is_recurring_event, parse_event_title
 from ops_suite.tdx.feed_types import FeedEntry, TicketFeed
 from ops_suite.tdx.names import same_person
@@ -89,6 +89,7 @@ COUNT_KEYS: tuple[str, ...] = (
     "event_marketing_only",
     "event_no_outreach",
     "event_form_missing",
+    "event_renamed_with_form",
     "event_in_progress",
     "event_location_missing",
     "desk_members_known",
@@ -159,6 +160,34 @@ class EventStatus:
     since: datetime | None = None
 
 
+# An upcoming event's state as the summaries show it: the form's answer when it needs no
+# outreach, else who wrote last on the feed.
+NoOutreachState = Literal["marketing_only", "no_outreach"]
+EventFormState = NoOutreachState | EventFeedState
+
+
+def event_state[S: str](form: EventForm | None, feed_state: S) -> NoOutreachState | S:
+    """``marketing_only`` or ``no_outreach`` from the form, else ``feed_state`` (who wrote
+    last, or the caller's own code when the feed was not read). Without a form the services
+    are unknown, so ``feed_state`` stands."""
+    if form is not None and form.marketing_only:
+        return "marketing_only"
+    if form is not None and not (form.wants_av or form.wants_room):
+        return "no_outreach"
+    return feed_state
+
+
+@dataclass(frozen=True, slots=True)
+class EventRead:
+    """One upcoming event whose page was read, for ``--show-ids``: so every event can be
+    checked by hand, not only those with a finding. An id, codes and flags; never text."""
+
+    ticket_id: int
+    state: EventFormState
+    av_on_form: bool | None  # None: no form to read it from
+    space: SpaceType | None  # None: no form, or a form whose space was not read
+
+
 @dataclass(frozen=True, slots=True)
 class AuditPlan:
     feed_ticket_ids: tuple[int, ...]  # tickets whose feed must be opened, oldest Created first
@@ -176,9 +205,12 @@ class AuditResult:
     event_form_unreadable_ids: tuple[int, ...] = ()
     # Renamed event tickets whose page was read but held no form, ascending.
     event_form_missing_ids: tuple[int, ...] = ()
-    # The feed state of each upcoming event whose page was read and that needs outreach (or
-    # whose services are unknown), by ticket id; for the summary's "Events this week".
+    # The feed state of each upcoming event whose page was read, by ticket id; for the
+    # summary's "Events this week".
     event_states: Mapping[int, EventStatus] = field(default_factory=lambda: MappingProxyType({}))
+    # The same events with their state, A/V on the form and space, ascending by id; listed
+    # by the summary with show_ids.
+    event_reads: tuple[EventRead, ...] = ()
 
 
 # --- time --------------------------------------------------------------------------------
@@ -442,6 +474,7 @@ def evaluate(
     unreadable_forms: list[int] = []
     missing_forms: list[int] = []
     states: dict[int, EventStatus] = {}
+    reads: list[EventRead] = []
     forms = forms or {}
     staff = _desk_members(rows, feeds, rules)
     counts["desk_members_known"] = len(staff)
@@ -483,6 +516,14 @@ def evaluate(
         near = until <= rules.near_event_days * 24
         status = event_status(feed, row.requestor, is_desk)
         states[row.ticket_id] = status
+        reads.append(
+            EventRead(
+                row.ticket_id,
+                event_state(form, status.state),
+                form.wants_av if form is not None else None,
+                form.space if form is not None else None,
+            )
+        )
         since = _hours(status.since, now) if status.since is not None else None
         # Whatever the services and whether or not the desk has replied yet: the requester
         # wrote last, so the desk owes a reply, as on any ticket.
@@ -627,6 +668,8 @@ def evaluate(
             if form is None:
                 counts["event_form_missing"] += 1
                 missing_forms.append(row.ticket_id)
+            else:
+                counts["event_renamed_with_form"] += 1
             judge_event(row, feed, form, next_date)
             continue
 
@@ -687,6 +730,7 @@ def evaluate(
         event_form_unreadable_ids=tuple(sorted(unreadable_forms)),
         event_form_missing_ids=tuple(sorted(missing_forms)),
         event_states=MappingProxyType(states),
+        event_reads=tuple(sorted(reads, key=lambda read: read.ticket_id)),
     )
 
 
@@ -742,8 +786,9 @@ def apply_verdicts(result: AuditResult, verdicts: Mapping[int, Verdict]) -> Audi
 
 def format_audit_summary(result: AuditResult, *, show_ids: bool) -> list[str]:
     """Run summary lines: counts, and with ``show_ids`` one line per finding, per event with
-    an unreadable date, per unreadable event form and per renamed event without a form. Ids,
-    reason codes and hours only."""
+    an unreadable date, per unreadable event form, per renamed event without a form and per
+    upcoming event whose page was read (its state, A/V on the form and space). Ids, codes,
+    flags and hours only."""
     counts = result.counts
     findings = ", ".join(f"{_KIND_LABELS[kind]} {counts[kind]}" for kind in FINDING_KINDS)
     internal = (
@@ -759,9 +804,11 @@ def format_audit_summary(result: AuditResult, *, show_ids: bool) -> list[str]:
         f"{counts['event_multi_date']} multi-date, "
         f"{counts['event_date_unreadable']} with an unreadable date, "
         f"{counts['event_location_missing']} without a location. "
-        f"Event forms: {counts['event_forms']} ({counts['event_forms_recurring']} recurring, "
+        f"Form-titled tickets: {counts['event_forms']} "
+        f"({counts['event_forms_recurring']} recurring, "
         f"{counts['event_forms_unreadable']} unreadable); "
-        f"{counts['event_form_missing']} renamed without a form. "
+        f"renamed: {counts['event_renamed_with_form']} with a form, "
+        f"{counts['event_form_missing']} without. "
         f"Event states (no finding): {counts['event_outreach_done']} waiting on requester, "
         f"{counts['event_in_progress']} in progress, "
         f"{counts['event_outreach_not_due']} outreach not due yet, "
@@ -786,4 +833,21 @@ def format_audit_summary(result: AuditResult, *, show_ids: bool) -> list[str]:
         lines.extend(
             f"  event_form_missing  {ticket_id}" for ticket_id in result.event_form_missing_ids
         )
+        lines.extend(format_event_read(read) for read in result.event_reads)
     return lines
+
+
+def av_on_form_label(av_on_form: bool | None) -> str:
+    """``A/V on form: yes`` / ``no``, or ``—`` without a form. Only the form's services
+    checklist is read: A/V asked for later, in a comment or elsewhere, is not seen, so "no"
+    never means "confirmed, no A/V needed"."""
+    return "—" if av_on_form is None else ("yes" if av_on_form else "no")
+
+
+def format_event_read(read: EventRead) -> str:
+    """``  event_state  1234567  waiting_on_requester  A/V on form: yes  classroom``."""
+    space = read.space if read.space is not None else "—"
+    return (
+        f"  event_state  {read.ticket_id}  {read.state}  "
+        f"A/V on form: {av_on_form_label(read.av_on_form)}  {space}"
+    )

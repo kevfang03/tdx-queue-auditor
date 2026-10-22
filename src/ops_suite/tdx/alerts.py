@@ -14,7 +14,9 @@ stay out of the alert cards and the alert state unless ``alert_ready_to_close``
 (``alertable``). The day's first summary posted is that full card; later slots post a delta
 (``fit_delta_card``: new findings and due reminders as rows, cleared ones as a count).
 ``SummaryState`` remembers the last slot dealt with, the last one posted and the (ticket id,
-kind) set open at that post; ``summary_change`` compares.
+kind) set open at that post; ``summary_change`` compares. Between slots, an event finding
+within ``near_event_days`` of its event (``urgent_event``) goes to the chat on a short card
+of its own (``fit_urgent_card``) or, in a summary run, marked "(event soon)" in the summary.
 
 Personal data rule: the card body is the only place a ticket title goes, and only with
 ``show_titles`` (on for the personal chat, off for the desk chat by default, because titles
@@ -69,6 +71,7 @@ SECTION_LABELS: dict[str, str] = {
     "ready_to_close": "Ready to close",
 }
 EVENTS_SECTION_LABEL = "Events this week"
+EVENT_SOON_MARK = "(event soon)"
 _PRIORITY_ORDER = {"high": 0, "normal": 1, "low": 2}
 # (kind, reason) -> wording; a reason of None matches any reason of that kind. ``{age}`` is
 # the finding's age, ``{days}`` the time until the event (event outreach) and
@@ -233,6 +236,31 @@ def alertable(findings: Sequence[Finding], *, alert_ready_to_close: bool) -> tup
     if alert_ready_to_close:
         return tuple(findings)
     return tuple(finding for finding in findings if finding.kind != "ready_to_close")
+
+
+# The event findings that need the desk before the event: every one of them is already high
+# priority within ``near_event_days``. A requester's reply on an event ticket counts too.
+URGENT_EVENT_KINDS = frozenset({"event_details_pending", "event_outreach_due", "location_tbd_soon"})
+URGENT_EVENT_REASONS = frozenset({("client_waiting", "event_requester_replied")})
+
+
+def hours_to_event(finding: Finding) -> int | None:
+    """Whole hours until the finding's next event date, or None when it has none.
+    ``location_tbd_soon`` carries them as its age; the feed-state findings separately."""
+    if finding.kind == "location_tbd_soon":
+        return finding.age_hours
+    return finding.event_in_hours
+
+
+def urgent_event(finding: Finding, near_event_days: int) -> bool:
+    """Whether ``finding`` is an event finding within ``near_event_days`` of its event: one
+    the desk chat hears about at once instead of waiting for the next summary."""
+    if finding.kind not in URGENT_EVENT_KINDS and (
+        (finding.kind, finding.reason) not in URGENT_EVENT_REASONS
+    ):
+        return False
+    hours = hours_to_event(finding)
+    return hours is not None and hours <= near_event_days * 24
 
 
 @dataclass(frozen=True, slots=True)
@@ -550,20 +578,25 @@ def build_card(
 # --- shift summary ----------------------------------------------------------------------
 
 
-_SUMMARY_SCHEMA = 2
+_SUMMARY_SCHEMA = 3
+_OPEN_SET_SCHEMA = 2  # the same, before "known"
 
 
 class SummaryState:
-    """``summary-state-<destination>.json``: ``{"schema": 2, "last_slot": "<ISO local>",
-    "last_posted": "<ISO local>", "open": ["<id>:<kind>", ...]}``. Ticket ids, kinds and slot
-    times only.
+    """``summary-state-<destination>.json``: ``{"schema": 3, "last_slot": "<ISO local>",
+    "last_posted": "<ISO local>", "open": ["<id>:<kind>", ...], "known": [...]}``. Ticket ids,
+    kinds and slot times only.
 
     ``last_slot`` is the last slot dealt with (posted, or skipped because nothing changed);
     ``last_posted`` the last slot actually posted, which a delta counts "since"; ``open`` the
-    alertable findings open at that post. A schema 1 file (``last_slot`` only)
-    keeps its slot and has no post, so the next slot posted is full. An unreadable file is
-    moved aside to ``.bad`` and the state starts empty, so the current slot may be posted once
-    more, in full: the safe failure.
+    alertable findings open at that post, plus any posted on an urgent event card since.
+    ``known`` is every finding the chat has been shown, by a summary or an urgent card, that
+    has not cleared since: unlike ``open`` it drops a finding the run it clears, so an urgent
+    finding that clears and comes back is posted again. A schema 2 file has no ``known`` and
+    starts it as its open set; a schema 1 file (``last_slot`` only) keeps its slot and has no
+    post, so the next slot posted is full. An unreadable file is moved aside to ``.bad`` and
+    the state starts empty, so the current slot may be posted once more, in full: the safe
+    failure.
     """
 
     def __init__(self, path: Path) -> None:
@@ -571,12 +604,13 @@ class SummaryState:
         self.last_slot: datetime | None = None
         self.last_posted: datetime | None = None
         self.open: frozenset[StateKey] = frozenset()
+        self.known: frozenset[StateKey] = frozenset()
         if path.exists():
             try:
                 self._parse(json.loads(path.read_text(encoding="utf-8")))
             except (ValueError, KeyError, TypeError, AttributeError):
                 self.last_slot = self.last_posted = None
-                self.open = frozenset()
+                self.open = self.known = frozenset()
                 log.warning("summary state unreadable")
                 try:
                     os.replace(path, path.with_name(path.name + ".bad"))
@@ -589,19 +623,18 @@ class SummaryState:
         if data["schema"] == _SCHEMA:
             self.last_slot = _aware(str(data["last_slot"]))
             return
-        if data["schema"] != _SUMMARY_SCHEMA:
+        if data["schema"] not in (_OPEN_SET_SCHEMA, _SUMMARY_SCHEMA):
             raise ValueError("unknown schema")
-        last_slot, last_posted, keys = data["last_slot"], data["last_posted"], data["open"]
+        last_slot, last_posted = data["last_slot"], data["last_posted"]
         self.last_slot = None if last_slot is None else _aware(str(last_slot))
         self.last_posted = None if last_posted is None else _aware(str(last_posted))
-        if not isinstance(keys, list):
-            raise ValueError("open is not a list")
-        self.open = frozenset(_state_key(str(key)) for key in keys)
+        self.open = _key_set(data["open"])
+        self.known = _key_set(data["known"]) if data["schema"] == _SUMMARY_SCHEMA else self.open
 
     def __repr__(self) -> str:
         return (
             f"SummaryState(last_slot={self.last_slot!r}, last_posted={self.last_posted!r}, "
-            f"open={len(self.open)})"
+            f"open={len(self.open)}, known={len(self.known)})"
         )
 
     def posted(self, slot: datetime) -> bool:
@@ -620,22 +653,49 @@ class SummaryState:
         self, slot: datetime, *, posted: bool = True, open_keys: Set[StateKey] | None = None
     ) -> None:
         """Remember ``slot`` as dealt with (``posted``, or skipped as unchanged) and the open
-        set, and write the file atomically. Only after a post, or the decision to skip."""
+        set, which the chat has now been shown (``known``), and write the file atomically.
+        Only after a post, or the decision to skip."""
         self.last_slot = slot
         if posted:
             self.last_posted = slot
         if open_keys is not None:
             self.open = frozenset(open_keys)
+            self.known = self.known | self.open
+        self._save()
+
+    def update_known(self, known: Set[StateKey], *, shown: Set[StateKey] = frozenset()) -> None:
+        """Between slots: set ``known`` (cleared findings already dropped) and add ``shown``,
+        the findings an urgent card just posted, to both ``known`` and ``open`` so the next
+        delta does not list them as new. Writes the file only when something changed."""
+        known = frozenset(known) | frozenset(shown)
+        opened = self.open | frozenset(shown)
+        if known == self.known and opened == self.open:
+            return
+        self.known, self.open = known, opened
+        self._save()
+
+    def _save(self) -> None:
         data = {
             "schema": _SUMMARY_SCHEMA,
-            "last_slot": slot.isoformat(),
+            "last_slot": self.last_slot.isoformat() if self.last_slot else None,
             "last_posted": self.last_posted.isoformat() if self.last_posted else None,
-            "open": [f"{ticket_id}:{kind}" for ticket_id, kind in sorted(self.open)],
+            "open": _key_list(self.open),
+            "known": _key_list(self.known),
         }
         self.path.parent.mkdir(parents=True, exist_ok=True)
         temp_path = self.path.with_name(self.path.name + ".tmp")
         temp_path.write_text(json.dumps(data, indent=2), encoding="utf-8")
         os.replace(temp_path, self.path)
+
+
+def _key_set(keys: object) -> frozenset[StateKey]:
+    if not isinstance(keys, list):
+        raise ValueError("not a list")
+    return frozenset(_state_key(str(key)) for key in keys)
+
+
+def _key_list(keys: Set[StateKey]) -> list[str]:
+    return [f"{ticket_id}:{kind}" for ticket_id, kind in sorted(keys)]
 
 
 def _state_key(text: str) -> StateKey:
@@ -752,6 +812,7 @@ def _summary_card(
     max_rows: int,
     events: Sequence[WeekEvent],
     duplicates: Mapping[int, int],
+    urgent_keys: Set[StateKey] = frozenset(),
 ) -> tuple[tuple[Finding, ...], dict[str, object]]:
     body: list[dict[str, object]] = [
         _text(heading, weight="Bolder", size="Medium"),
@@ -792,6 +853,7 @@ def _summary_card(
         show_titles,
         max_rows,
         duplicates,
+        urgent_keys,
     )
     return shown, _summary_shell(heading, body)
 
@@ -818,9 +880,11 @@ def _finding_sections(
     show_titles: bool,
     max_rows: int,
     duplicates: Mapping[int, int],
+    urgent_keys: Set[StateKey] = frozenset(),
 ) -> tuple[Finding, ...]:
     """One section per kind with its count, at most ``max_rows`` rows in all (``+N more`` per
-    section past that), appended to ``body``. Returns the findings shown by id."""
+    section past that), appended to ``body``. Rows in ``urgent_keys`` are marked ``(event
+    soon)``. Returns the findings shown by id."""
     shown: list[Finding] = []
     budget = max(max_rows, 0)
     for kind in sorted({finding.kind for finding in findings}, key=_kind_order):
@@ -837,6 +901,8 @@ def _finding_sections(
             line = _id_link(ticket_id, links)
             if key in new_keys:
                 line += " (new)"
+            if key in urgent_keys:
+                line += f" {EVENT_SOON_MARK}"
             if ticket_id in duplicates:
                 line += f" (possible duplicate of #{duplicates[ticket_id]})"
             wording = finding_wording(finding)
@@ -887,6 +953,7 @@ def fit_summary_card(
     events: Sequence[WeekEvent] = (),
     duplicates: Mapping[int, int] | None = None,
     since: datetime | None = None,
+    urgent_keys: Set[StateKey] = frozenset(),
 ) -> tuple[tuple[Finding, ...], dict[str, object]]:
     """The summary card and the findings it shows by id (the rest are counted as ``+N
     more``). Rows are dropped from the end until the card, mentions included, is under
@@ -894,7 +961,8 @@ def fit_summary_card(
 
     ``events`` is the "Events this week" section, first (at most ``max_rows`` rows);
     ``duplicates`` maps a ticket id to the older ticket it may duplicate; ``since`` is the
-    last summary posted, which the heading's "new since" names."""
+    last summary posted, which the heading's "new since" names; ``urgent_keys`` are the
+    findings marked ``(event soon)`` instead of getting a card of their own."""
     ordered = open_findings(findings)
     new = sum((f.ticket_id, f.kind) in new_keys for f in ordered)
     slot_text = f"{slot.astimezone(tz):%H:%M}"
@@ -921,6 +989,7 @@ def fit_summary_card(
             rows,
             events,
             duplicates or {},
+            urgent_keys,
         )
         card = with_mentions(card, mention, mention_people)
         if card_size(card) < CARD_MAX_BYTES or not shown:
@@ -994,12 +1063,14 @@ def fit_delta_card(
     show_titles: bool,
     max_rows: int,
     duplicates: Mapping[int, int] | None = None,
+    urgent_keys: Set[StateKey] = frozenset(),
 ) -> tuple[tuple[Finding, ...], dict[str, object]]:
     """A later slot's delta card and the findings it shows by id: the heading ``Since 07:30:
     N new · M cleared · K open`` (``total`` open findings in all), then rows only for
     ``findings``, the new ones (``new_keys``, marked ``(new)``) and the due reminders
-    (``reminder_keys``, marked ``· reminder``), grouped by kind. Cleared findings are a count
-    only; no "Events this week" and no mention. Titles only with ``show_titles``; rows are
+    (``reminder_keys``, marked ``· reminder``), grouped by kind; urgent event findings
+    (``urgent_keys``) are marked ``(event soon)``. Cleared findings are a count only; no
+    "Events this week" and no mention. Titles only with ``show_titles``; rows are
     dropped from the end until the card is under ``CARD_MAX_BYTES``."""
     ordered = open_findings(findings)
     new = sum((f.ticket_id, f.kind) in new_keys for f in ordered)
@@ -1029,6 +1100,65 @@ def fit_delta_card(
             show_titles,
             rows,
             duplicates or {},
+            urgent_keys,
+        )
+        card = _summary_shell(heading, body)
+        if card_size(card) < CARD_MAX_BYTES or not shown:
+            return shown, card
+        rows = len(shown) - 1
+
+
+# --- urgent event card ------------------------------------------------------------------
+
+
+def urgent_heading(count: int) -> str:
+    """``Event soon: 2 need action`` (``1 needs action`` for one)."""
+    return f"Event soon: {count} {'needs' if count == 1 else 'need'} action"
+
+
+def fit_urgent_card(
+    findings: Sequence[Finding],
+    rows_by_id: Mapping[int, TicketRow],
+    links: Mapping[int, str | None],
+    now: datetime,
+    tz: ZoneInfo,
+    near_event_days: int,
+    *,
+    title_chars: int,
+    show_titles: bool,
+    max_rows: int,
+) -> tuple[tuple[Finding, ...], dict[str, object]]:
+    """The short card that takes urgent event findings to the desk chat between summaries,
+    and the findings it shows by id: the heading ``Event soon: N need action``, then rows
+    like the summary's (linked id, the title only with ``show_titles``, the wording), grouped
+    by kind. No mention, and the counts-only preview line. Rows are dropped from the end
+    until the card is under ``CARD_MAX_BYTES``; record only the returned findings."""
+    ordered = open_findings(findings)
+    heading = urgent_heading(len(ordered))
+    within = {0: "the hour", 1: "a day"}.get(near_event_days, f"{near_event_days} days")
+    rows = max_rows
+    while True:
+        body: list[dict[str, object]] = [
+            _text(heading, weight="Bolder", size="Medium"),
+            _text(
+                f"Read-only audit {now.astimezone(tz):%a %H:%M}: events within {within} "
+                "that still need the desk. The next summary lists them too.",
+                isSubtle=True,
+                size="Small",
+                spacing="None",
+            ),
+        ]
+        shown = _finding_sections(
+            body,
+            ordered,
+            frozenset(),
+            frozenset(),
+            rows_by_id,
+            links,
+            title_chars,
+            show_titles,
+            rows,
+            {},
         )
         card = _summary_shell(heading, body)
         if card_size(card) < CARD_MAX_BYTES or not shown:

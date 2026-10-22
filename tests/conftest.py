@@ -2,7 +2,7 @@ import logging
 import os
 import shutil
 import sys
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -13,6 +13,27 @@ import pytest
 from ops_suite.mail.models import MailMessage
 
 FIXTURES = Path(__file__).parent / "fixtures"
+
+
+REPO_ENV = Path(__file__).resolve().parents[1] / ".env"
+
+
+def _env_state() -> tuple[int, int] | None:
+    """The repository's ``.env`` as (size, modification time), or None when there is none.
+    Its contents are never read: it holds a person's own settings."""
+    try:
+        stat = REPO_ENV.stat()
+    except FileNotFoundError:
+        return None
+    return stat.st_size, stat.st_mtime_ns
+
+
+@pytest.fixture(scope="session", autouse=True)
+def repo_env_untouched() -> Iterator[None]:
+    """Fail the run if any test created, changed or deleted the repository's ``.env``."""
+    before = _env_state()
+    yield
+    assert _env_state() == before, "a test changed the repository's .env; tests use tmp_path"
 
 
 @pytest.fixture(autouse=True)

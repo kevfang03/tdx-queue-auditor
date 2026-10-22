@@ -2,6 +2,8 @@ import pytest
 
 from ops_suite.tdx.guard import (
     BUILT_IN_ALLOWED,
+    BUILT_IN_AUTH_READS,
+    REFUSED_CREDENTIAL_PATHS,
     AllowedRequest,
     is_live_update,
     parse_allowed,
@@ -174,3 +176,60 @@ def test_the_feed_search_entry_is_the_exact_path_on_the_tdx_host(url: str) -> No
 )
 def test_live_updates_are_recognised_by_path(url: str, live: bool) -> None:
     assert is_live_update(url) is live
+
+
+# --- the Web API's auth path --------------------------------------------------------------
+
+TOKEN_PAGE = "https://tdx.example.edu/TDWebApi/api/auth/loginsso"
+
+
+def test_the_sso_token_page_is_the_one_auth_request_a_guarded_browser_makes() -> None:
+    assert _allowed("GET", TOKEN_PAGE, "document")
+    assert _allowed("GET", "https://tdx.example.edu/TDWEBAPI/API/AUTH/LOGINSSO", "document")
+    assert _allowed("GET", "https://tdx.example.edu/SBTDWebApi/api/auth/loginsso", "document")
+    # Not from a script, and nothing else under the auth path, GET included.
+    assert not _allowed("GET", TOKEN_PAGE, "fetch")
+    assert not _allowed("POST", TOKEN_PAGE, "document")
+    assert not _allowed("GET", "https://tdx.example.edu/TDWebApi/api/auth/getuser", "fetch")
+
+
+@pytest.mark.parametrize("ending", REFUSED_CREDENTIAL_PATHS)
+@pytest.mark.parametrize("method", ["GET", "POST"])
+@pytest.mark.parametrize("resource_type", ["document", "fetch", "xhr"])
+def test_credential_endpoints_are_refused_on_the_tdx_host(
+    ending: str, method: str, resource_type: str
+) -> None:
+    for path in (f"/TDWebApi{ending}", f"/TDWebApi{ending.upper()}", f"/TDWebApi{ending}/"):
+        url = f"https://tdx.example.edu{path}"
+        everything = (
+            *BUILT_IN_ALLOWED,
+            AllowedRequest(method, "/*", "test", frozenset({resource_type})),
+        )
+        assert not _allowed(method, url, resource_type, allowed=everything)
+
+
+def test_the_auth_path_rule_applies_to_the_tdx_host_only() -> None:
+    assert _allowed("GET", "https://login.example.edu/api/auth/login", "document")
+
+
+@pytest.mark.parametrize(
+    "pattern",
+    [
+        "/TDWebApi/api/auth/login",
+        "/TDWebApi/api/auth/*",
+        "/tdwebapi/API/Auth/LoginAdmin",
+        "/TDWebApi/api/auth",
+        "/*",
+        "/*/api/*",
+    ],
+)
+def test_config_entries_that_could_reach_a_credential_endpoint_are_refused(pattern: str) -> None:
+    with pytest.raises(ValueError, match="credential endpoint"):
+        parse_allowed([f"POST {pattern}"])
+
+
+def test_the_auth_reads_are_documented_reads() -> None:
+    for entry in BUILT_IN_AUTH_READS:
+        assert entry.method == "GET"
+        assert entry.reason and "\n" not in entry.reason
+        assert entry.resource_types == frozenset({"document"})

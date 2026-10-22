@@ -78,6 +78,7 @@ Nothing the scan writes lands in the repository. With the default settings:
 | TDX desk-member memory `tdx/desk-members.json` (salted hashes and dates only) | `%LOCALAPPDATA%\ops-suite\` | `~/Library/Application Support/ops-suite/` | `~/.local/share/ops-suite/` |
 | Log `ops-suite.log` (one JSON object per line) | `%LOCALAPPDATA%\ops-suite\Logs\` | `~/Library/Logs/ops-suite/` | `~/.local/state/ops-suite/log/` |
 | TDX session log `tdx/session-log.json` (sign-in and expiry timestamps only) | `%LOCALAPPDATA%\ops-suite\` | `~/Library/Application Support/ops-suite/` | `~/.local/share/ops-suite/` |
+| TDX API shadow-mode record `tdx/api-shadow.jsonl` (times, seconds, counts, ticket ids and reason codes only; 30 days) | `%LOCALAPPDATA%\ops-suite\` | `~/Library/Application Support/ops-suite/` | `~/.local/share/ops-suite/` |
 | `tdx agent` output `watch.out.log`, `watch.err.log` (counts only) | `%LOCALAPPDATA%\ops-suite\Logs\` | `~/Library/Logs/ops-suite/` | (no agent) |
 | Optional `config.toml` | `%LOCALAPPDATA%\ops-suite\` | `~/Library/Application Support/ops-suite/` | `~/.config/ops-suite/` |
 
@@ -217,14 +218,14 @@ Claimed by others: 20 ticket(s) on 2 page(s).
 Feeds: 16 needed, 16 read, 0 failed, 0 deferred. Entries: 97 (70 reply, 12 private, 15 system), 0 unreadable.
 Findings: client waiting 2, follow up with client 0, event outreach due 1, event details pending 0, event over 1, location TBD soon 0, needs review 1.
 LLM: off; 2 "requestor wrote last" findings keep their wording.
-Checked: 18 unclaimed (16 feeds needed, 0 missing), 20 claimed (counted only). Events: 11, 1 recurring, 2 multi-date, 0 with an unreadable date, 1 without a location. Event forms: 2 (0 recurring, 0 unreadable); 1 renamed without a form. Event states (no finding): 1 waiting on requester, 2 in progress, 0 outreach not due yet, 0 marketing only, 0 no outreach. Desk members known: 9.
+Checked: 18 unclaimed (16 feeds needed, 0 missing), 20 claimed (counted only). Events: 11, 1 recurring, 2 multi-date, 0 with an unreadable date, 1 without a location. Form-titled tickets: 2 (0 recurring, 0 unreadable); renamed: 3 with a form, 1 without. Event states (no finding): 1 waiting on requester, 2 in progress, 0 outreach not due yet, 0 marketing only, 0 no outreach. Desk members known: 9.
 Unreadable dates: 0. Duplicates: 0. Blocked requests: 0. Live updates blocked: 37. Allowed non-GET: 21.
 ```
 
 - **Feeds:** `failed` tickets had no usable link, or no feed showed within `page_timeout_seconds`; they are counted as "missing" and get no finding this run. `deferred` tickets were beyond `max_feeds_per_run` and are read on a later run. Three failures in a row stop the run with exit `5`.
 - **Entries:** what the feeds held, by kind. `unreadable` entries had no author or no readable date; `--verbose` shows their shapes (`no author`, `undated: aaa 99/9/99 ...`), never their text.
 - **Events:** renamed `EVENT [...]` tickets. `without a location` titles have a date and a time in their bracket but no room; they are treated like TBD.
-- **Event forms:** the unclaimed event request forms. `unreadable` forms had no "Response Summary:" block or no readable date; `--show-ids` lists them by id (`  event_form_unreadable  1234567`). Look at one in TDX and describe its shape only (for example "the date is written as a weekday and month name"), never its text. `renamed without a form` are renamed events within 14 days whose page held no form block (made by hand): their space and A/V are unknown (`  event_form_missing  1234567` under `--show-ids`).
+- **Form-titled tickets:** the unclaimed tickets still titled like the event request form. `unreadable` forms had no "Response Summary:" block or no readable date; `--show-ids` lists them by id (`  event_form_unreadable  1234567`). Look at one in TDX and describe its shape only (for example "the date is written as a weekday and month name"), never its text. `renamed` counts the renamed events within 14 days whose page was read: `with a form` held a form block that could be read, `without` held none (made by hand), so their space and A/V are unknown (`  event_form_missing  1234567` under `--show-ids`). The desk renames a form ticket at first handling, so a queue of handled events shows `Form-titled tickets: 0` and its forms under `renamed`.
 - **Event states (no finding):** the upcoming events whose page was read and that raised nothing, by who wrote last ([docs/tdx-rules.md](tdx-rules.md#event-state)). `in progress` means the requester has answered and the desk wrote last: the tool cannot tell finished from unfinished without the events spreadsheet, so it stays quiet.
 - **Desk members known:** how many people the auditor recognised as desk staff in this run: Prim Resp names, private-note and merge-notice authors, authors of replies signed with the desk signature (`tdx.rules.desk_signatures`), anyone other than the requestor seen on 2 or more tickets, and your `extra_staff_names` if you set any.
 - **Live updates blocked:** each ticket page asks for live updates (SignalR: a few requests and a WebSocket). A read-only audit refuses all of them, so this number grows with every ticket opened. That is expected, and it is counted apart from `Blocked requests`, which should stay `0`.
@@ -232,7 +233,7 @@ Unreadable dates: 0. Duplicates: 0. Blocked requests: 0. Live updates blocked: 3
 - **LLM:** the optional follow-up classifier (off by default). With `llm.enabled` and `llm.allow_institutional_data` set in your own config, each "requestor wrote last" finding is classified once from the scrubbed text of the requestor's latest reply, and the line reads `LLM: 2 to check, 1 cached, 1 classified (expects reply 0, will follow up 1, no reply needed 0, unsure 0); skipped 0, failed 0. Today 812 of 100,000 tokens (~$0.0001).` A client who said they will follow up becomes "follow up with client" (normal priority); anything unclear stays "client waiting". Details in [docs/tdx-rules.md](tdx-rules.md#the-follow-up-classifier).
 - Nothing is sent anywhere unless you add `--send` (see below), and nothing is ever written to TDX. Names, titles and feed text stay in memory and are never printed or logged.
 
-**`--verbose`** adds unreadable-entry shapes, a per-path line for the live updates and allowed requests, and one line about private markers, for checking that private notes are read right:
+**`--verbose`** adds unreadable-entry shapes, a per-path line for the live updates and allowed requests, one line about private markers, for checking that private notes are read right, and, when event forms were read, one line about how the page shows their descriptions:
 
 ```text
 Entry markers: 97 entries, 31 nested; private marker present on 96, visible on 12; inherited-private 3; merge notes 2; reassignments 1; signature desk replies 14; visibility fallback 0.
@@ -240,7 +241,21 @@ Entry markers: 97 entries, 31 nested; private marker present on 96, visible on 1
 
 "Present on" counts entries whose page carries a private marker; "visible on" counts the ones where the browser actually shows it, which is what decides "private". Merge notices ("Merged incident ...") and reassignments ("Reassigned this incident from ...") are counted on their own and never count as private notes or replies. "Signature desk replies" counts visible replies whose own text (quoted mail cut first) holds a desk signature, which made their authors desk members. `visibility fallback` should be `0`.
 
-**`--show-ids`** adds one line per finding (and per event title whose date could not be read, per event request form that could not be read, and per failed or deferred feed): ticket id, reason code and age in hours, for example `  client_waiting  1234567  requestor_last  73h`. These lines are for your own check in TDX: look the tickets up there. **Do not paste them into a chat**; paste only the default output (and the `Entry markers:` line, which holds counts only).
+```text
+Event form descriptions: 5 read; with hidden text 5, clipped 0, with a toggle 5.
+Event form labels (space/services) found in: shown 0/0, container 5/5, outside 0/0, text box 0/0, template 0/0, attribute 0/0, script 0/0, anywhere 5/5.
+Event form blocks: 5 forms, 10 Response Summary blocks, 5 with all 6 answers; used from container 5, outside 0, text box 0, template 0, attribute 0, script 0.
+```
+
+Counts and place names only, never text:
+
+- The first line: how many form descriptions the page partly hides (`with hidden text`), caps in height (`clipped`), or shows next to a "show more"-style control (`with a toggle`).
+- The second: in how many descriptions the "What type of space" and "Please select all that apply" labels appear in each place: `shown` (the text the page displays), `container` (the description's whole DOM, hidden parts included), `outside` (the rest of its section), `text box`, `template`, `attribute`, `script`, and `anywhere` in the page's HTML. `anywhere 0/0` means the full form is not in the page at all.
+- The third: what the reader made of it: the Response Summary blocks it found over every copy, the forms whose block held all six labels it reads, and where the block it used came from.
+
+The form is read from every copy in the page's HTML whatever these say, without clicking. With `--source api` there are no such lines.
+
+**`--show-ids`** adds one line per finding (and per event title whose date could not be read, per event request form that could not be read, and per failed or deferred feed): ticket id, reason code and age in hours, for example `  client_waiting  1234567  requestor_last  73h`. It also adds one line per upcoming event ticket whose page was read, finding or not, so every event can be checked: `  event_state  1234567  waiting_on_requester  A/V on form: yes  classroom`. The state is `marketing_only` or `no_outreach` from the form, else who wrote last on the feed (`no_outreach_yet`, `waiting_on_requester`, `requester_replied`, `in_progress`); then whether the form's services ask for A/V (`—` without a form) and the type of space (`lobby`, `classroom`, `other`, or `—`). These lines are for your own check in TDX: look the tickets up there. **Do not paste them into a chat**; paste only the default output (and the `Entry markers:` line, which holds counts only).
 
 Other options: `--no-llm` skips the LLM step for one run (also on `tdx watch`), `--headed` shows the browser window, `--send` posts the findings to Teams (see the next sections), `--config PATH` picks a config file. Exit codes are the same as for `tdx rows`. Under `--verbose` the `Reading feeds:` line is printed every 5 tickets even on a terminal, so the debug log lines on stderr do not break it.
 
@@ -251,6 +266,78 @@ Settings (in [config.example.toml](../config.example.toml)):
   - `desk_signatures` (default "SCIS Commons Support" and "CCI Commons Support"): a visible reply whose own text, quoted mail cut first, contains one of these phrases marks its author as desk staff and is remembered like the other strong signals. Matched ignoring case and extra spaces. The requester never becomes desk this way, and no reply text is kept.
   - `extra_staff_names` is an optional override, normally empty. Normally not needed: desk members are learned from Prim Resp, private notes, merge notices and the desk signature in their replies. If you do use it, these are real people's names: keep them only in your own config file, never in the repository.
 - `[tdx.events]`: the event request forms. `form_titles` (the titles that mark an unhandled request, default "CCI Event Request Form" and "SCIS Event Request Form"); `outreach_days` (14: also how far ahead a renamed `EVENT [...]` ticket gets its form and feed read), `details_pending_days` (7), `urgent_days` (3, when "event outreach due" turns high) and `near_event_days` (2, 0 to 30: within this many days, "waiting on the requester" and "requester replied" are raised at once, at high priority); and the option prefixes, matched ignoring case at the start of an answer: `marketing_only_prefixes`, `av_service_prefixes`, `room_space_prefixes` and `known_option_prefixes` (the form's other options, so they are not counted as unknown; both "CCI Operational Assistance" and "SCIS Operational Assistance"). If the desk also reaches out for lobby bookings, add `"Lobby Area"` to `room_space_prefixes`.
+
+## TDX API (proof of concept)
+
+A second, read-only way to read the same queue: through the TDX Web API instead of the dashboard in a browser. It gives the same rows, feeds and event forms to the same rules, so the two can be compared. **The browser stays the default source.** `tdx watch` reads through the API beside the browser in [shadow mode](#shadow-mode-browser-and-api-side-by-side), and instead of it, with the browser as a fallback, once `tdx.source = "api"` ([Reading through the API](#reading-through-the-api)). It is off until you set `tdx.api.enabled = true` in your own config.
+
+**What it reads, all with `GET`:**
+
+| Request (below `tdx.api.base_path`) | What for |
+|---|---|
+| `GET /auth/getuser` | `tdx api check`: who the token belongs to (only the role is printed). |
+| `GET /reports` | `tdx api reports`: the reports you can see. |
+| `GET /reports/{id}?withData=true` | The rows: two Report Builder reports that show the same tickets and columns as the two dashboard widgets. |
+| `GET /{app id}/tickets/{id}/feed` | A ticket's feed entries, for the same tickets the browser audit opens. |
+| `GET /feed/{entry id}` | An entry's replies (the ticket feed leaves them out and only counts them), only for entries that have some. |
+| `GET /{app id}/tickets/{id}` | An event request form ticket's description. |
+| `GET /tickets/{id}` | Only when `tdx.api.app_id` is 0: the first ticket's app id. |
+
+Every request is checked against that list in code before it is sent: any other method (`POST`, `PUT`, `PATCH`, `DELETE`, the searches included), any other path, unknown query parameters and other hosts are refused, and so are the endpoints that sign in with a user name and password or with service-account keys, whatever the method. Requests are paced at least `min_request_interval_ms` apart (TDX allows 60 a minute per address on most of these and 30 a minute per person on report reads); a `429` waits for TDX's reset time (5 to 65 seconds) and is tried once more.
+
+**The token.** The Web API's SSO endpoint (`GET /auth/loginsso`) issues a token for the person who signs in through it, with your own rights and nothing more. The Web API has **a sign-in of its own**, apart from the TDX pages': the endpoint sends the browser to your identity provider, which may ask you to sign in again (MFA included) even while your TDX session is fine. You always do that sign-in yourself; the tool only waits for the token to arrive and never fills in or submits the sign-in pages.
+
+- `uv run ops-suite tdx login` asks for a token right after the TDX sign-in. It prints `The TDX API uses its own sign-in. If a sign-in page appears, sign in again (MFA included).` and opens the endpoint in the same window. Sign in if asked; the command ends by itself when the token arrives (no Enter needed) with `TDX API token: saved, expires Wed 09:14.` and closes the window. If you do not finish within `tdx.api.token_sign_in_minutes` (default 5), it prints `TDX API token: not saved (sign_in_timeout).`; your TDX session is saved either way.
+- `uv run ops-suite tdx api token --headed` does only that second sign-in, in a window, the same way.
+- `uv run ops-suite tdx api token` (no `--headed`) tries headless first, with the saved browser profile. If the identity provider wants you to sign in, it prints `TDX API token: needs sign-in; run "uv run ops-suite tdx api token --headed".` and exits `3`. That is about the API's sign-in only: it is not an expired TDX session, so nothing is written to the session log and `tdx watch` is not affected.
+- the API commands ask again by themselves, headless, when the stored token has expired or has less than 30 minutes left, or when the API refuses it (`401`). When that headless request needs a sign-in, they use the stored token while it lasts, and otherwise stop with the same `needs sign-in` line and exit `3`.
+
+**How often:** tokens last 24 hours. On some setups the headless request gets a fresh one with the saved sign-in; where the identity provider asks for a sign-in every time (the second sign-in's session is not kept for a new browser), plan on running `uv run ops-suite tdx api token --headed` **once a day** while you use the API. Where a background loop reads through the API, a refresh that reaches the sign-in page sends one plain notice a day to your own chat ("TDX API token needs a sign-in: run ... tdx api token --headed"); it never counts as a failed cycle.
+
+If the identity provider shows an error page instead of a sign-in (an HTTP error status), the request stops at once with `idp_refused`. The error can be temporary: try again once. If it keeps failing, whoever runs the sign-in service may need to allow the Web API. An error page that the provider serves as a normal page looks like a sign-in page to the tool, so it ends with `sign_in_timeout` (or `needs_sign_in` headless) instead; the window shows its message.
+
+The token is kept only in the system keychain (service `ops-suite`, user `tdx-api-token`; a token longer than one Windows Credential Manager entry is split over `tdx-api-token-1`, `-2`, ...). It is never printed, logged, written to a file or put in config or `.env`. Its expiry is read from the token itself and only the expiry is shown. It is wiped once it has expired or the API refuses it.
+
+The headless request goes through the read-only guard, which lets the browser load only the token endpoint under the Web API's auth path; if the sign-in on the way needs a request the guard refuses, the command lists it as `Blocked: METHOD /path` (review it as for `tdx rows`). The sign-in in a window (`tdx login`, `tdx api token --headed`) runs without the guard, as `tdx login` always has: you are at the window, and the identity provider's sign-in form posts to the provider and then back to TDX, writes the guard would refuse. The tool itself only opens the token endpoint there. The log lists, by path only, the TDX writes seen on the way.
+
+Reason codes when no token is saved: `needs_sign_in` (headless; run `--headed`), `sign_in_timeout`, `window_closed` (the window was closed before the token arrived), `idp_refused`, `blocked_request`, `not_a_jwt` (the endpoint answered with something that is not a token), `http_<status>` and `no_answer`.
+
+**Setup, once:**
+
+1. Set `[tdx.api] enabled = true` in your own config, then run `uv run ops-suite tdx login` (or `uv run ops-suite tdx api token --headed` if you are still signed in to TDX) and finish the second sign-in.
+2. `uv run ops-suite tdx api reports` lists the ids and names of the reports you can see (names only, no rows). Pick the two that show the same tickets as the dashboard's "Unclaimed" and "Claimed by Others" widgets, and set `unclaimed_report_id` and `claimed_report_id`.
+3. `uv run ops-suite tdx api check` prints counts only:
+
+   ```text
+   API: signed in as Technician.
+   TDX API token: saved, expires Wed 09:14.
+   Unclaimed report: 7 row(s), 10 column(s), every needed column found.
+   Claimed report: 23 row(s), 11 column(s), every needed column found.
+   App id: 43 (tdx.api.app_id).
+   One feed: 6 entries (3 reply, 2 private, 1 system); 1 of them replies, 0 unreadable.
+   API requests: 6 (GET /auth/getuser 1, GET /reports/{n} 2, GET /{n}/tickets/{n}/feed 1, GET /feed/{n} 1).
+   ```
+
+   A report that lacks a column the rules need stops the check with its name (`claimed report: required column(s) missing: Prim Resp`). The columns are found by their header text, as on the dashboard: ID, Created, Title, Requestor and Resp Group for the unclaimed report; ID, Modified, Title, Requestor, Resp Group, Status and Prim Resp for the claimed one.
+
+**Reading the queue through the API:**
+
+```bash
+uv run ops-suite tdx rows --source api
+uv run ops-suite tdx audit --source api
+```
+
+Both print the same summary lines as the browser commands, after `Source: the TDX Web API (read-only trial; the browser stays the default).`, so the `Findings:` and `Checked:` lines of the two sources can be compared by eye. With `--show-ids`, the `event_state` lines of the two sources can be compared too: the same ids should show the same state, A/V and space. `Blocked requests` and `Allowed non-GET` are always `0` here, and a report that returned as many rows as its own row limit is flagged as `Stopped at the report's row limit (MaxResults)`. Unless `tdx.source = "api"`, `tdx audit --source api` takes no `--send` and never runs the LLM step; with it, `--source api` reads through the API only, with no browser fallback (`Source: the TDX Web API only (--source api: no browser fallback).`). `--verbose` adds the `API requests:` line.
+
+How the API's answers become the same data:
+
+- **Feed entries:** `private` from the entry's own private flag; `system` for merges, merge notices and reassignments (their authors count as desk), the ticket's creation and "My Work" changes, and entries with no comment text besides field changes; `reply` otherwise. Replies have no private flag of their own: a reply under a private entry is private when that entry's author wrote it, as on the feed page. The desk signature is checked on each reply, and the newest reply's text is kept in memory only.
+- **Dates** come in UTC and are shown in `tdx.display_timezone`, like the dashboard's.
+- **Ticket links** on cards: `tdx.ticket_url_template` if set, else the TDNext ticket page.
+
+Settings (`[tdx.api]` in [config.example.toml](../config.example.toml)): `enabled` (default `false`), `base_path` (`/TDWebApi/api`, on `tdx.base_url`'s host), `app_id` (`0` takes it from `tdx.ticket_url_template`'s `/Apps/<id>/`, else from the first ticket's record, and `tdx api check` says which), `unclaimed_report_id` and `claimed_report_id`, `timeout_seconds` (30), `min_request_interval_ms` (1100, at least 1000) and `token_sign_in_minutes` (5, from 1 to 15: how long the sign-in in a window waits for you). Unknown `[tdx.api]` keys are refused.
+
+Exit codes: as for `tdx rows`, except that `3` here means the API's own sign-in is needed (`needs sign-in`, run `tdx api token --headed`), never an expired TDX session; plus `8` when the API refused or failed a request, or no token could be had (the message names the endpoint pattern and a reason code such as `forbidden`, `unauthorised`, `rate_limited` or `sign_in_timeout`).
 
 ## Teams setup
 
@@ -323,6 +410,116 @@ With no webhook saved it prints `Teams: not sent; run "uv run ops-suite teams se
 
 Settings: `[tdx.alerts]` (`realert_days`, `old_finding_days`, `old_realert_days`, `title_chars`, `max_rows_per_card`, `alert_ready_to_close`) and `[teams]` (`webhook_host_suffixes`, `timeout_seconds`, and `[teams.personal]` / `[teams.desk]`) in [config.example.toml](../config.example.toml). To send to the desk's shared chat instead, add `--to desk`; see [Desk chat](#desk-chat).
 
+## Shadow mode (browser and API side by side)
+
+For a trial of the TDX Web API against the browser over days or weeks: each `tdx watch` cycle reads the queue through **both** sources and records how well they agree, in counts only. **The browser stays the source of every card, summary and state file**; the API's result is only compared.
+
+**Turning it on:** set up the API first ([TDX API (proof of concept)](#tdx-api-proof-of-concept): `tdx.api.enabled`, both report ids, a token), then set `source = "shadow"` under `[tdx]` in your own config, or `OPS_SUITE_TDX__SOURCE=shadow` in `.env`, and restart `tdx watch` (or the start-at-login agent). It starts with one more line:
+
+```text
+API shadow mode: each run also reads the same tickets through the TDX Web API and records counts only; cards come from the browser. "uv run ops-suite tdx api compare" shows the comparison.
+```
+
+`tdx watch` and `tdx agent install` refuse to start (exit `2`) when `tdx.source` is `shadow` without `tdx.api.enabled` and both report ids. Set it back to `browser` (the default) to end the trial; the records stay for 30 days. The third value, `api`, swaps the roles: see [Reading through the API](#reading-through-the-api).
+
+**What each cycle does:** after the browser's audit and its Teams post, the same cycle reads the two reports through the API, then the feeds and event forms of **the tickets the browser's audit picked**, at the browser run's time. The rules run over each source's data with the same settings and the desk-member memory read only, so the two sets of findings differ only where the data does. The API part:
+
+- never posts, and never writes the alert, summary or verdict state or the desk-member memory;
+- sends no request after `tdx.shadow.max_seconds` (default 300, 30 to 1200) and records `time_box`;
+- never fails the cycle: a failure is recorded with its reason code (`time_box`, `needs_sign_in`, `unauthorised`, `rate_limited`, `not_found`, `structure`, ...) and never counts toward `failures_before_stop`. A token that needs the API's own sign-in sends one notice a day to your own chat ("TDX API token needs a sign-in: run ... tdx api token --headed").
+
+The cycle line ends with the result:
+
+```text
+14:05 26 unclaimed, 7 feeds, 6 findings; Teams: nothing new. API shadow: findings identical. Next run 14:35.
+14:35 26 unclaimed, 7 feeds, 6 findings; Teams: nothing new. API shadow: 2 differences (see tdx api compare). Next run 15:05.
+15:05 26 unclaimed, 7 feeds, 6 findings; Teams: nothing new. API shadow: not compared (needs_sign_in). Next run 15:35.
+```
+
+"Differences" are findings, as (ticket id, kind, reason), that only one source raised.
+
+**What is compared**, per cycle:
+
+- **Rows**, per widget and report: the counts, the ticket ids in one source only, and per column the tickets whose values differ. Created and Modified match within 1 minute; Requestor and Prim Resp match as the same person (the rules' name matching); Title, Status and Resp Group match as text, ignoring case and spacing.
+- **Feeds**, per ticket both sources read: entry counts by kind (reply, private, system), and the newest entry someone wrote (a reply or a private note): its kind (`private flag differs`), its author and its time (within 1 minute). Feeds that only one source read are counted too.
+- **Findings:** the (ticket id, kind, reason) set of each source.
+- **Timing:** seconds per source (the browser's read and rules; the API's whole part, token included), API requests, and the browser's allowed non-GET requests.
+
+**The record:** `api-shadow.jsonl` in the TDX data folder (next to `alerts-state.json`), one line per cycle, kept 30 days. It holds the time, which source made the cards (`primary`), seconds, counts, ticket ids for the "only in one source" and "differs" lists, and reason codes: never a name, a title or any text.
+
+**The report:**
+
+```bash
+uv run ops-suite tdx api compare --days 14
+```
+
+```text
+API shadow, last 14 days: 212 cycles; 208 compared, 4 API failures (needs_sign_in 3, time_box 1).
+Rows matched: 99.6% (8012 of 8044). Feeds matched: 98.8% (1450 of 1468). Cycles with identical findings: 98.6% (205 of 208).
+Mismatches: Created differs: 2 (1 ticket), latest author differs: 3 (2 tickets), private flag differs: 1 (1 ticket), findings only from the browser: 2 (1 ticket), findings only from the API: 1 (1 ticket).
+Median per compared cycle: browser 95.2s, API 41.0s; API requests 31; browser allowed non-GET requests 10.
+Verdict: API matched the browser in 205 of 212 cycles; API reads were 54.2s faster.
+```
+
+- **Rows / Feeds matched:** the share of tickets, over all compared cycles, whose row (or feed) matched on every check; a ticket in one source only counts as not matched.
+- **Mismatches:** each category with how often it was seen (once per cycle and ticket) and in how many different tickets.
+- **Verdict:** the cycles whose findings were identical, out of every cycle recorded (a failed API part counts as not matched), and the difference between the median seconds.
+- `--days` (1 to 30, default 14) sets how far back to look. It reads only the local record: no token, no TDX request.
+- `--show-ids` adds one line per mismatch and ticket (`  latest_author  1234567  3 cycles`; a finding as `  finding_only_api  1234567  client_waiting  requestor_last  1 cycle`), for your own check in TDX. Do not paste these lines into a chat.
+
+## Reading through the API
+
+With `tdx.source = "api"`, the TDX Web API becomes the source: `tdx watch` and `tdx audit` read the rows, feeds and event forms through it, and every finding, card and summary, the alert and summary state, the desk-member memory and the verdict cache come from that read, exactly as they come from the browser's otherwise. **The browser stays as an automatic fallback**: any run the API cannot read, the browser reads instead, as it always has. Nothing is ever written to TDX either way, and the data flow is unchanged: the API's answers stay in memory, and the token stays in the keychain.
+
+Switch to it only after a few days of clean [shadow mode](#shadow-mode-browser-and-api-side-by-side) comparisons (`tdx api compare`: identical findings, no `private flag differs`).
+
+**Switching on:** with the API already set up (`tdx.api.enabled`, both report ids, a token), set `source = "api"` under `[tdx]` in your own config, or `OPS_SUITE_TDX__SOURCE=api` in `.env`, and restart `tdx watch` (or the start-at-login agent). `tdx watch` and `tdx agent install` refuse to start (exit `2`) without `tdx.api.enabled` and both report ids. It starts with:
+
+```text
+Reading the queue through the TDX Web API; the browser reads any run the API cannot (each run's line names its source).
+Browser shadow: each run also reads the same tickets through the browser and records counts only; cards come from the API. "uv run ops-suite tdx api compare" shows the comparison.
+```
+
+**Switching back:** set `source = "browser"` (or remove the `.env` line) and restart. Nothing else changes: the state files are the same ones.
+
+**The fallback.** A run falls back to the browser, with a reason code, when:
+
+- there is no usable token: `needs_sign_in` (the API's own sign-in is needed), `no_token` and the other token codes;
+- the API fails: `unauthorised`, `forbidden`, `rate_limited`, `timeout`, `connection`, `http_<status>`, `bad_json`, ...;
+- a report does not look as expected: `structure` (a needed column missing) or `config` (a report id not set);
+- the API part does not finish within `tdx.api.max_cycle_seconds` (default 300, 30 to 1200): no request is sent after it, `time_box`.
+
+The browser then reads that run as usual, and the run posts once, from the browser. A fallback is **never** a failed run and never counts toward `failures_before_stop`; only the browser's own problems do, handled as always (an expired TDX session sends its notice and is retried quietly). The next run tries the API again. Each run's line starts with its source:
+
+```text
+14:05 source: api; 26 unclaimed, 7 feeds, 6 findings; Teams: nothing new. Browser shadow: findings identical. Next run 14:35.
+14:35 source: browser (fallback: needs_sign_in); 26 unclaimed, 7 feeds, 6 findings; Teams: nothing new. Next run 15:05.
+```
+
+The log records `tdx watch source` with the source and the reason code. Fallbacks send at most **one notice a day** to your own chat: `Reading the queue through the browser: the TDX Web API is unavailable (timeout); each run tries the API again.` (with `run ... tdx api token --headed` for a token problem, or `run ... tdx api check` for a structure problem). For `needs_sign_in` the token notice ("TDX API token needs a sign-in: run ... tdx api token --headed") is sent instead, also once a day, never both. An expired TDX session or a browser that cannot start sends no fallback notice: the browser's own read meets the same problem and says so.
+
+**The daily token step** is the same as in the trial: tokens last 24 hours, so run `uv run ops-suite tdx api token --headed` (or `tdx login`) once a desk day, before the first run. Until you do, runs fall back to the browser and nothing is missed.
+
+**The browser beside the API.** While `tdx.shadow.enabled` (default `true`), each run that the API read also reads the same tickets through the browser, after the post: the dashboard, then the feeds and forms of **the tickets the API run picked**, at its time. As in shadow mode it only compares: it never posts or writes any state, and its failures are recorded with a reason code and never fail the run. It has no time box of its own; it takes about as long as a browser run. If the browser finds the TDX session expired while the API still answers, the run uses the API and the comparison is skipped (`Browser shadow: skipped (TDX sign-in expired; the API still answers).`, recorded as `browser_signed_out`): that is not an error. Sign in again with `tdx login` when convenient, since the fallback needs it. Set `tdx.shadow.enabled = false` to stop the comparison; each run is still recorded by source.
+
+**`tdx audit`** follows `tdx.source` when no `--source` is given: with `api` it reads through the API, prints `Source: the TDX Web API (tdx.source = api); the browser reads this run if the API cannot.`, and, if the browser read it, `Read through the browser instead: the TDX Web API is unavailable (<reason>).` `--send` and the LLM step work as with the browser. `--source browser` reads through the browser only.
+
+**The report** (`tdx api compare`) shows the shadow period and the API period each on its own, so it covers the whole trial:
+
+```text
+API shadow, last 14 days: 140 cycles; 138 compared, 2 API failures (needs_sign_in 2).
+...
+Verdict: API matched the browser in 138 of 140 cycles; API reads were 54.2s faster.
+API primary, last 14 days: 72 cycles; 69 read through the API, 3 browser fallbacks (needs_sign_in 2, timeout 1).
+Browser shadow: 66 compared, 3 skipped (browser_signed_out 3).
+Rows matched: 100.0% (2772 of 2772). Feeds matched: 100.0% (462 of 462). Cycles with identical findings: 100.0% (66 of 66).
+Mismatches: none.
+Median per compared cycle: browser 96.0s, API 40.5s; API requests 31; browser allowed non-GET requests 10.
+Verdict: the browser matched the API in 66 of 66 cycles; API reads were 55.5s faster.
+```
+
+In the API period, "read through the API" counts the runs the API read (compared or not), and the fallbacks are listed by reason; the comparison lines cover the runs where the browser was read beside it. Settings: `tdx.api.max_cycle_seconds` and `tdx.shadow.enabled`, in [config.example.toml](../config.example.toml).
+
 ## Watching the queue (tdx watch)
 
 ```bash
@@ -343,6 +540,7 @@ Outside desk hours; next run Sat 08:00.
 - **Other failures** (the browser would not start, the page structure changed) print a line such as `14:05 cycle failed (DashboardStructureError); trying again at 14:35.` A browser that would not start also names a reason code: `cycle failed (BrowserStartError: launch_timeout)`. The codes are `not_installed` (run `uv run playwright install chromium`), `launch_timeout` (Chromium did not start within `tdx.browser_launch_timeout_seconds`, default 60; raise it if this repeats), `no_display` (a visible window was asked for where there is no screen), `profile_in_use` (handled as above) and `other`. Playwright's own message is never printed or logged, because it can contain the profile folder and so your user name. After 3 failed cycles in a row (`tdx.watch.failures_before_stop`) it posts one plain "auditor stopped" card and exits with that error's code; the card and the line name the reason code too. A successful cycle resets the count. A Teams post that fails is not a failed cycle: the findings stay due for the next one.
 - Every card carries a short counts-only preview line, such as `ops-suite: 3 tickets need attention (2 new, 1 reminder)`, for places where Teams cannot draw the card (notification banners, the chat list). It holds no ticket ids or titles.
 - A cycle that starts inside desk hours runs to the end. If the next run time falls outside them, the loop waits for the next opening.
+- **Shadow mode** (`tdx.source = "shadow"`): each line also ends with the comparison of the browser and the TDX Web API, such as `API shadow: findings identical.`; see [Shadow mode](#shadow-mode-browser-and-api-side-by-side).
 
 **On the Mac**, the computer must stay awake: keep it on power with the lid open, and run the loop under `caffeinate -i` so it does not sleep while idle:
 
@@ -443,9 +641,30 @@ personal_alerts = true   # false: no alert cards at all while summaries go to th
 
 With summaries off (`enabled = false`), `tdx watch --to desk` alerts the desk chat exactly as before. Every new or due finding a summary shows is recorded as alerted in the desk's own state (`alerts-state-desk.json`), so its reminders follow the re-alert policy; a due finding counted only in a `+N more` line stays due. The terminal lines are `Teams (desk): summary posted (6 open, 2 new).` and `Teams (desk): delta posted (1 new, 1 cleared, 6 open).`
 
+**The one exception: events about to happen.** An event that still needs the desk and is `tdx.events.near_event_days` (2) days away or less should not wait for the next slot, so it goes to the desk chat **at once**, in the cycle it first appears, on one short card:
+
+```text
+Event soon: 2 need action
+```
+
+Its rows look like the summary's (the linked id, the title only with `teams.desk.show_titles`, the wording), grouped by kind; it has no mention and its preview line holds the count only. Several such findings in one cycle share one card. The kinds that count are listed in [tdx-rules.md](tdx-rules.md#urgent-event-findings): outreach due, waiting on the requester, a location still TBD or missing, and a requester's reply on an event ticket. Every other finding still waits for the summaries.
+
+- **Once per ticket and kind.** The card's findings are remembered in the desk summary state: the next delta does not list them as new (and counts them as cleared when they clear), and the next full summary still lists them as open. The same finding is not posted again in later cycles; only one that clears and comes back is posted again.
+- **No second post in a summary cycle.** When a summary is due in the same cycle, the findings go into that summary, marked `(event soon)`, instead of a card of their own.
+- **Your personal chat is unchanged:** the 30-minute alert cards still go there, these findings included.
+- The terminal line adds `Teams (desk): urgent event card (2).` (or `Teams (desk): urgent events in the summary (1).`). A failed post records nothing and is tried again on the next cycle.
+- It applies only to the desk runner (`tdx watch --to desk`) while summaries go to the desk chat and `teams.desk.approved = true`. In shadow mode and with `tdx.source = "api"`, it posts from the cycle's own run only, never from the comparison read beside it.
+
+It is on by default. To keep the desk chat to summaries only, turn it off in the desk runner's config and restart `tdx watch`:
+
+```toml
+[tdx.summary]
+urgent_events_to_desk = false
+```
+
 **Events this week, ready to close and possible duplicates.**
 
-- **Events this week** lists every unclaimed event ticket with a date in the next `events_days` (7, 1 to 30) days from the summary time, sorted by date: `Wed 10/21 15:00–17:00 · Lobby · A/V: yes · no outreach yet`. Space and A/V come from the event request form, renamed `EVENT [...]` tickets' included (`—` without a form). The state comes from the title, the form and who wrote last on the feed: `no outreach yet`, `waiting on requester since Tue 08:26`, `requester replied`, `in progress (requester answered)`, `location missing`, `location TBD`, `marketing only`, `no outreach needed`, or `page not read` when the run could not read the ticket. Never names, and never the form's free-text answers or feed text.
+- **Events this week** lists every unclaimed event ticket with a date in the next `events_days` (7, 1 to 30) days from the summary time, sorted by date: `Wed 10/21 15:00–17:00 · Lobby · A/V on form: yes · no outreach yet`. Space and A/V come from the event request form, renamed `EVENT [...]` tickets' included (`—` without a form). "A/V on form" is the form's services checklist only: A/V asked for later, in a comment or elsewhere, is not seen, so `no` does not mean "no A/V needed". The state comes from the title, the form and who wrote last on the feed: `no outreach yet`, `waiting on requester since Tue 08:26`, `requester replied`, `in progress (requester answered)`, `location missing`, `location TBD`, `marketing only`, `no outreach needed`, or `page not read` when the run could not read the ticket. Never names, and never the form's free-text answers or feed text.
 - **Ready to close** lists tickets where the desk replied last at least `close_after_days` (3, 1 to 30) days ago and the requester has been silent since. By default it appears **only in summaries**, never marked `(new)` and never on an alert card; set `alert_ready_to_close = true` under `[tdx.alerts]` to alert it like any other finding.
 - **Possible duplicates:** a row whose requester has an older open ticket with a similar title gets `(possible duplicate of #<older id>)`. `duplicate_title_similarity` (0.6) sets how similar; it is never stored or logged, and names are never shown.
 
@@ -461,7 +680,7 @@ alert_ready_to_close = false
 events_days = 7
 ```
 
-**When.** The loop wakes at the next summary time as well as at its normal interval. A slot is **due** from its time until `grace_minutes` (90, 15 to 240) after it, inside desk hours, until it is posted. `summary-state-desk.json` in the data folder holds the last slot dealt with (posted, or skipped with no change), the last slot posted, and the ticket id and finding kind of each finding open at that post, nothing else. So a restart in the same slot does not post again, and a restart mid-day keeps counting from the last post. A file in the older format (the last slot only) keeps its slot, and the next slot posted is full.
+**When.** The loop wakes at the next summary time as well as at its normal interval. A slot is **due** from its time until `grace_minutes` (90, 15 to 240) after it, inside desk hours, until it is posted. `summary-state-desk.json` in the data folder holds the last slot dealt with (posted, or skipped with no change), the last slot posted, the ticket id and finding kind of each finding open at that post (plus any posted on an "Event soon" card since), and of each finding the desk chat has been shown that has not cleared since, nothing else. So a restart in the same slot does not post again, a restart mid-day keeps counting from the last post, and an urgent event is not posted twice. A file in the older format (the last slot only) keeps its slot, and the next slot posted is full; one without the shown set starts it as its open set.
 
 - **Late:** if the slot's cycle could not run (signed out, a busy profile, a browser failure, a failed Teams post), the next successful cycle inside the grace window posts it. One that starts more than 15 minutes after the slot says `(late: due 07:30)` in its title, and one plain notice goes to your **personal** chat: `07:30 summary posted late at 08:12`.
 - **Skipped:** if no cycle posts it within the grace window (or before the desk closes), the slot is skipped, and one notice goes to your personal chat naming the last failure: `07:30 summary not posted: TDX sign-in expired` (or the reason code, such as `BrowserStartError: launch_timeout` or `Teams post failed (http_400)`).

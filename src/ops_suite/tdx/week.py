@@ -12,7 +12,8 @@ date in that window, with its state:
   ``waiting on requester since Tue 08:26``, ``requester replied`` or ``in progress
   (requester answered)``; ``page not read`` when this run could not read the ticket's page.
 
-Space and A/V come from the form, renamed tickets' included; "—" when there is no form.
+Space and "A/V on form" come from the form, renamed tickets' included; "—" when there is
+no form.
 Recurring events and events whose date cannot be read are left out, as the rules leave them.
 
 Personal data rule: a ``WeekEvent`` holds an id, times, a space category, an A/V flag and a
@@ -28,7 +29,13 @@ from zoneinfo import ZoneInfo
 from ops_suite.tdx.event_form import EventForm, SpaceType
 from ops_suite.tdx.events import is_event_title, is_recurring_event, parse_event_title
 from ops_suite.tdx.rows import TicketRow
-from ops_suite.tdx.rules import EventStatus, RuleSettings, is_form_ticket
+from ops_suite.tdx.rules import (
+    EventStatus,
+    RuleSettings,
+    av_on_form_label,
+    event_state,
+    is_form_ticket,
+)
 
 EventState = Literal[
     "no_outreach_yet",
@@ -73,11 +80,7 @@ def _next_in(dates: Sequence[datetime], start: datetime, end: datetime) -> datet
 
 
 def _state(form: EventForm | None, status: EventStatus | None) -> EventState:
-    if form is not None and form.marketing_only:
-        return "marketing_only"
-    if form is not None and not (form.wants_av or form.wants_room):
-        return "no_outreach"
-    return status.state if status is not None else "not_read"
+    return event_state(form, status.state if status is not None else "not_read")
 
 
 def _event(
@@ -169,8 +172,9 @@ def event_state_label(event: WeekEvent, tz: ZoneInfo) -> str:
 
 
 def event_details(event: WeekEvent, tz: ZoneInfo) -> str:
-    """``Tue 10/21 15:00–17:00 · Lobby · A/V: yes · no outreach yet``: no names, no free
-    text."""
+    """``Tue 10/21 15:00–17:00 · Lobby · A/V on form: yes · no outreach yet``: no names, no
+    free text. "A/V on form" because only the form's checklist is read: A/V asked for later
+    is not seen, so "no" does not mean "no A/V needed"."""
     space = SPACE_LABELS[event.space] if event.space is not None else "—"
-    av = "—" if event.av is None else ("yes" if event.av else "no")
-    return f"{event_when(event, tz)} · {space} · A/V: {av} · {event_state_label(event, tz)}"
+    av = av_on_form_label(event.av)
+    return f"{event_when(event, tz)} · {space} · A/V on form: {av} · {event_state_label(event, tz)}"

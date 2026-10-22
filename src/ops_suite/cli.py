@@ -8,9 +8,9 @@ import sys
 import tempfile
 import time
 import tomllib
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import replace
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import TextIO
 from zoneinfo import ZoneInfo
@@ -31,6 +31,7 @@ from ops_suite.common.autostart import (
 )
 from ops_suite.common.config import ConfigProblem, Settings, TdxSettings, load_settings
 from ops_suite.common.exitcodes import (
+    EXIT_API,
     EXIT_BROWSER,
     EXIT_CANCELLED,
     EXIT_CONFIG,
@@ -61,14 +62,28 @@ from ops_suite.mail.drop_folder import DropFolderMailSource
 from ops_suite.mail.report import ReportWriter
 from ops_suite.mail.scan import ScanResult, run_scan
 from ops_suite.mail.state import SeenState
+from ops_suite.tdx import api_source
 from ops_suite.tdx.alerts import AlertState, counts_phrase
+from ops_suite.tdx.api_client import ApiError, TdxApiClient
+from ops_suite.tdx.api_primary import ApiFirst
+from ops_suite.tdx.api_token import (
+    ApiToken,
+    TokenError,
+    TokenSource,
+    browser_fetcher,
+    expiry_text,
+    fetch_token,
+    save_token,
+)
 from ops_suite.tdx.browser import PROFILE_IN_USE_MESSAGE, BrowserStartError, TdxBrowser
 from ops_suite.tdx.capture import is_valid_capture_name, write_capture
 from ops_suite.tdx.dashboard import (
+    KINDS,
     DashboardRead,
     DashboardStructureError,
     NotSignedInError,
     WidgetNotFoundError,
+    WidgetRead,
     check_dashboard,
     find_dashboard_frame,
     read_dashboard,
@@ -82,6 +97,7 @@ from ops_suite.tdx.demo.run import (
     demo_settings,
     demo_summary_request,
 )
+from ops_suite.tdx.event_form import PART_SOURCES, READ_FIELDS
 from ops_suite.tdx.followup import (
     EVAL_SETS,
     FollowUpOutcome,
@@ -103,7 +119,15 @@ from ops_suite.tdx.session_log import (
     record_sign_in,
     session_log_path,
 )
-from ops_suite.tdx.tickets import TEMPLATE_ID, FeedRead
+from ops_suite.tdx.shadow import (
+    KEEP_DAYS,
+    BrowserShadow,
+    ShadowLog,
+    ShadowRunner,
+    compare_report,
+    shadow_log_path,
+)
+from ops_suite.tdx.tickets import LABEL_PLACES, TEMPLATE_ID, FeedRead
 from ops_suite.tdx.watch import (
     DESK_NOT_APPROVED,
     AuditRun,
@@ -129,6 +153,7 @@ from ops_suite.tdx.watch import (
 log = logging.getLogger(__name__)
 
 KIND_ORDER = ("reply", "private", "system")
+SOURCES = ("browser", "api")
 
 STATE_FILE = Path("state") / "seen.json"
 REPORT_FILE = Path("reports") / "direct-requests.csv"
@@ -217,6 +242,50 @@ AGENT_WINDOWS_REMOVED = (
     "Removed the start-at-login script. A tdx watch it already started keeps running until "
     "you close its minimised window."
 )
+SOURCE_HELP = (
+    "where the queue is read from: browser (the dashboard, the default) or api (the TDX Web "
+    "API, read-only; needs tdx.api.enabled)"
+)
+API_SOURCE_LINE = "Source: the TDX Web API (read-only trial; the browser stays the default)."
+API_FIRST_LINE = (
+    "Source: the TDX Web API (tdx.source = api); the browser reads this run if the API cannot."
+)
+API_ONLY_LINE = "Source: the TDX Web API only (--source api: no browser fallback)."
+API_DISABLED = (
+    "tdx.api.enabled is false; set it to true in your own config to use the TDX Web API "
+    '(docs/USAGE.md, "TDX API (proof of concept)")'
+)
+SHADOW_NEEDS_API = (
+    'tdx.source = "shadow" reads the queue through the TDX Web API too, so it needs '
+    'tdx.api.enabled = true and both report ids (docs/USAGE.md, "Shadow mode")'
+)
+API_SOURCE_NEEDS_API = (
+    'tdx.source = "api" reads the queue through the TDX Web API, so it needs '
+    'tdx.api.enabled = true and both report ids (docs/USAGE.md, "Reading through the API")'
+)
+API_NO_SEND = (
+    "--send works with the browser source only: the TDX Web API is a read-only trial that "
+    'posts no cards until tdx.source = "api"'
+)
+API_TOKEN_HINT = f'Run "{RUN} tdx api token --headed" (or "{RUN} tdx login") to get one.'
+# The Web API's sign-in is its own, apart from the TDX session's.
+API_SIGN_IN_LINE = (
+    "The TDX API uses its own sign-in. If a sign-in page appears, sign in again (MFA included)."
+)
+NEEDS_SIGN_IN = f'TDX API token: needs sign-in; run "{RUN} tdx api token --headed".'
+TOKEN_RETRY = f'Run "{RUN} tdx api token --headed" to try again.'
+TOKEN_HINTS = {
+    "idp_refused": (
+        "The sign-in service showed an error page; try again once. If it keeps failing, see "
+        'docs/USAGE.md, "TDX API (proof of concept)".'
+    ),
+}
+API_HINTS = {
+    "unauthorised": f"The API refused the token. {API_TOKEN_HINT}",
+    "forbidden": "Your account may not read this; check the report ids and tdx.api.app_id.",
+    "not_found": "Check the report ids and tdx.api.app_id.",
+    "rate_limited": "TDX's rate limit was reached; try again in a minute.",
+}
 REVIEW_REMINDER = (
     "Review before sharing: open kept-text.txt (only column names should be there) and check "
     "that no\nframe-*.html contains a name, email address, ticket number or ticket title."
@@ -277,6 +346,7 @@ def build_parser() -> argparse.ArgumentParser:
     rows.add_argument(
         "--headed", action="store_true", help="show the browser window (overrides tdx.headless)"
     )
+    rows.add_argument("--source", choices=SOURCES, default="browser", help=SOURCE_HELP)
     _add_common_options(rows)
     rows.set_defaults(handler=_tdx_rows, live=True)
 
@@ -309,6 +379,14 @@ def build_parser() -> argparse.ArgumentParser:
     )
     _add_to_option(audit, f"where --send posts: {TO_HELP}; desk needs teams.desk.approved = true")
     audit.add_argument("--no-llm", action="store_true", help=NO_LLM_HELP)
+    audit.add_argument(
+        "--source",
+        choices=SOURCES,
+        default=None,
+        help=f"{SOURCE_HELP}. Default: tdx.source (api reads through the API and lets the "
+        "browser read the run if the API cannot; shadow reads through the browser). Unless "
+        "tdx.source is api, --source api runs without --send and without the LLM step",
+    )
     _add_common_options(audit)
     audit.set_defaults(handler=_tdx_audit, live=True)
 
@@ -360,6 +438,59 @@ def build_parser() -> argparse.ArgumentParser:
     )
     _add_common_options(agent_status)
     agent_status.set_defaults(handler=_tdx_agent_status)
+
+    api = tdx_commands.add_parser(
+        "api",
+        help="the TDX Web API trial: the same queue read through the API, read-only (needs "
+        "tdx.api.enabled)",
+    )
+    api_commands = api.add_subparsers(dest="api_command", required=True)
+    api_token = api_commands.add_parser(
+        "token",
+        help="get a fresh API token headless with the saved TDX sign-in and keep it in the "
+        "system keychain; prints its expiry, never the token",
+    )
+    api_token.add_argument(
+        "--headed",
+        action="store_true",
+        help="open a browser window for the API's own sign-in (MFA included) and wait up to "
+        "tdx.api.token_sign_in_minutes for you to finish it",
+    )
+    _add_common_options(api_token)
+    api_token.set_defaults(handler=_tdx_api_token, live=True)
+    api_check = api_commands.add_parser(
+        "check",
+        help="check the API read-only: your role, the app id, both reports and one feed "
+        "(counts only)",
+    )
+    _add_common_options(api_check)
+    api_check.set_defaults(handler=_tdx_api_check, live=True)
+    api_reports = api_commands.add_parser(
+        "reports",
+        help="list the ids and names of the reports you can see, to pick "
+        "tdx.api.unclaimed_report_id and claimed_report_id",
+    )
+    _add_common_options(api_reports)
+    api_reports.set_defaults(handler=_tdx_api_reports, live=True)
+    api_compare = api_commands.add_parser(
+        "compare",
+        help="compare the browser and the API from the shadow-mode records (tdx.source = "
+        '"shadow"): counts, percentages and a verdict line',
+    )
+    api_compare.add_argument(
+        "--days",
+        type=_compare_days,
+        default=14,
+        help=f"how many days back to look, 1 to {KEEP_DAYS} (default 14)",
+    )
+    api_compare.add_argument(
+        "--show-ids",
+        action="store_true",
+        help="also list the ticket ids behind each mismatch, for your own check in TDX; do not "
+        "paste these lines into a chat",
+    )
+    _add_common_options(api_compare)
+    api_compare.set_defaults(handler=_tdx_api_compare)
 
     session = tdx_commands.add_parser(
         "session",
@@ -609,6 +740,9 @@ def _tdx_login(args: argparse.Namespace) -> int:
                 return _finished("tdx login", _not_signed_in("login", base_url))
             record_sign_in(settings, datetime.now(UTC))
             print(f"Signed in. The session is saved in {profile}.")
+            if settings.tdx.api.enabled:
+                tdx = settings.tdx.model_copy(update={"base_url": base_url})
+                print(_login_token_line(browser, tdx), flush=True)
     except BrowserStartError as error:
         return _finished("tdx login", _browser_failed(error))
     return _finished("tdx login", EXIT_OK)
@@ -659,7 +793,15 @@ def _counted(items: tuple[str, ...]) -> list[str]:
     return [f"{item} ({count})" for item, count in counts.items()]
 
 
-def format_rows_summary(read: DashboardRead, page_limit: int, *, verbose: bool = False) -> str:
+def _limit_line(kinds: list[str], page_limit: int, row_limit: bool) -> str:
+    if row_limit:
+        return f"Stopped at the report's row limit (MaxResults) for: {', '.join(kinds)}"
+    return f"Stopped at the page limit ({page_limit}) for: {', '.join(kinds)}"
+
+
+def format_rows_summary(
+    read: DashboardRead, page_limit: int, *, verbose: bool = False, row_limit: bool = False
+) -> str:
     """Counts, date shapes and masked request paths only; never ticket text."""
     unclaimed = read.widgets["unclaimed"]
     claimed = read.widgets["claimed"]
@@ -682,7 +824,7 @@ def format_rows_summary(read: DashboardRead, page_limit: int, *, verbose: bool =
         lines.extend(f"Allowed non-GET: {line}" for line in _counted(read.allowed_non_get))
     limited = [widget.kind for widget in widgets if widget.hit_page_limit]
     if limited:
-        lines.append(f"Stopped at the page limit ({page_limit}) for: {', '.join(limited)}")
+        lines.append(_limit_line(limited, page_limit, row_limit))
     return "\n".join(lines)
 
 
@@ -708,6 +850,8 @@ def _guarded_settings(
 
 
 def _tdx_rows(args: argparse.Namespace) -> int:
+    if args.source == "api":
+        return _tdx_rows_api(args)
     settings, tdx, allowed = _guarded_settings(args.config)
     source, start_url = start_address(settings, tdx)
     headless = tdx.headless and not args.headed
@@ -851,6 +995,7 @@ def format_audit_output(
     desk_remembered: int | None = None,
     llm: FollowUpOutcome | None = None,
     llm_line: str | None = None,
+    row_limit: bool = False,
 ) -> str:
     """The tdx audit summary: counts, reason codes, shapes and masked request paths.
 
@@ -901,6 +1046,8 @@ def format_audit_output(
         if feeds.unreadable_shapes:
             lines.append(f"Unreadable entries: {'; '.join(_counted(feeds.unreadable_shapes))}")
         lines.append(format_marker_line(feeds.marker_stats))
+        if feeds.description_shapes.get("read") or feeds.description_shapes.get("forms"):
+            lines.extend(format_description_lines(feeds.description_shapes))
         lines.extend(
             f"Live update blocked: {line}" for line in _counted(feeds.live_updates_blocked)
         )
@@ -911,7 +1058,7 @@ def format_audit_output(
             lines.append(format_follow_up_detail(llm))
     limited = [widget.kind for widget in widgets if widget.hit_page_limit]
     if limited:
-        lines.append(f"Stopped at the page limit ({page_limit}) for: {', '.join(limited)}")
+        lines.append(_limit_line(limited, page_limit, row_limit))
     return "\n".join(lines)
 
 
@@ -925,6 +1072,29 @@ def format_marker_line(stats: Mapping[str, int]) -> str:
         f"signature desk replies {stats['signature_desk_replies']}; "
         f"visibility fallback {stats['visibility_fallback']}."
     )
+
+
+def format_description_lines(shapes: Mapping[str, int]) -> list[str]:
+    """The event form descriptions for --verbose: counts and place names only.
+
+    How the page shows them (hidden text or a toggle: the page collapses long descriptions),
+    in which places the space and services labels appear (``shown`` is the rendered text,
+    ``anywhere`` the frame's whole HTML), and what the reader made of them: the "Response
+    Summary" blocks found, the forms whose block held all the read answers' labels, and
+    where the block used came from."""
+    places = ", ".join(
+        f"{place} {shapes[f'space_{place}']}/{shapes[f'services_{place}']}"
+        for place in LABEL_PLACES
+    )
+    sources = ", ".join(f"{source} {shapes[f'from_{source}']}" for source in PART_SOURCES)
+    return [
+        f"Event form descriptions: {shapes['read']} read; with hidden text {shapes['hidden']}, "
+        f"clipped {shapes['clipped']}, with a toggle {shapes['toggle']}.",
+        f"Event form labels (space/services) found in: {places}.",
+        f"Event form blocks: {shapes['forms']} forms, {shapes['blocks']} Response Summary "
+        f"blocks, {shapes['complete']} with all {len(READ_FIELDS)} answers; used from "
+        f"{sources}.",
+    ]
 
 
 class FeedProgress:
@@ -968,10 +1138,20 @@ def _check_ticket_template(tdx: TdxSettings) -> None:
 def _tdx_audit(args: argparse.Namespace) -> int:
     command = "tdx audit"
     settings, tdx, allowed = _guarded_settings(args.config)
+    api_primary = tdx.source == "api"
+    api_first = args.source is None and api_primary  # the API, the browser as fallback
+    api = args.source == "api"  # the API only
+    trial = api and not api_primary  # the read-only trial: no cards, no LLM step
+    if trial and args.send:
+        return _finished(command, _config_problem(API_NO_SEND))
+    if api and not tdx.api.enabled:
+        raise ConfigProblem(API_DISABLED)
+    if api_first:
+        _check_api_source(tdx)
     if args.send and not desk_allowed(settings, args.to):
         return _finished(command, _config_problem(DESK_NOT_APPROVED))
     _check_ticket_template(tdx)
-    source, start_url = start_address(settings, tdx)
+    source, start_url = ("api", tdx.base_url) if api else start_address(settings, tdx)
     headless = tdx.headless and not args.headed
     configure_logging(paths.log_dir(settings), verbose=args.verbose)
     log.info(
@@ -985,13 +1165,39 @@ def _tdx_audit(args: argparse.Namespace) -> int:
             "allowed_requests": [f"{entry.method} {entry.path_pattern}" for entry in allowed],
             "send": args.send,
             "to": args.to,
+            "source": "api_first" if api_first else (args.source or "browser"),
         },
     )
-    print(DASHBOARD_SOURCES[source], flush=True)
+    if api_first:
+        print(API_FIRST_LINE, flush=True)
+    elif api:
+        print(API_SOURCE_LINE if trial else API_ONLY_LINE, flush=True)
+    else:
+        print(DASHBOARD_SOURCES[source], flush=True)
     settings = settings.model_copy(update={"tdx": tdx})
     progress = FeedProgress(sys.stderr, verbose=args.verbose)
+    use_llm = not (args.no_llm or trial)  # no LLM step on the API trial
     try:
-        run = run_audit(settings, headless=headless, progress=progress, use_llm=not args.no_llm)
+        if api_first:
+            run = ApiFirst(settings, headless=headless, use_llm=use_llm)(progress)
+            if run.fallback is not None:
+                print(
+                    "Read through the browser instead: the TDX Web API is unavailable "
+                    f"({run.fallback}).",
+                    flush=True,
+                )
+        else:
+            run = run_audit(
+                settings,
+                headless=headless,
+                progress=progress,
+                use_llm=use_llm,
+                source="api" if api else "browser",
+            )
+    except (ApiError, TokenError) as error:
+        return _finished(command, _api_problem(error))
+    except keyring.errors.KeyringError as error:
+        return _finished(command, _keychain_problem(error))
     except BrowserStartError as error:
         return _finished(command, _browser_failed(error))
     except NotSignedInError:
@@ -1018,6 +1224,7 @@ def _tdx_audit(args: argparse.Namespace) -> int:
             desk_remembered=run.desk_remembered,
             llm=run.llm,
             llm_line=_llm_line(run, settings),
+            row_limit=run.source == "api",
         )
     )
     log.info(
@@ -1053,6 +1260,306 @@ def _tdx_audit(args: argparse.Namespace) -> int:
     )
 
 
+# --- the TDX Web API trial -----------------------------------------------------------------
+
+REPORT_LABELS = {"unclaimed": "Unclaimed report", "claimed": "Claimed report"}
+APP_ID_SOURCES = {
+    "setting": "tdx.api.app_id",
+    "ticket_url_template": "from tdx.ticket_url_template",
+    "first ticket": "from the first ticket's record; set tdx.api.app_id to save that request",
+}
+
+
+def _keychain_problem(error: Exception) -> int:
+    return _config_problem(f"the system keychain could not be used ({type(error).__name__})")
+
+
+def _token_line(token: ApiToken, tdx: TdxSettings) -> str:
+    """The token's expiry for the person; never the token."""
+    when = expiry_text(token, ZoneInfo(tdx.display_timezone))
+    return f"TDX API token: saved, expires {when}."
+
+
+def _token_failed_line(reason: str) -> str:
+    return f"TDX API token: not saved ({reason}). {TOKEN_HINTS.get(reason, TOKEN_RETRY)}"
+
+
+def _headed_token(browser: TdxBrowser, tdx: TdxSettings) -> ApiToken:
+    """The API's own sign-in in ``browser``'s window: the person signs in, this waits."""
+    print(API_SIGN_IN_LINE, flush=True)
+    return fetch_token(browser, tdx, interactive=True)
+
+
+def _login_token_line(browser: TdxBrowser, tdx: TdxSettings) -> str:
+    """After a sign-in: ask for the API token in the same window and keep it. The TDX
+    sign-in has worked either way, so a failure is a line here, not an error."""
+    try:
+        token = _headed_token(browser, tdx)
+        save_token(token)
+    except TokenError as error:
+        reason = error.reason
+    except keyring.errors.KeyringError as error:
+        reason = f"keychain ({type(error).__name__})"
+    else:
+        return _token_line(token, tdx)
+    log.info("api token not saved", extra={"reason": reason})
+    return _token_failed_line(reason)
+
+
+def _api_problem(error: ApiError | TokenError) -> int:
+    """An API or token failure: reason codes, endpoint patterns and masked paths only."""
+    if isinstance(error, TokenError) and error.reason == "needs_sign_in":
+        # The API's own sign-in, not the TDX session: no session log, no "expired" message.
+        log.info("api problem", extra={"reason": error.reason})
+        print(NEEDS_SIGN_IN, file=sys.stderr)
+        return EXIT_NOT_SIGNED_IN
+    lines = [f"ops-suite: {error}."]
+    if isinstance(error, TokenError):
+        lines.extend(f"Blocked: {line}" for line in _counted(error.blocked))
+        if error.blocked:
+            lines.append(REPORT_BLOCKED)
+        elif error.reason == "no_token":
+            lines.append(API_TOKEN_HINT)
+        elif error.reason in TOKEN_HINTS:
+            lines.append(TOKEN_HINTS[error.reason])
+    elif error.reason in API_HINTS:
+        lines.append(API_HINTS[error.reason])
+    log.info(
+        "api problem",
+        extra={"reason": error.reason, "endpoint": getattr(error, "endpoint", "")},
+    )
+    print("\n".join(lines), file=sys.stderr)
+    return EXIT_API
+
+
+def _api_settings(config_path: Path | None) -> Settings:
+    """Settings for the API commands; ConfigProblem unless tdx.api.enabled is set and the TDX
+    addresses are usable."""
+    settings, tdx, _ = _guarded_settings(config_path)
+    if not tdx.api.enabled:
+        raise ConfigProblem(API_DISABLED)
+    _check_ticket_template(tdx)
+    return settings.model_copy(update={"tdx": tdx})
+
+
+def _api_run(command: str, body: Callable[[], int]) -> int:
+    """``body``, with the API's, the token's and the browser's failures as exit codes. A token
+    that needs a sign-in is the API's own sign-in, never an expired TDX session: nothing here
+    writes the session log."""
+    try:
+        return body()
+    except (ApiError, TokenError) as error:
+        return _finished(command, _api_problem(error))
+    except keyring.errors.KeyringError as error:
+        return _finished(command, _keychain_problem(error))
+    except BrowserStartError as error:
+        return _finished(command, _browser_failed(error))
+    except DashboardStructureError as error:
+        return _finished(command, _structure_failed(error, "the report"))
+
+
+def _api_client(settings: Settings) -> tuple[TdxApiClient, TokenSource]:
+    """A client whose token is refreshed headless, with the saved sign-in, when needed."""
+    tokens = TokenSource(browser_fetcher(settings))
+    return TdxApiClient(settings.tdx, tokens), tokens
+
+
+def _requests_line(client: TdxApiClient) -> str:
+    total = sum(client.requests.values())
+    parts = ", ".join(f"{name} {count}" for name, count in client.requests.items())
+    return f"API requests: {total} ({parts or 'none'})."
+
+
+def _tdx_api_token(args: argparse.Namespace) -> int:
+    command = "tdx api token"
+    settings = _api_settings(args.config)
+    configure_logging(paths.log_dir(settings), verbose=args.verbose)
+    log.info(f"{command} started", extra={"headed": args.headed})
+
+    def body() -> int:
+        if args.headed:
+            # Unguarded, as in tdx login: the person signs in, and the identity provider's
+            # pages post forms (to itself, then back to TDX) that the read-only guard refuses.
+            with TdxBrowser(paths.tdx_profile_dir(settings), settings.tdx.base_url) as browser:
+                try:
+                    token = _headed_token(browser, settings.tdx)
+                except TokenError as error:
+                    log.info("api token not saved", extra={"reason": error.reason})
+                    print(_token_failed_line(error.reason), file=sys.stderr)
+                    return _finished(command, EXIT_API)
+        else:
+            token = browser_fetcher(settings)()
+        save_token(token)
+        print(_token_line(token, settings.tdx))
+        return _finished(command, EXIT_OK)
+
+    return _api_run(command, body)
+
+
+def _tdx_rows_api(args: argparse.Namespace) -> int:
+    command = "tdx rows"
+    settings = _api_settings(args.config)
+    tdx = settings.tdx
+    api_source.report_ids(tdx)  # ConfigProblem before any request
+    configure_logging(paths.log_dir(settings), verbose=args.verbose)
+    log.info(f"{command} started", extra={"source": "api"})
+    print(API_SOURCE_LINE, flush=True)
+
+    def body() -> int:
+        client, _ = _api_client(settings)
+        widgets, _, _ = api_source.read_reports(tdx, client)
+        read = DashboardRead(widgets=widgets, blocked=())
+        print(
+            format_rows_summary(
+                read, tdx.max_pages_per_widget, verbose=args.verbose, row_limit=True
+            )
+        )
+        if args.verbose:
+            print(_requests_line(client))
+        values = widgets.values()
+        log.info(
+            f"{command} summary",
+            extra={
+                "source": "api",
+                "unreadable_date_shapes": [s for w in values for s in w.unreadable_dates],
+                "hit_row_limit": [w.kind for w in values if w.hit_page_limit],
+                "requests": dict(client.requests),
+            },
+        )
+        return _finished(
+            command,
+            EXIT_OK,
+            unclaimed=len(widgets["unclaimed"].rows),
+            claimed=len(widgets["claimed"].rows),
+            duplicates=sum(w.duplicates for w in values),
+            unreadable_dates=sum(len(w.unreadable_dates) for w in values),
+        )
+
+    return _api_run(command, body)
+
+
+def _tdx_api_check(args: argparse.Namespace) -> int:
+    command = "tdx api check"
+    settings = _api_settings(args.config)
+    tdx = settings.tdx
+    tz = ZoneInfo(tdx.display_timezone)
+    configure_logging(paths.log_dir(settings), verbose=args.verbose)
+    log.info(f"{command} started")
+
+    def body() -> int:
+        client, tokens = _api_client(settings)
+        user = client.get("/auth/getuser")
+        role = api_source.text_value(user.get("SecurityRoleName")) if isinstance(user, dict) else ""
+        # The role is interface wording; the person's name is never printed.
+        print(f"API: signed in as {role or 'a user with no role name'}.")
+        print(_token_line(tokens.get(), tdx))
+        widgets: dict[str, WidgetRead] = {}
+        unset: list[str] = []
+        for kind in KINDS:
+            report_id = getattr(tdx.api, f"{kind}_report_id")
+            label = REPORT_LABELS[kind]
+            if not report_id:
+                unset.append(kind)
+                print(f"{label}: not set (tdx.api.{kind}_report_id).")
+                continue
+            report = client.get(f"/reports/{report_id}", {"withData": "true"})
+            read = api_source.map_report(report, kind, tz)
+            limit = " (at its row limit)" if read.hit_page_limit else ""
+            print(
+                f"{label}: {len(read.rows)} row(s){limit}, "
+                f"{api_source.column_count(report)} column(s), every needed column found."
+            )
+            widgets[kind] = read
+        first = next((row.ticket_id for read in widgets.values() for row in read.rows), None)
+        app_id, source = api_source.resolve_app_id(tdx, client, first)
+        print(f"App id: {app_id} ({APP_ID_SOURCES[source]}).")
+        if first is None:
+            print("One feed: no ticket in the reports to read.")
+        else:
+            details = api_source.read_feed(client, app_id, first, tz)
+            entries = details.feed.entries
+            kinds = ", ".join(
+                f"{sum(entry.kind == kind for entry in entries)} {kind}" for kind in KIND_ORDER
+            )
+            print(
+                f"One feed: {len(entries)} entries ({kinds}); "
+                f"{details.marker_stats['nested']} of them replies, "
+                f"{details.feed.unreadable} unreadable."
+            )
+        print(_requests_line(client))
+        if unset:
+            print(
+                f"Set {' and '.join(f'tdx.api.{kind}_report_id' for kind in unset)}; "
+                f'"{RUN} tdx api reports" lists the reports you can see.',
+                file=sys.stderr,
+            )
+        code = EXIT_CONFIG if unset else EXIT_OK
+        return _finished(command, code, requests=sum(client.requests.values()))
+
+    return _api_run(command, body)
+
+
+def _tdx_api_reports(args: argparse.Namespace) -> int:
+    command = "tdx api reports"
+    settings = _api_settings(args.config)
+    configure_logging(paths.log_dir(settings), verbose=args.verbose)
+    log.info(f"{command} started")
+
+    def body() -> int:
+        client, _ = _api_client(settings)
+        answer = client.get("/reports")
+        found = api_source.report_list(answer)
+        print(f"Reports you can see: {len(found)}.")
+        for report in found:
+            source = f"  ({report.source})" if report.source else ""
+            print(f"  {report.report_id:>8}  {report.name}{source}")
+        print(
+            "Set tdx.api.unclaimed_report_id and claimed_report_id to the two reports that show "
+            "the same tickets and columns as the dashboard's two widgets."
+        )
+        return _finished(command, EXIT_OK, reports=len(found))
+
+    return _api_run(command, body)
+
+
+def _compare_days(text: str) -> int:
+    try:
+        days = int(text)
+    except ValueError:
+        days = 0
+    if not 1 <= days <= KEEP_DAYS:
+        raise argparse.ArgumentTypeError(f"must be a whole number from 1 to {KEEP_DAYS}")
+    return days
+
+
+def _tdx_api_compare(args: argparse.Namespace) -> int:
+    """The shadow-mode comparison from the local records: counts and codes, ids only with
+    --show-ids. Reads no TDX data and needs no token."""
+    command = "tdx api compare"
+    settings = _load_settings(args.config)
+    configure_logging(paths.log_dir(settings), verbose=args.verbose)
+    log.info(f"{command} started", extra={"days": args.days, "show_ids": args.show_ids})
+    cutoff = datetime.now(UTC) - timedelta(days=args.days)
+    records = ShadowLog(shadow_log_path(settings)).since(cutoff)
+    for line in compare_report(records, days=args.days, show_ids=args.show_ids):
+        print(line)
+    return _finished(command, EXIT_OK, records=len(records))
+
+
+def _check_api_source(tdx: TdxSettings) -> None:
+    """ConfigProblem when tdx.source is "shadow" or "api" without the API enabled and both
+    report ids set."""
+    if tdx.source not in ("shadow", "api"):
+        return
+    problem = SHADOW_NEEDS_API if tdx.source == "shadow" else API_SOURCE_NEEDS_API
+    if not tdx.api.enabled:
+        raise ConfigProblem(problem)
+    try:
+        api_source.report_ids(tdx)
+    except ConfigProblem:
+        raise ConfigProblem(problem) from None
+
+
 def _llm_line(run: AuditRun, settings: Settings) -> str | None:
     if run.llm is None:
         return None
@@ -1079,14 +1586,31 @@ def _tdx_watch(args: argparse.Namespace) -> int:
             "allowed_requests": [f"{entry.method} {entry.path_pattern}" for entry in allowed],
             "llm": settings.llm.enabled and not args.no_llm,
             "to": args.to,
+            "source": tdx.source,
         },
     )
+    _check_api_source(tdx)
     settings = settings.model_copy(update={"tdx": tdx})
     destination: Destination = args.to
     tz = ZoneInfo(settings.schedule.timezone)
+    notify = webhook_notifier(settings)
+    use_llm = not args.no_llm
+    shadow: ShadowRunner | BrowserShadow | None = None
+    if tdx.source == "api":
+        # The API reads each run, the browser any run the API cannot; the browser beside it
+        # for comparison only.
+        read = ApiFirst(settings, headless=headless, use_llm=use_llm, notify=notify)
+        shadow = BrowserShadow(settings, headless=headless)
+    else:
+
+        def read() -> AuditRun:
+            return run_audit(settings, headless=headless, progress=None, use_llm=use_llm)
+
+        if tdx.source == "shadow":
+            shadow = ShadowRunner(settings, notify)
 
     def run_cycle(summary: SummaryRequest | None = None):
-        run = run_audit(settings, headless=headless, progress=None, use_llm=not args.no_llm)
+        run = read()
         return run, send_cycle(run, settings, destination, summary)
 
     # Windows only: the PC must not sleep while the loop runs (the Mac agent has caffeinate).
@@ -1096,8 +1620,9 @@ def _tdx_watch(args: argparse.Namespace) -> int:
             clock=lambda: datetime.now(tz),
             sleep=time.sleep,
             run_cycle=run_cycle,
-            notify=webhook_notifier(settings),
+            notify=notify,
             destination=destination,
+            shadow=shadow,
         )
     return _finished(command, code)
 
@@ -1124,6 +1649,7 @@ def _tdx_agent_install(args: argparse.Namespace) -> int:
         return _finished(command, _config_problem(AGENT_NO_CHECKOUT))
     destination: Destination = args.to
     # The checks tdx watch makes on start, made now: at login nobody would see them fail.
+    _check_api_source(settings.tdx)
     if not desk_allowed(settings, destination):
         return _finished(command, _config_problem(DESK_NOT_APPROVED))
     if _stored_webhook(destination) is None:

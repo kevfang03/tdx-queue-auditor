@@ -44,7 +44,7 @@ from ops_suite.tdx.guard import BUILT_IN_ALLOWED, AllowedRequest
 from ops_suite.tdx.rows import TicketRow
 from ops_suite.tdx.saved import load_saved_dashboard, save_dashboard
 from ops_suite.tdx.session_log import SessionLog
-from ops_suite.tdx.tickets import FeedRead
+from ops_suite.tdx.tickets import DESCRIPTION_SHAPE_KEYS, FeedRead
 
 FIXTURE_DROP = Path(__file__).parent / "fixtures" / "mail_drop"
 
@@ -1123,7 +1123,7 @@ AUDIT_SUMMARY = [
     'LLM: off; 1 "requestor wrote last" finding keeps its wording.',
     "Checked: 5 unclaimed (3 feeds needed, 1 missing), 2 claimed (counted only). Events: 1, "
     "0 recurring, 0 multi-date, 1 with an unreadable date, 0 without a location. "
-    "Event forms: 0 (0 recurring, 0 unreadable); 0 renamed without a form. "
+    "Form-titled tickets: 0 (0 recurring, 0 unreadable); renamed: 0 with a form, 0 without. "
     "Event states (no finding): 0 waiting on requester, 0 in progress, 0 outreach not due yet, "
     "0 marketing only, 0 no outreach. Desk members known: 2.",
     "Unreadable dates: 0. Duplicates: 0. Blocked requests: 0. Live updates blocked: 6. "
@@ -1242,6 +1242,30 @@ def test_tdx_audit_verbose_adds_shapes_and_paths(
         f"Allowed non-GET: {WIDGET_POST} (4)",
         f"Allowed non-GET: {FEED_POST} (2)",
         "Desk members remembered: 2.",
+    ]
+
+
+def test_the_description_lines_are_counts_and_place_names_only() -> None:
+    shapes = dict.fromkeys(DESCRIPTION_SHAPE_KEYS, 0) | {
+        "read": 5,
+        "hidden": 5,
+        "toggle": 5,
+        "space_container": 5,
+        "services_container": 5,
+        "space_anywhere": 5,
+        "services_anywhere": 5,
+        "forms": 5,
+        "blocks": 10,
+        "complete": 5,
+        "from_container": 5,
+    }
+
+    assert cli.format_description_lines(shapes) == [
+        "Event form descriptions: 5 read; with hidden text 5, clipped 0, with a toggle 5.",
+        "Event form labels (space/services) found in: shown 0/0, container 5/5, outside 0/0, "
+        "text box 0/0, template 0/0, attribute 0/0, script 0/0, anywhere 5/5.",
+        "Event form blocks: 5 forms, 10 Response Summary blocks, 5 with all 6 answers; used "
+        "from container 5, outside 0, text box 0, template 0, attribute 0, script 0.",
     ]
 
 
@@ -1705,7 +1729,10 @@ def test_tdx_watch_runs_a_cycle_and_prints_counts_only(
     def stop(seconds: float) -> None:
         raise KeyboardInterrupt
 
-    def fixed_watch(settings, *, clock, sleep, run_cycle, notify, destination="personal"):
+    def fixed_watch(
+        settings, *, clock, sleep, run_cycle, notify, destination="personal", shadow=None
+    ):
+        assert shadow is None  # the default source runs no shadow step
         assert clock().tzinfo is not None
         return real_watch(
             settings,
@@ -1953,7 +1980,10 @@ def test_tdx_watch_uses_the_same_llm_path_and_takes_no_llm(
     def stop(seconds: float) -> None:
         raise KeyboardInterrupt
 
-    def fixed_watch(settings, *, clock, sleep, run_cycle, notify, destination="personal"):
+    def fixed_watch(
+        settings, *, clock, sleep, run_cycle, notify, destination="personal", shadow=None
+    ):
+        assert shadow is None  # the default source runs no shadow step
         return real_watch(
             settings,
             clock=lambda: friday,
@@ -2227,7 +2257,10 @@ def test_tdx_watch_to_approved_desk_posts_to_desk_and_warns_without_personal(
     def stop(seconds: float) -> None:
         raise KeyboardInterrupt
 
-    def fixed_watch(settings, *, clock, sleep, run_cycle, notify, destination="personal"):
+    def fixed_watch(
+        settings, *, clock, sleep, run_cycle, notify, destination="personal", shadow=None
+    ):
+        assert shadow is None  # the default source runs no shadow step
         return real_watch(
             settings,
             clock=lambda: friday,
@@ -2538,7 +2571,10 @@ def test_tdx_watch_posts_a_due_summary_instead_of_the_alert_card(
     def stop(seconds: float) -> None:
         raise KeyboardInterrupt
 
-    def fixed_watch(settings, *, clock, sleep, run_cycle, notify, destination="personal"):
+    def fixed_watch(
+        settings, *, clock, sleep, run_cycle, notify, destination="personal", shadow=None
+    ):
+        assert shadow is None  # the default source runs no shadow step
         return real_watch(
             settings,
             clock=lambda: friday,

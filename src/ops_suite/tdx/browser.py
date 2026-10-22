@@ -1,13 +1,15 @@
 """The TDX browser: Playwright's bundled Chromium with a dedicated, persistent profile.
 
-``tdx login`` and ``tdx capture`` run it headed and unguarded, because the person signs in
-and navigates by hand. ``tdx rows`` and ``tdx audit`` may run it headless, and always with the
-read-only request guard (``tdx/guard.py``) installed on the context before the first
-navigation, with service workers blocked so that every request passes through the guard, and
-SignalR's live updates refused: every request under ``/TDSignalR/`` and every WebSocket.
+``tdx login``, ``tdx capture`` and ``tdx api token --headed`` run it headed and unguarded,
+because the person signs in and navigates by hand. ``tdx rows`` and ``tdx audit`` may run it
+headless, and always with the read-only request guard (``tdx/guard.py``) installed on the
+context before the first navigation, with service workers blocked so that every request passes
+through the guard, and SignalR's live updates refused: every request under ``/TDSignalR/`` and
+every WebSocket.
 
-This module never clicks, types, fills or submits; apart from ``open_url`` and ``open_page``
-it never navigates; its only script (``evaluate_in_frame``) reads, never changes, the page;
+This module never clicks, types, fills or submits; apart from ``open_url``, ``open_page`` and
+``read_document`` (the Web API's token endpoint) it never navigates; its only script
+(``evaluate_in_frame``) reads, never changes, the page;
 and it changes nothing about how the browser presents itself (no stealth or anti-bot
 changes). The pager click of ``tdx rows`` lives in ``tdx/dashboard.py``.
 
@@ -20,11 +22,13 @@ import os
 import re
 import socket
 import sys
+import time
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from types import TracebackType
 from typing import Literal
+from urllib.parse import urlsplit
 
 from playwright.sync_api import (
     BrowserContext,
@@ -32,6 +36,7 @@ from playwright.sync_api import (
     Page,
     Playwright,
     Request,
+    Response,
     Route,
     WebSocketRoute,
     sync_playwright,
@@ -51,6 +56,7 @@ from ops_suite.tdx.session import describe_path, describe_url, on_tdx, tdx_origi
 log = logging.getLogger(__name__)
 
 START_PAGE_TIMEOUT_MS = 60_000
+POLL_MS = 250
 # Seconds Chromium gets to start (tdx.browser_launch_timeout_seconds); Playwright's own is 30.
 LAUNCH_TIMEOUT_SECONDS = 60
 _EVERY_URL = re.compile(".*")
@@ -67,6 +73,10 @@ PROFILE_IN_USE_MESSAGE = (
 
 
 StartFailure = Literal["profile_in_use", "not_installed", "launch_timeout", "no_display", "other"]
+# Why ``read_document`` stopped waiting: an accepted answer; the time ran out; the page stayed
+# off the TDX host too long; a refused answer had nothing newer; an error page off the TDX host
+# (the sign-in service refused); or the page or window was closed.
+DocumentEnd = Literal["answer", "timeout", "off_host", "settled", "refused", "closed"]
 
 
 class BrowserStartError(RuntimeError):
@@ -147,6 +157,22 @@ class RequestRecord:
     def describe(self) -> str:
         """``METHOD /masked/path``: no host, query or fragment; safe to log and print."""
         return f"{self.method.upper()} {describe_path(self.url)}"
+
+
+@dataclass(frozen=True, slots=True, repr=False)
+class DocumentAnswer:
+    """What ``read_document`` saw. ``text`` may hold a secret (the API token): never log or
+    print it, and drop it once read."""
+
+    url: str  # raw: the answering document's address, else where the page ended up
+    status: int | None  # None: no document answered from the expected path
+    text: str = field(default="", repr=False)
+    ended: DocumentEnd = "answer"
+    # "refused": the HTTP status of the error page off the TDX host.
+    refused_status: int | None = None
+
+    def __repr__(self) -> str:
+        return f"DocumentAnswer(status={self.status!r}, ended={self.ended!r})"
 
 
 class TdxBrowser:
@@ -263,6 +289,119 @@ class TdxBrowser:
                 extra={"url": describe_url(url), "error": type(error).__name__},
             )
         return page
+
+    def read_document(
+        self,
+        url: str,
+        *,
+        path_suffix: str,
+        accept: Callable[[str], bool] = lambda text: True,
+        timeout_ms: int = START_PAGE_TIMEOUT_MS,
+        off_host_seconds: float | None = 10,
+        settle_seconds: float = 5,
+        in_first_page: bool = False,
+        accept_any_path: bool = False,
+    ) -> DocumentAnswer:
+        """Open ``url`` in a new page and return a main-frame document that answered from a
+        TDX-host path ending in ``path_suffix`` (ignoring case), after any redirects and
+        sign-in pages on the way: the first whose text ``accept`` takes, else the last one.
+
+        Gives up after ``timeout_ms``; once the page has stayed off the TDX host for
+        ``off_host_seconds`` (a sign-in page waiting for a person; None: no limit, a person is
+        signing in); at once when a page off the TDX host answers with an HTTP error (the
+        sign-in service refused); when the page is closed; or once an answer that ``accept``
+        refused is ``settle_seconds`` old with nothing newer. ``ended`` says which.
+
+        ``in_first_page``: navigate the first open page (the window the person sees) and leave
+        it open, instead of a new page that is closed before returning. ``accept_any_path``:
+        a TDX-host document on any path whose text ``accept`` takes also answers (a sign-in
+        that ends on a page of its own). The text is kept only in the answer.
+        """
+        context = self._require_context()
+        page = context.pages[0] if in_first_page and context.pages else context.new_page()
+        answers: list[Response] = []
+        others: list[Response] = []
+        # Main-frame documents off the TDX host, latest last: the HTTP status of an error
+        # page, else 0.
+        off_host: list[int] = []
+        suffix = path_suffix.casefold()
+
+        def on_response(response: Response) -> None:
+            try:
+                request = response.request
+                if request.resource_type != "document" or request.frame != page.main_frame:
+                    return
+                if 300 <= response.status < 400:
+                    return  # a redirect on the way (to the sign-in and back)
+                path = urlsplit(response.url).path.casefold()
+            except (PlaywrightError, ValueError):
+                return
+            if not on_tdx(response.url, self.base_url):
+                off_host.append(response.status if response.status >= 400 else 0)
+            elif path.endswith(suffix):
+                answers.append(response)
+            elif accept_any_path:
+                others.append(response)
+
+        page.on("response", on_response)
+        try:
+            if in_first_page:
+                page.bring_to_front()
+            try:
+                page.goto(url, wait_until="domcontentloaded", timeout=timeout_ms)
+            except PlaywrightError as error:
+                log.info(
+                    "document did not finish loading",
+                    extra={"url": describe_url(url), "error": type(error).__name__},
+                )
+            deadline = time.monotonic() + timeout_ms / 1000
+            off_since: float | None = None
+            read = 0  # answers already looked at
+            read_others = 0
+            last: DocumentAnswer | None = None
+            last_at = 0.0
+            while time.monotonic() < deadline:
+                while read_others < len(others):
+                    response = others[read_others]
+                    read_others += 1
+                    text = _response_text(response)
+                    if accept(text):
+                        return DocumentAnswer(response.url, response.status, text)
+                while read < len(answers):
+                    response = answers[read]
+                    read += 1
+                    text = _response_text(response)
+                    last, last_at = (
+                        DocumentAnswer(response.url, response.status, text),
+                        time.monotonic(),
+                    )
+                    if accept(text):
+                        return last
+                if last is not None and time.monotonic() - last_at >= settle_seconds:
+                    return _ended(last, "settled")
+                if on_tdx(page.url, self.base_url):
+                    off_since = None
+                else:
+                    if off_host and off_host[-1]:
+                        return DocumentAnswer(
+                            page.url, None, ended="refused", refused_status=off_host[-1]
+                        )
+                    off_since = off_since or time.monotonic()
+                    if (
+                        off_host_seconds is not None
+                        and time.monotonic() - off_since >= off_host_seconds
+                    ):
+                        return _ended(last, "off_host", page.url)
+                try:
+                    page.wait_for_timeout(POLL_MS)
+                except PlaywrightError:
+                    return _ended(last, "closed", page.url)
+            return _ended(last, "timeout", page.url)
+        finally:
+            if in_first_page:
+                page.remove_listener("response", on_response)
+            else:
+                self.close_page(page)
 
     def close_page(self, page: Page) -> None:
         self._close_pending_sockets()
@@ -461,3 +600,18 @@ class TdxBrowser:
         if self._playwright is not None:
             self._playwright.stop()
             self._playwright = None
+
+
+def _response_text(response: Response) -> str:
+    try:
+        return response.text()
+    except PlaywrightError:
+        return ""
+
+
+def _ended(last: DocumentAnswer | None, why: DocumentEnd, url: str = "") -> DocumentAnswer:
+    """``last`` (the latest answer from the expected path) ended ``why``; without one, no
+    answer, at ``url``."""
+    if last is None:
+        return DocumentAnswer(url, None, ended=why)
+    return DocumentAnswer(last.url, last.status, last.text, ended=why)

@@ -36,6 +36,11 @@ profile_dir = ""
 dashboard_url = ""
 # The time zone TDX shows dates in.
 display_timezone = "America/New_York"
+# Where "tdx watch" and "tdx audit" read the queue: "browser"; "shadow" to read it through
+# the TDX Web API too and compare the two, cards from the browser (see [tdx.shadow]); or "api"
+# for cards from the API, with the browser reading any run the API cannot (docs/USAGE.md,
+# "Reading through the API"). "shadow" and "api" need [tdx.api] enabled and both report ids.
+source = "browser"
 # "tdx rows" only: run the browser without a window. --headed overrides it.
 headless = true
 # Pages read per widget before stopping (1-100).
@@ -170,6 +175,11 @@ events_days = 7
 # chat (personal_alerts) instead of the desk chat; desk_alerts = true sends them to the desk chat as before.
 desk_alerts = false
 personal_alerts = true
+# The one exception: an event that needs action within tdx.events.near_event_days of its date
+# goes to the desk chat at once, on a short "Event soon" card with no mention (once per ticket
+# and kind), or into the summary when one is due that run. Desk summaries and
+# teams.desk.approved only; false keeps the desk chat to summaries only.
+urgent_events_to_desk = true
 
 [tdx.summary.times]
 # "HH:MM" per weekday, each inside that day's desk hours. This table replaces the defaults
@@ -181,6 +191,40 @@ thu = ["07:30", "12:00", "17:00"]
 fri = ["07:30", "12:00", "17:00"]
 sat = ["08:00", "12:00", "17:00"]
 sun = ["12:00"]
+
+[tdx.api]
+# The TDX Web API as a second, read-only source of the same queue (docs/USAGE.md, "TDX API
+# (proof of concept)"). Off by default; the browser stays the default source. The token comes
+# from your own SSO sign-in and lives in the system keychain, never here.
+enabled = false
+base_path = "/TDWebApi/api"
+# The ticketing app's id (the number after /Apps/ in a ticket's address); 0 finds it.
+app_id = 0
+# The two reports that show the same tickets and columns as the dashboard's widgets;
+# "ops-suite tdx api reports" lists the ones you can see.
+unclaimed_report_id = 0
+claimed_report_id = 0
+timeout_seconds = 30
+# At least 1000: TDX allows 60 calls a minute per address on most endpoints.
+min_request_interval_ms = 1100
+# The Web API has a sign-in of its own (MFA included): how long "tdx login" and
+# "tdx api token --headed" wait for you to finish it in the window, 1 to 15 minutes.
+token_sign_in_minutes = 5
+# source = "api": a run's API read sends no request after this many seconds (30-1200), and
+# the browser reads that run instead.
+max_cycle_seconds = 300
+
+[tdx.shadow]
+# Shadow mode, for a side-by-side trial: set source = "shadow" under [tdx] (it needs
+# [tdx.api] enabled and both report ids). Each "tdx watch" cycle then also reads the same
+# tickets through the API and records counts only; cards still come from the browser alone.
+# "ops-suite tdx api compare" prints the comparison (docs/USAGE.md, "Shadow mode").
+# The API part of a cycle stops after this many seconds (30-1200); a stop is recorded, never
+# a failed cycle.
+max_seconds = 300
+# source = "api": also read the same tickets through the browser after each run, to compare
+# (counts only; it never posts). Each run is recorded by source either way.
+enabled = true
 
 [teams]
 # The Workflows webhook URL is a secret: "ops-suite teams set-webhook" keeps it in the system

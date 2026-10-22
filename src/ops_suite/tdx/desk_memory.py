@@ -40,11 +40,18 @@ class DeskMemory:
 
     An unreadable file (corrupt, or an unknown schema) is moved aside to ``.bad`` and the
     memory starts empty with a new salt: the run falls back to the in-run rules alone.
+
+    ``read_only``: for a second look at the same queue that must not change what the desk
+    remembers. The file is only read (an unreadable one stays where it is), and ``save``
+    refuses.
     """
 
-    def __init__(self, path: Path, *, forget_days: int = DEFAULT_FORGET_DAYS) -> None:
+    def __init__(
+        self, path: Path, *, forget_days: int = DEFAULT_FORGET_DAYS, read_only: bool = False
+    ) -> None:
         self.path = path
         self.forget_days = forget_days
+        self.read_only = read_only
         self._salt = secrets.token_hex(16)
         self._members: dict[str, datetime] = {}
         if path.exists():
@@ -52,6 +59,8 @@ class DeskMemory:
                 self._salt, self._members = _parse(path.read_text(encoding="utf-8"))
             except (ValueError, KeyError, TypeError, AttributeError):
                 log.warning("desk memory unreadable")
+                if read_only:
+                    return
                 try:
                     os.replace(path, path.with_name(path.name + ".bad"))
                 except OSError as error:
@@ -85,7 +94,10 @@ class DeskMemory:
                 self._members[key] = max(seen, self._members.get(key, seen))
 
     def save(self, now: datetime) -> None:
-        """Forget members not seen for ``forget_days``, then write the file atomically."""
+        """Forget members not seen for ``forget_days``, then write the file atomically.
+        RuntimeError for a read-only memory."""
+        if self.read_only:
+            raise RuntimeError("a read-only desk memory is never saved")
         cutoff = now.astimezone(UTC) - timedelta(days=self.forget_days)
         self._members = {key: seen for key, seen in self._members.items() if seen >= cutoff}
         data = {

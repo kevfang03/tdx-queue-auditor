@@ -227,6 +227,10 @@ class TdxSummarySettings(BaseModel):
     # chat instead with personal_alerts. With summaries off, --to desk alerts the desk as before.
     desk_alerts: bool = False
     personal_alerts: bool = True
+    # The one exception to summaries only: an event finding within tdx.events.near_event_days
+    # of its event goes to the desk chat at once, on a short card, once per ticket and kind.
+    # It applies only while summaries go to the desk chat and teams.desk.approved is true.
+    urgent_events_to_desk: bool = True
 
     @field_validator("times")
     @classmethod
@@ -261,8 +265,67 @@ class TdxSummarySettings(BaseModel):
             yield name, (len(value) if name == "mention_people" else value)
 
 
+class TdxApiSettings(BaseModel):
+    """The TDX Web API as a second, read-only source of the same rows and feeds. Off by
+    default, and the browser stays the default source. The token comes from the person's own
+    SSO sign-in and lives in keyring, never here.
+
+    Unknown keys are refused rather than ignored: a misspelt report id must stop the tool,
+    not read nothing."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = False
+    # The Web API's path on tdx.base_url's host.
+    base_path: str = "/TDWebApi/api"
+    # The ticketing application's id; 0 derives it (ticket_url_template, else the first
+    # ticket's own record) and says where it came from.
+    app_id: int = Field(default=0, ge=0)
+    # The Report Builder reports that hold the same rows as the two dashboard widgets
+    # ("tdx api reports" lists the ones you can see).
+    unclaimed_report_id: int = Field(default=0, ge=0)
+    claimed_report_id: int = Field(default=0, ge=0)
+    timeout_seconds: int = Field(default=30, ge=5, le=120)
+    # TDX limits most read endpoints to 60 calls a minute per address (report reads to 30 a
+    # minute per person); one call per 1.1 s stays under every one of them.
+    min_request_interval_ms: int = Field(default=1100, ge=1000, le=60_000)
+    # The Web API has a sign-in of its own: how long tdx login and tdx api token --headed
+    # wait for the person to finish it in the window (MFA included).
+    token_sign_in_minutes: int = Field(default=5, ge=1, le=15)
+    # tdx.source = "api": a cycle's API read sends no request after this long; the browser
+    # reads that cycle instead.
+    max_cycle_seconds: int = Field(default=300, ge=30, le=1200)
+
+    @field_validator("base_path")
+    @classmethod
+    def _valid_base_path(cls, value: str) -> str:
+        value = value.strip().rstrip("/")
+        if not re.fullmatch(r"(/[A-Za-z0-9._~-]+)+", value):
+            raise ValueError('must be a path such as "/TDWebApi/api" (no host or query)')
+        return value
+
+
+class TdxShadowSettings(BaseModel):
+    """The side-by-side comparison of the two sources (counts only). With ``tdx.source =
+    "shadow"`` each tdx watch cycle also reads the queue through the TDX Web API, and the
+    browser makes every card; with ``"api"`` the API makes the cards and, while ``enabled``,
+    the browser is read beside it for comparison only."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    # tdx.source = "api" only: read the browser beside the API each cycle to compare.
+    enabled: bool = True
+    # The API part of a shadow cycle stops after this long; a stop is recorded, never a
+    # failed cycle.
+    max_seconds: int = Field(default=300, ge=30, le=1200)
+
+
 class TdxSettings(BaseModel):
     base_url: str = ""
+    # Where tdx watch and tdx audit read the queue: the browser; the browser with the TDX Web
+    # API read beside it for comparison ("shadow"); or the API, with the browser reading any
+    # cycle the API cannot ("api"). Both need tdx.api.enabled and both report ids.
+    source: Literal["browser", "shadow", "api"] = "browser"
     profile_dir: OptionalPath = None
     # Where tdx rows starts; overrides the address saved by tdx set-dashboard. Same host.
     dashboard_url: str = ""
@@ -286,6 +349,8 @@ class TdxSettings(BaseModel):
     alerts: TdxAlertSettings = TdxAlertSettings()
     watch: TdxWatchSettings = TdxWatchSettings()
     summary: TdxSummarySettings = TdxSummarySettings()
+    api: TdxApiSettings = TdxApiSettings()
+    shadow: TdxShadowSettings = TdxShadowSettings()
 
     @field_validator("display_timezone")
     @classmethod

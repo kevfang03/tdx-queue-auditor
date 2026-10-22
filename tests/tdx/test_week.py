@@ -196,14 +196,14 @@ def test_the_row_text_has_date_times_space_av_and_state_only() -> None:
                         "waiting_on_requester", asked)  # fmt: skip
 
     assert event_details(timed, TZ) == (
-        "Wed 10/21 15:00–17:00 · Lobby · A/V: yes · no outreach yet"
+        "Wed 10/21 15:00–17:00 · Lobby · A/V on form: yes · no outreach yet"
     )
     assert event_details(start_only, TZ) == (
-        "Thu 10/22 09:30 · Classroom · A/V: no · in progress (requester answered)"
+        "Thu 10/22 09:30 · Classroom · A/V on form: no · in progress (requester answered)"
     )
-    assert event_details(untimed, TZ) == "Fri 10/23 · — · A/V: — · location missing"
+    assert event_details(untimed, TZ) == "Fri 10/23 · — · A/V on form: — · location missing"
     assert event_details(waiting, TZ) == (
-        "Fri 10/23 14:00 · — · A/V: yes · waiting on requester since Tue 08:26"
+        "Fri 10/23 14:00 · — · A/V on form: yes · waiting on requester since Tue 08:26"
     )
 
 

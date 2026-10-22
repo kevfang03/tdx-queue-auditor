@@ -39,6 +39,8 @@ Only when the person turns it on, and for live data only when they also turn on 
 
 The Teams webhook URLs and the API key are stored in the operating system's keychain through `keyring` (macOS Keychain, Windows Credential Manager, Linux Secret Service). They are never in config files, logs, output or the repository, and they are entered at a prompt that does not echo. TLS verification stays on, through the operating system's trust store.
 
+The optional TDX Web API reader uses a token that the ticketing system's own SSO endpoint issues for the person's signed-in session: no new account, password or service key. It lives only in the keychain, is never printed or logged (only its expiry is shown), and is wiped once it expires or is refused. The reader sends only `GET` requests on a short allowlist, checked before anything is sent, and keeps the answers in memory only. When the API is made the source of the cards (`tdx.source = "api"`), the data flow is the same: the same fields reach the same rules, cards and state files, the token stays in the keychain, and the browser reads any run the API cannot.
+
 ## Logs and state hold ids and counts only
 
 - Logs carry counts, reason codes and ticket ids. Browser failures carry a reason code, never the raw message, which can contain a path.
