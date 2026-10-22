@@ -24,6 +24,9 @@ from pydantic_settings import (
 from ops_suite.common.paths import default_config_path
 
 CONFIG_ENV_VAR = "OPS_SUITE_CONFIG"
+DEFAULT_TEAM_NAME = "the help desk"
+TEAM_NAME_MAX_CHARS = 40
+MAILBOX_MAX_CHARS = 254
 
 Weekday = Literal["mon", "tue", "wed", "thu", "fri", "sat", "sun"]
 WEEKDAYS: tuple[Weekday, ...] = ("mon", "tue", "wed", "thu", "fri", "sat", "sun")
@@ -31,6 +34,17 @@ _WINDOW = re.compile(r"(\d{2}):(\d{2})-(\d{2}):(\d{2})")
 _TIME = re.compile(r"(\d{2}):(\d{2})")
 # A sign-in address for a Teams mention: one "@", no spaces or markup.
 _ADDRESS = re.compile(r"[A-Za-z0-9._%+'-]+@[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)+")
+
+
+def _is_mailbox(address: str) -> bool:
+    """One email address: a single ``@`` with text on both sides, no whitespace, a dot inside
+    the domain, at most ``MAILBOX_MAX_CHARS`` characters."""
+    if len(address) > MAILBOX_MAX_CHARS or any(c.isspace() for c in address):
+        return False
+    local, at, domain = address.partition("@")
+    if not (at and local and "@" not in domain):
+        return False
+    return "." in domain.strip(".")
 
 
 class ConfigProblem(Exception):
@@ -175,6 +189,21 @@ class TdxEventSettings(BaseModel):
         "Event Catering",
         "Marketing Support",
     ]
+    # The mailbox requesters add as a Zoom alternative host, so the desk can start and record
+    # the meeting; event outreach rows show it. Empty: they say "our shared mailbox".
+    alt_host_mailbox: str = ""
+
+    @field_validator("alt_host_mailbox")
+    @classmethod
+    def _valid_mailbox(cls, value: str) -> str:
+        address = value.strip()
+        if address and not _is_mailbox(address):
+            # Never echoes the value.
+            raise ValueError(
+                "the alternative-host mailbox must be one email address like "
+                f"events@example.edu (at most {MAILBOX_MAX_CHARS} characters), or empty"
+            )
+        return address
 
 
 class TdxAlertSettings(BaseModel):
@@ -381,6 +410,19 @@ class TeamsDeskSettings(BaseModel):
     approved: bool = False
     # Titles can contain names, so desk cards leave them out unless this is set.
     show_titles: bool = False
+    # Who desk cards ask to act, as a sentence names them ("the help desk", "the Service Desk").
+    # Personal cards say "you" instead.
+    team_name: str = DEFAULT_TEAM_NAME
+
+    @field_validator("team_name")
+    @classmethod
+    def _valid_team_name(cls, value: str) -> str:
+        if any(char in value for char in "\r\n  "):
+            raise ValueError("the team name must be one line")
+        value = value.strip()
+        if not 1 <= len(value) <= TEAM_NAME_MAX_CHARS:
+            raise ValueError(f"the team name must be 1 to {TEAM_NAME_MAX_CHARS} characters")
+        return value
 
 
 class TeamsSettings(BaseModel):

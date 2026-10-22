@@ -132,6 +132,9 @@ known_option_prefixes = [
     "Event Catering",
     "Marketing Support",
 ]
+# The mailbox requesters add as a Zoom alternative host, shown on event outreach rows (one
+# address, such as "events@example.edu"); empty, the rows say "our shared mailbox".
+alt_host_mailbox = ""
 
 [tdx.alerts]
 # "tdx audit --send" and "tdx watch": a finding is sent once, then again every realert_days
@@ -246,6 +249,9 @@ show_titles = true
 approved = false
 # Ticket titles can contain names, so desk cards show the id, the finding and the age only.
 show_titles = false
+# Who desk cards ask to act, as a sentence names them: "The help desk, please follow up on
+# these before the event." 1-40 characters on one line. Personal cards say "you" instead.
+team_name = "the help desk"
 
 [llm]
 # The optional Claude API step. Off by default. The API key is a secret: "ops-suite llm set-key"

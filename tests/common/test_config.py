@@ -5,7 +5,7 @@ import pytest
 from pydantic import ValidationError
 
 from ops_suite.common import paths
-from ops_suite.common.config import load_settings
+from ops_suite.common.config import TdxEventSettings, TeamsDeskSettings, load_settings
 
 
 def test_defaults_load_with_no_file(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -259,15 +259,68 @@ def test_teams_destination_settings_defaults_and_example() -> None:
         assert teams.personal.show_titles is True
         assert (teams.desk.approved, teams.desk.show_titles) == (False, False)
         assert (teams.show_titles("personal"), teams.show_titles("desk")) == (True, False)
+        assert teams.desk.team_name == "the help desk"
 
 
 def test_teams_desk_settings_from_the_environment(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("OPS_SUITE_TEAMS__DESK__SHOW_TITLES", "true")
+    monkeypatch.setenv("OPS_SUITE_TEAMS__DESK__TEAM_NAME", "the Commons")
 
     teams = load_settings().teams
 
     assert teams.show_titles("desk") is True
     assert teams.desk.approved is False
+    assert teams.desk.team_name == "the Commons"
+
+
+def test_the_team_name_is_trimmed_and_kept_to_one_short_line() -> None:
+    assert TeamsDeskSettings(team_name="  the Commons ").team_name == "the Commons"
+    assert TeamsDeskSettings(team_name="x" * 40).team_name == "x" * 40
+    for bad in ("", "   ", "x" * 41, "the\nCommons", "the Commons\r", "a\u2028b"):
+        with pytest.raises(ValidationError, match="team name"):
+            TeamsDeskSettings(team_name=bad)
+
+
+def test_the_alt_host_mailbox_is_empty_by_default_and_trimmed() -> None:
+    assert TdxEventSettings().alt_host_mailbox == ""
+    assert TdxEventSettings(alt_host_mailbox="   ").alt_host_mailbox == ""
+    assert TdxEventSettings(alt_host_mailbox=" events@example.edu ").alt_host_mailbox == (
+        "events@example.edu"
+    )
+    assert TdxEventSettings(alt_host_mailbox="desk_events@mail.example.edu").alt_host_mailbox
+
+
+def test_the_alt_host_mailbox_from_the_environment(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("OPS_SUITE_TDX__EVENTS__ALT_HOST_MAILBOX", "events@example.edu")
+
+    assert load_settings().tdx.events.alt_host_mailbox == "events@example.edu"
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [
+        "events",
+        "events@",
+        "@example.edu",
+        "events@example",
+        "events@example.",
+        "events@.edu",
+        "events@@example.edu",
+        "ev@nts@example.edu",
+        "ev ents@example.edu",
+        "events@example.edu\nmore",
+        "events@example.edu, other@example.edu",
+        "e" * 243 + "@example.edu",
+    ],
+)
+def test_a_bad_alt_host_mailbox_fails_without_echoing_it(bad: str) -> None:
+    with pytest.raises(ValidationError) as error:
+        TdxEventSettings(alt_host_mailbox=bad)
+    # The fixed message only: the value itself is never echoed.
+    assert [item["msg"] for item in error.value.errors()] == [
+        "Value error, the alternative-host mailbox must be one email address like "
+        "events@example.edu (at most 254 characters), or empty"
+    ]
 
 
 # --- the [llm] section refuses unknown keys --------------------------------------------------

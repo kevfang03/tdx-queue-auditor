@@ -1,5 +1,6 @@
 import json
 import logging
+import re
 from datetime import UTC, datetime, time, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -12,7 +13,9 @@ from ops_suite.tdx.alerts import (
     AlertPlan,
     AlertPolicy,
     AlertState,
+    Audience,
     DueAlert,
+    Reader,
     SummaryState,
     alertable,
     build_card,
@@ -20,6 +23,7 @@ from ops_suite.tdx.alerts import (
     card_links,
     card_size,
     clean_title,
+    counts_phrase,
     escape_markdown,
     fallback_text,
     finding_wording,
@@ -50,6 +54,9 @@ TITLES = {
     105: "Password reset for the course portal",
 }
 SUMMARY = {"unclaimed": 26, "feeds_read": 7, "feeds_failed": 0}
+DESK = Reader("desk")
+MAILBOX = "events@example.edu"
+COMMONS = Reader("desk", "the Commons")
 
 
 def row(ticket_id: int, title: str | None = None, **fields: object) -> TicketRow:
@@ -345,20 +352,18 @@ def test_card_heading_sections_and_counts(state: AlertState) -> None:
     assert card["msteams"] == {"width": "Full"}
     lines = texts(card)
     assert lines[0] == "TDX queue: 4 new, 1 reminder"
-    assert lines[1] == (
-        "Read-only audit, Fri 14:05. Checked 26 unclaimed tickets; 7 feeds read, 0 failed."
-    )
+    assert lines[1] == "Checked Fri 14:05: 26 unclaimed tickets, 7 ticket histories read."
     headings = [b["text"] for b in card["body"] if b.get("weight") == "Bolder"][1:]
     assert headings == [
-        "Client waiting (2)",
+        "Requester waiting (2)",
         "Needs review (1)",
         "Location TBD soon (1)",
         "Event over (1)",
     ]
     link = "https://tdx.example.edu/TDNext/Apps/43/Tickets/TicketDet?TicketID=103"
     assert lines[3] == f"[#103]({link}) Printer jam in the library basement"
-    assert lines[4] == "Requestor wrote last 3 days ago: reply or check in · reminder"
-    assert lines[6] == "Requestor wrote last 3 days ago: reply or check in"
+    assert lines[4] == "The requester wrote last, 3 days ago: reply or check in · reminder"
+    assert lines[6] == "The requester wrote last, 3 days ago: reply or check in"
     assert lines[-1] == "Event ended 2 days ago: ready to resolve?"
 
 
@@ -373,14 +378,14 @@ def test_without_titles_a_row_is_one_linked_line_of_id_and_finding(state: AlertS
 
     link = "https://tdx.example.edu/TDNext/Apps/43/Tickets/TicketDet?TicketID={}"
     assert texts(card)[2:] == [
-        "Client waiting (2)",
-        f"[#103]({link.format(103)}) · Requestor wrote last 3 days ago: reply or check in"
+        "Requester waiting (2)",
+        f"[#103]({link.format(103)}) · The requester wrote last, 3 days ago: reply or check in"
         " · reminder",
-        f"[#101]({link.format(101)}) · Requestor wrote last 3 days ago: reply or check in",
+        f"[#101]({link.format(101)}) · The requester wrote last, 3 days ago: reply or check in",
         "Event over (1)",
         f"[#102]({link.format(102)}) · Event ended 2 days ago: ready to resolve?",
     ]
-    assert card["fallbackText"] == "ops-suite: 3 tickets need attention (2 new, 1 reminder)"
+    assert card["fallbackText"] == "3 tickets need attention"
 
 
 def test_without_titles_no_title_text_appears_anywhere_in_the_card(state: AlertState) -> None:
@@ -411,11 +416,12 @@ def test_with_titles_is_the_default(state: AlertState) -> None:
 @pytest.mark.parametrize(
     ("finding", "expected"),
     [
-        (waiting(1, 73), "Requestor wrote last 3 days ago: reply or check in"),
+        (waiting(1, 73), "The requester wrote last, 3 days ago: reply or check in"),
         (waiting(1, 47, "no_reply_yet"), "No reply yet, opened 47 h ago"),
         (
             Finding(1, "needs_review", "normal", "other_last", 48),
-            "Someone else wrote last 2 days ago: take a look",
+            "The last message, 2 days ago, is from someone other than the requester or the "
+            "help desk: take a look",
         ),
         (
             Finding(1, "location_tbd_soon", "normal", "tbd_soon", 30),
@@ -425,31 +431,34 @@ def test_with_titles_is_the_default(state: AlertState) -> None:
         (event_over(1, 25), "Event ended 25 h ago: ready to resolve?"),
         (Finding(1, "needs_review", "normal", "requestor_last_undated", None), "Needs review"),
         (Finding(1, "needs_review", "normal", "something_new", 100), "Needs review, 4 days"),
-        (waiting(1, None, "no_reply_yet"), "Client waiting"),
-        (Finding(1, "follow_up_with_client", "normal", "x", 5), "Follow up with client, 5 h"),
-        (waiting(1, 73, "expects_reply"), "Requestor is waiting for a reply, 3 days"),
+        (waiting(1, None, "no_reply_yet"), "Requester waiting"),
+        (Finding(1, "follow_up_with_client", "normal", "x", 5), "Follow up with requester, 5 h"),
+        (waiting(1, 73, "expects_reply"), "The requester has waited 3 days for a reply"),
         (
             Finding(1, "follow_up_with_client", "normal", "client_follow_up", 50),
-            "Client said they'd follow up; quiet 2 days: check in",
+            "The requester said they'd follow up; quiet 2 days: check in",
         ),
         (
             Finding(1, "follow_up_with_client", "normal", "client_no_reply_needed", 96),
-            "Client's last message needs no reply; quiet 4 days: check in or resolve",
+            "The requester's last message needed no reply; quiet 4 days: check in or resolve",
         ),
         (
             Finding(1, "event_outreach_due", "normal", "outreach_due", 240, 240),
-            "Event in 10 days: reach out. Confirm the room · Zoom link if hybrid · desk mailbox "
-            "as Zoom alt host · recording? · then the events sheet",
+            "Event in 10 days: email the requester for the room number. If it's hybrid or "
+            "remote, also ask for the Zoom link, ask them to add our shared mailbox as an "
+            "alternative host, and ask whether to record. Then update the events spreadsheet.",
         ),
         (
             Finding(1, "event_details_pending", "high", "details_pending", 72, 30),
-            "Event in 30 h; no reply to the desk for 3 days: follow up",
+            "Event in 30 h; no reply to the help desk for 3 days: follow up",
         ),
         # The near-event override, and the requester replying on an event.
         (
             Finding(1, "event_outreach_due", "high", "outreach_due_requester_wrote", 30, 30, 50),
-            "Event in 30 h: reach out. Confirm the room · Zoom link if hybrid · desk mailbox "
-            "as Zoom alt host · recording? · then the events sheet; requester wrote 2 days ago",
+            "Event in 30 h; the requester wrote 2 days ago. Email them for the room number. If "
+            "it's hybrid or remote, also ask for the Zoom link, ask them to add our shared "
+            "mailbox as an alternative host, and ask whether to record. Then update the events "
+            "spreadsheet.",
         ),
         (
             Finding(1, "event_details_pending", "high", "details_pending_near", 1, 26),
@@ -457,7 +466,7 @@ def test_with_titles_is_the_default(state: AlertState) -> None:
         ),
         (
             Finding(1, "client_waiting", "normal", "event_requester_replied", 50, 122),
-            "Event in 5 days: requester replied 2 days ago: process and confirm",
+            "Event in 5 days. The requester replied 2 days ago: read it and confirm the details",
         ),
         (
             Finding(1, "location_tbd_soon", "normal", "location_missing", 30),
@@ -480,8 +489,8 @@ def test_unknown_kinds_get_their_own_section_without_crashing(state: AlertState)
     findings = [Finding(101, "brand_new_kind", "normal", "x", None), waiting(102)]
     card = build_card(plan(state, findings), {}, {}, NOW, TZ, SUMMARY, title_chars=80)
     lines = texts(card)
-    assert "Client waiting (1)" in lines
-    assert lines.index("Brand new kind (1)") > lines.index("Client waiting (1)")
+    assert "Requester waiting (1)" in lines
+    assert lines.index("Brand new kind (1)") > lines.index("Requester waiting (1)")
     assert "#101" in lines  # no row, no link: the plain id
 
 
@@ -494,7 +503,7 @@ def test_follow_up_with_client_is_the_section_after_client_waiting(state: AlertS
     card = build_card(plan(state, findings), {}, {}, NOW, TZ, SUMMARY, title_chars=80)
     lines = texts(card)
     sections = [line for line in lines if line.endswith("(1)")]
-    assert sections == ["Client waiting (1)", "Follow up with client (1)", "Needs review (1)"]
+    assert sections == ["Requester waiting (1)", "Follow up with requester (1)", "Needs review (1)"]
 
 
 def test_event_outreach_sections_come_before_location_tbd(state: AlertState) -> None:
@@ -528,10 +537,12 @@ def test_event_outreach_rows_carry_only_the_fixed_wording(state: AlertState) -> 
 
     lines = texts(card)
     assert (
-        "[#101](https://tdx.example.edu/t/101) · Event in 2 days: reach out. Confirm the room · "
-        "Zoom link if hybrid · desk mailbox as Zoom alt host · recording? · then the events sheet"
+        "[#101](https://tdx.example.edu/t/101) · Event in 2 days: email the requester for the "
+        "room number. If it's hybrid or remote, also ask for the Zoom link, ask them to add our "
+        "shared mailbox as an alternative host, and ask whether to record. Then update the "
+        "events spreadsheet."
     ) in lines
-    assert "#102 · Event in 4 days; no reply to the desk for 2 days: follow up" in lines
+    assert "#102 · Event in 4 days; no reply to the help desk for 2 days: follow up" in lines
     assert "CCI Event Request Form" not in json.dumps(card)
 
 
@@ -656,7 +667,7 @@ def test_the_card_stays_under_25_kb(state: AlertState) -> None:
     assert 0 < len(fitted.on_card) < 120
     assert fitted.overflow == 5 + 120 - len(fitted.on_card)
     assert texts(card)[-1] == f"{fitted.overflow} more waiting; they come on the next cards."
-    assert texts(card)[0] == f"TDX queue: {len(fitted.on_card)} new, 0 reminders"
+    assert texts(card)[0] == f"TDX queue: {len(fitted.on_card)} new"
     assert build_card(big, rows, {}, NOW, TZ, SUMMARY, title_chars=200) == card
 
 
@@ -677,14 +688,19 @@ def test_the_card_fallback_text_is_counts_only(state: AlertState) -> None:
     )
 
     fallback = card["fallbackText"]
-    assert fallback == "ops-suite: 3 tickets need attention (2 new, 1 reminder)"
+    assert fallback == "3 tickets need attention"
     for private in [*TITLES.values(), "101", "102", "103", "#", "Laptop", REQUESTOR]:
         assert private not in fallback
 
 
-def test_fallback_text_is_singular_for_one_ticket() -> None:
-    assert fallback_text(1, 0) == "ops-suite: 1 ticket needs attention (1 new, 0 reminders)"
-    assert fallback_text(0, 2) == "ops-suite: 2 tickets need attention (0 new, 2 reminders)"
+def test_fallback_text_is_singular_for_one_ticket_and_names_the_team_on_desk_cards() -> None:
+    assert fallback_text(1) == "1 ticket needs attention"
+    assert fallback_text(2) == "2 tickets need attention"
+    assert fallback_text(0) == "Nothing needs your attention right now"
+    assert fallback_text(1, DESK) == "1 ticket for the help desk"
+    assert fallback_text(0, DESK) == "Nothing for the help desk right now"
+    assert fallback_text(3, COMMONS) == "3 tickets for the Commons"
+    assert fallback_text(0, COMMONS) == "Nothing for the Commons right now"
 
 
 def test_the_card_holds_no_requestor_name_or_email(state: AlertState) -> None:
@@ -746,17 +762,17 @@ def test_the_summary_lists_every_open_finding_by_kind_with_new_ones_marked() -> 
 
     lines = texts(card)
     assert lines[0] == "TDX queue at 07:30: 3 open (1 new)"
-    assert lines[1].startswith("Shift summary, read-only audit Mon 07:31. Checked 26 unclaimed")
-    assert lines[2] == "Client waiting (2)"
+    assert lines[1] == "Tickets that need your attention. Checked 26 unclaimed tickets at 07:31."
+    assert lines[2] == "Requester waiting (2)"
     assert lines[3].startswith("[#102](https://tdx.example.edu/") and "(new)" not in lines[3]
-    assert "#101](" in lines[4] and ") (new) · Requestor wrote last 3 days ago" in lines[4]
+    assert "#101](" in lines[4] and ") (new) · The requester wrote last, 3 days ago" in lines[4]
     assert lines[5] == "Event over (1)"
     assert [(f.ticket_id, f.kind) for f in shown] == [
         (102, "client_waiting"),
         (101, "client_waiting"),
         (104, "event_over"),
     ]
-    assert card["fallbackText"] == "ops-suite: TDX queue at 07:30: 3 open (1 new)"
+    assert card["fallbackText"] == "3 tickets need attention"
 
 
 def test_desk_summaries_carry_no_titles_or_names_by_default() -> None:
@@ -770,8 +786,11 @@ def test_desk_summaries_carry_no_titles_or_names_by_default() -> None:
 
 def test_an_empty_queue_says_queue_clear() -> None:
     shown, card = summary([])
-    assert texts(card)[0] == "Queue clear at 07:30: nothing needs attention."
-    assert card["fallbackText"] == "ops-suite: Queue clear at 07:30: nothing needs attention"
+    assert texts(card)[:2] == [
+        "Queue clear at 07:30: nothing needs attention.",
+        "Nothing needs your attention right now. Checked 26 unclaimed tickets at 07:31.",
+    ]
+    assert card["fallbackText"] == "Nothing needs your attention right now"
     assert shown == ()
 
 
@@ -787,7 +806,7 @@ def test_rows_past_the_cap_are_counted_as_more() -> None:
     findings = [waiting(i) for i in range(101, 106)] + [event_over(201), event_over(202)]
     shown, card = summary(findings, max_rows=4)
     lines = texts(card)
-    assert "Client waiting (5)" in lines and "Event over (2)" in lines
+    assert "Requester waiting (5)" in lines and "Event over (2)" in lines
     assert lines.count("+1 more") == 1 and lines.count("+2 more") == 1
     assert len(shown) == 4
 
@@ -814,7 +833,7 @@ def test_build_summary_card_returns_the_card_alone() -> None:
         title_chars=80, show_titles=False, max_rows=25,
     )  # fmt: skip
     # No link (the address is not on the TDX host): the id stays plain text.
-    assert texts(card)[3] == "#101 · Requestor wrote last 3 days ago: reply or check in"
+    assert texts(card)[3] == "#101 · The requester wrote last, 3 days ago: reply or check in"
 
 
 def test_a_huge_summary_is_trimmed_under_the_size_limit() -> None:
@@ -916,14 +935,24 @@ def test_the_urgent_card_lists_its_rows_like_the_summary_with_no_mention() -> No
     rows_by_id = {i: row(i) for i in (103, 104)}
 
     shown, card = fit_urgent_card(
-        findings, rows_by_id, {}, SLOT_RUN, TZ, 2, title_chars=60, show_titles=True, max_rows=10
+        findings,
+        rows_by_id,
+        {},
+        SLOT_RUN,
+        TZ,
+        title_chars=60,
+        show_titles=True,
+        max_rows=10,
+        reader=DESK,
     )
 
     lines = [block["text"] for block in card["body"]]
-    assert lines[0] == "Event soon: 2 need action"
-    assert lines[1].startswith("Read-only audit Mon 07:31: events within 2 days")
+    assert lines[0] == "Event soon: 2 need follow-up"
+    assert (
+        lines[1] == "The help desk, please follow up on these before the event. Checked Mon 07:31."
+    )
     assert "Event details pending (1)" in lines and "Location TBD soon (1)" in lines
-    assert card["fallbackText"] == "ops-suite: Event soon: 2 need action"
+    assert card["fallbackText"] == "2 tickets for the help desk"
     assert "entities" not in card["msteams"]
     assert {f.ticket_id for f in shown} == {103, 104}
 
@@ -969,7 +998,7 @@ def extras_summary(
 
 def test_ready_to_close_wording() -> None:
     assert finding_wording(ready(101)) == (
-        "Desk replied 4 days ago, no reply since: close if nothing new"
+        "The help desk replied 4 days ago, no reply since: close if nothing new"
     )
 
 
@@ -991,8 +1020,8 @@ def test_the_summary_sections_are_in_the_check_in_order() -> None:
     sections = [line for line in texts(card) if line.endswith(")") and " (" in line[-5:]]
     assert sections == [
         "Events this week (1)",
-        "Client waiting (1)",
-        "Follow up with client (1)",
+        "Requester waiting (1)",
+        "Follow up with requester (1)",
         "Needs review (1)",
         "Event outreach due (1)",
         "Event details pending (1)",
@@ -1017,7 +1046,7 @@ def test_events_this_week_rows_are_linked_with_details_and_counted_apart() -> No
     assert lines[4].endswith(
         ") · Fri 10/23 15:00–17:00 · Lobby · A/V on form: yes · in progress (requester answered)"
     )
-    assert lines[5] == "Client waiting (1)"
+    assert lines[5] == "Requester waiting (1)"
     assert [f.ticket_id for f in shown] == [101]
 
 
@@ -1060,7 +1089,7 @@ def test_a_possible_duplicate_points_at_the_older_ticket() -> None:
     _, titled = extras_summary([waiting(105)], duplicates={105: 101}, show_titles=True)
 
     (line,) = [line for line in texts(card) if "#105](" in line]
-    assert ") (possible duplicate of #101) · Requestor wrote last" in line
+    assert ") (possible duplicate of #101) · The requester wrote last," in line
     assert not any("duplicate" in line for line in texts(card) if "#101](" in line)
     assert any("(possible duplicate of #101) Password reset" in line for line in texts(titled))
 
@@ -1128,6 +1157,7 @@ def delta(
     total: int | None = None,
     show_titles: bool = False,
     max_rows: int = 25,
+    **options: object,
 ) -> tuple[tuple[Finding, ...], dict]:
     rows_by_id = {f.ticket_id: row(f.ticket_id) for f in findings}
     links = card_links(
@@ -1148,6 +1178,7 @@ def delta(
         title_chars=80,
         show_titles=show_titles,
         max_rows=max_rows,
+        **options,
     )
 
 
@@ -1160,15 +1191,15 @@ def test_a_delta_lists_new_findings_and_reminders_and_counts_cleared_ones() -> N
 
     lines = texts(card)
     assert lines[0] == "Since 07:30: 1 new · 2 cleared · 6 open"
-    assert lines[1].startswith("Shift update, read-only audit Mon 12:01. Checked 26 unclaimed")
-    assert lines[2] == "Client waiting (1)"
-    assert lines[3].startswith("[#101](") and ") (new) · Requestor wrote last" in lines[3]
+    assert lines[1] == "New since the last post, for you to look at. Checked at 12:01."
+    assert lines[2] == "Requester waiting (1)"
+    assert lines[3].startswith("[#101](") and ") (new) · The requester wrote last," in lines[3]
     assert lines[4] == "Event over (1)"
     assert "(new)" not in lines[5] and lines[5].endswith("· reminder")
     assert len(lines) == 6  # no row for the cleared findings, no events section
     assert "Events this week" not in json.dumps(card)
     assert "entities" not in json.dumps(card)  # no mention on a delta
-    assert card["fallbackText"] == "ops-suite: Since 07:30: 1 new · 2 cleared · 6 open"
+    assert card["fallbackText"] == "6 tickets need attention"
     assert [(f.ticket_id, f.kind) for f in shown] == [(101, "client_waiting"), (104, "event_over")]
 
 
@@ -1200,3 +1231,329 @@ def test_the_full_heading_says_new_since_the_last_post() -> None:
     assert texts(card)[0] == "TDX queue at 07:30: 1 open (1 new since yesterday)"
     assert since_text(datetime(2026, 10, 16, 17, 0, tzinfo=TZ), SLOT, TZ) == "Fri 17:00"
     assert since_text(SLOT, NOON, TZ) == "07:30"
+
+
+# --- plain wording, per reader ----------------------------------------------------------
+
+DETAILS = Finding(102, "event_details_pending", "high", "details_pending", 60, 100)
+NEAR = Finding(103, "event_details_pending", "high", "details_pending_near", 20, 6)
+EVERY_KIND = [
+    waiting(101),
+    waiting(105, reason="no_reply_yet"),
+    Finding(106, "follow_up_with_client", "normal", "client_no_reply_needed", 80),
+    Finding(107, "needs_review", "normal", "other_last", 100),
+    Finding(108, "event_outreach_due", "high", "outreach_due", 50, 50),
+    Finding(111, "event_outreach_due", "high", "outreach_due_requester_wrote", 30, 30, 50),
+    waiting(112, reason="expects_reply"),
+    Finding(113, "client_waiting", "high", "event_requester_replied", 50, 122),
+    Finding(114, "follow_up_with_client", "normal", "client_follow_up", 90),
+    DETAILS,
+    NEAR,
+    Finding(104, "location_tbd_soon", "normal", "tbd_soon", 30),
+    event_over(109),
+    ready(110),
+]
+
+
+def alert_card(reader: Reader, findings: list[Finding], tmp_path: Path) -> dict:
+    result = plan(AlertState(tmp_path / f"state-{id(reader)}.json"), findings)
+    rows = {f.ticket_id: row(f.ticket_id) for f in findings}
+    return build_card(result, rows, {}, NOW, TZ, SUMMARY, title_chars=80, reader=reader)
+
+
+def urgent_card(reader: Reader, findings: list[Finding]) -> dict:
+    rows = {f.ticket_id: row(f.ticket_id) for f in findings}
+    return fit_urgent_card(
+        findings, rows, {}, SLOT_RUN, TZ, title_chars=80, show_titles=False, max_rows=25,
+        reader=reader,
+    )[1]  # fmt: skip
+
+
+def every_card(reader: Reader, tmp_path: Path) -> list[dict]:
+    """Each card builder's output for ``reader``, with every finding kind and row wording on
+    it."""
+    return [
+        alert_card(reader, EVERY_KIND, tmp_path),
+        summary(EVERY_KIND, reader=reader)[1],
+        summary([], reader=reader)[1],
+        delta(EVERY_KIND, {(f.ticket_id, f.kind) for f in EVERY_KIND}, reader=reader)[1],
+        delta([], set(), cleared=1, total=0, reader=reader)[1],
+        urgent_card(reader, [DETAILS, NEAR]),
+    ]
+
+
+@pytest.mark.parametrize(
+    ("reader", "subtitle", "preview"),
+    [
+        (
+            Reader(),
+            "Checked Fri 14:05: 26 unclaimed tickets, 7 ticket histories read.",
+            "2 tickets need attention",
+        ),
+        (
+            DESK,
+            "The help desk, please follow up on these. Checked Fri 14:05: 26 unclaimed tickets, "
+            "7 ticket histories read.",
+            "2 tickets for the help desk",
+        ),
+        (
+            COMMONS,
+            "The Commons, please follow up on these. Checked Fri 14:05: 26 unclaimed tickets, "
+            "7 ticket histories read.",
+            "2 tickets for the Commons",
+        ),
+    ],
+)
+def test_alert_card_wording(reader: Reader, subtitle: str, preview: str, tmp_path: Path) -> None:
+    card = alert_card(reader, [waiting(101), event_over(102)], tmp_path)
+    assert texts(card)[:2] == ["TDX queue: 2 new", subtitle]
+    assert card["fallbackText"] == preview
+
+
+def test_alert_card_says_how_many_ticket_histories_could_not_be_read(tmp_path: Path) -> None:
+    result = plan(AlertState(tmp_path / "state.json"), [waiting(101)])
+    counts = {"unclaimed": 26, "feeds_read": 6, "feeds_failed": 1}
+    card = build_card(result, {}, {}, NOW, TZ, counts, title_chars=80)
+    assert texts(card)[1] == (
+        "Checked Fri 14:05: 26 unclaimed tickets, 6 ticket histories read, 1 could not be read."
+    )
+
+
+@pytest.mark.parametrize(
+    ("reader", "lead", "preview", "clear_lead", "clear_preview"),
+    [
+        (
+            Reader(),
+            "Tickets that need your attention.",
+            "2 tickets need attention",
+            "Nothing needs your attention right now.",
+            "Nothing needs your attention right now",
+        ),
+        (
+            DESK,
+            "Tickets for the help desk to look at.",
+            "2 tickets for the help desk",
+            "Nothing for the help desk to look at right now.",
+            "Nothing for the help desk right now",
+        ),
+        (
+            COMMONS,
+            "Tickets for the Commons to look at.",
+            "2 tickets for the Commons",
+            "Nothing for the Commons to look at right now.",
+            "Nothing for the Commons right now",
+        ),
+    ],
+)
+def test_full_summary_wording(
+    reader: Reader, lead: str, preview: str, clear_lead: str, clear_preview: str
+) -> None:
+    _, card = summary([waiting(101), event_over(104)], {(101, "client_waiting")}, reader=reader)
+    assert texts(card)[:2] == [
+        "TDX queue at 07:30: 2 open (1 new)",
+        f"{lead} Checked 26 unclaimed tickets at 07:31.",
+    ]
+    assert card["fallbackText"] == preview
+
+    _, clear = summary([], reader=reader)
+    assert texts(clear)[:2] == [
+        "Queue clear at 07:30: nothing needs attention.",
+        f"{clear_lead} Checked 26 unclaimed tickets at 07:31.",
+    ]
+    assert clear["fallbackText"] == clear_preview
+
+
+@pytest.mark.parametrize(
+    ("reader", "who", "preview"),
+    [
+        (Reader(), "you", "6 tickets need attention"),
+        (DESK, "the help desk", "6 tickets for the help desk"),
+        (COMMONS, "the Commons", "6 tickets for the Commons"),
+    ],
+)
+def test_delta_wording(reader: Reader, who: str, preview: str) -> None:
+    _, card = delta([waiting(101)], {(101, "client_waiting")}, cleared=1, total=6, reader=reader)
+    assert texts(card)[:2] == [
+        "Since 07:30: 1 new · 1 cleared · 6 open",
+        f"New since the last post, for {who} to look at. Checked at 12:01.",
+    ]
+    assert card["fallbackText"] == preview
+
+
+@pytest.mark.parametrize(
+    ("reader", "ask", "preview"),
+    [
+        (Reader(), "Please", "1 ticket needs attention"),
+        (DESK, "The help desk, please", "1 ticket for the help desk"),
+        (COMMONS, "The Commons, please", "1 ticket for the Commons"),
+    ],
+)
+def test_urgent_card_wording(reader: Reader, ask: str, preview: str) -> None:
+    card = urgent_card(reader, [NEAR])
+    assert texts(card)[:2] == [
+        "Event soon: 1 needs follow-up",
+        f"{ask} follow up on these before the event. Checked Mon 07:31.",
+    ]
+    assert card["fallbackText"] == preview
+    assert texts(urgent_card(reader, [NEAR, DETAILS]))[0] == "Event soon: 2 need follow-up"
+
+
+@pytest.mark.parametrize(
+    ("reader", "details", "replied"),
+    [
+        (Reader(), "no reply to the help desk for 2 days", "The help desk replied 4 days ago"),
+        (DESK, "no reply to the help desk for 2 days", "The help desk replied 4 days ago"),
+        (COMMONS, "no reply to the Commons for 2 days", "The Commons replied 4 days ago"),
+    ],
+)
+def test_row_wording_names_the_team_as_the_reader_does(
+    reader: Reader, details: str, replied: str
+) -> None:
+    assert finding_wording(DETAILS, reader) == f"Event in 4 days; {details}: follow up"
+    assert finding_wording(ready(101), reader) == (
+        f"{replied}, no reply since: close if nothing new"
+    )
+    # Wording without a team is the same for every reader.
+    assert finding_wording(waiting(101), reader) == finding_wording(waiting(101))
+
+
+def test_a_personal_reader_never_uses_the_desk_team_name() -> None:
+    personal = Reader("personal", "the Commons")
+    assert "Commons" not in finding_wording(DETAILS, personal)
+    assert fallback_text(2, personal) == "2 tickets need attention"
+
+
+def test_the_team_name_is_escaped_in_the_card_text_but_not_the_preview() -> None:
+    reader = Reader("desk", "*Team* [one]")
+    card = urgent_card(reader, [NEAR])
+    assert texts(card)[1].startswith(r"\*Team\* \[one\], please follow up")
+    assert finding_wording(DETAILS, reader) == (
+        r"Event in 4 days; no reply to \*Team\* \[one\] for 2 days: follow up"
+    )
+    assert card["fallbackText"] == "1 ticket for *Team* [one]"
+    _, full = summary([waiting(101)], reader=reader)
+    assert texts(full)[1].startswith(r"Tickets for \*Team\* \[one\] to look at. Checked ")
+    assert full["fallbackText"] == "1 ticket for *Team* [one]"
+    _, clear = summary([], reader=reader)
+    assert texts(clear)[1].startswith(r"Nothing for \*Team\* \[one\] to look at right now.")
+    assert clear["fallbackText"] == "Nothing for *Team* [one] right now"
+
+
+def test_no_desk_card_builds_the_possessive_of_the_team_name(tmp_path: Path) -> None:
+    # A possessive built from the name reads badly for some names ("the Commons's"), so
+    # desk cards say "for the Commons" instead.
+    for card in every_card(COMMONS, tmp_path):
+        text = json.dumps(card, ensure_ascii=False)
+        assert "Commons" in text
+        assert "Commons's" not in text and "Commons'" not in text, card["fallbackText"]
+
+
+@pytest.mark.parametrize("reader", [Reader(), DESK, COMMONS], ids=["personal", "desk", "commons"])
+def test_no_card_says_read_only_audit_or_the_desk(reader: Reader, tmp_path: Path) -> None:
+    for card in every_card(reader, tmp_path):
+        text = json.dumps(card, ensure_ascii=False).lower()
+        for banned in ("read-only audit", "the desk", "feeds read", "ops-suite"):
+            assert banned not in text, (banned, card["body"][0]["text"])
+
+
+@pytest.mark.parametrize(
+    ("reader", "team", "mailbox"),
+    [
+        (Reader(), "the help desk", "our shared mailbox"),
+        (COMMONS, "the Commons", "our shared mailbox"),
+        (Reader(alt_host_mailbox=MAILBOX), "the help desk", MAILBOX),
+        (Reader("desk", "the Commons", MAILBOX), "the Commons", MAILBOX),
+    ],
+    ids=["personal", "commons", "personal-mailbox", "commons-mailbox"],
+)
+def test_rows_call_the_person_the_requester_on_every_card(
+    reader: Reader, team: str, mailbox: str
+) -> None:
+    ask = (
+        f"the room number. If it's hybrid or remote, also ask for the Zoom link, ask them to add "
+        f"{mailbox} as an alternative host, and ask whether to record. Then update the events "
+        "spreadsheet."
+    )
+    expected = {
+        waiting(1, 73): "The requester wrote last, 3 days ago: reply or check in",
+        waiting(1, 73, "expects_reply"): "The requester has waited 3 days for a reply",
+        Finding(1, "client_waiting", "normal", "event_requester_replied", 50, 122): (
+            "Event in 5 days. The requester replied 2 days ago: read it and confirm the details"
+        ),
+        Finding(1, "follow_up_with_client", "normal", "client_follow_up", 50): (
+            "The requester said they'd follow up; quiet 2 days: check in"
+        ),
+        Finding(1, "follow_up_with_client", "normal", "client_no_reply_needed", 96): (
+            "The requester's last message needed no reply; quiet 4 days: check in or resolve"
+        ),
+        Finding(1, "needs_review", "normal", "other_last", 48): (
+            f"The last message, 2 days ago, is from someone other than the requester or {team}: "
+            "take a look"
+        ),
+        Finding(1, "event_outreach_due", "normal", "outreach_due", 240, 240): (
+            f"Event in 10 days: email the requester for {ask}"
+        ),
+        Finding(1, "event_outreach_due", "high", "outreach_due_requester_wrote", 30, 30, 50): (
+            f"Event in 30 h; the requester wrote 2 days ago. Email them for {ask}"
+        ),
+    }
+    for finding, wording in expected.items():
+        assert finding_wording(finding, reader) == wording
+
+
+def test_the_reader_names_the_configured_mailbox_or_our_shared_mailbox() -> None:
+    assert Reader().mailbox == "our shared mailbox"
+    assert DESK.mailbox == "our shared mailbox"
+    assert Reader("desk", "the Commons", MAILBOX).mailbox == MAILBOX
+    assert Reader(alt_host_mailbox=MAILBOX).mailbox == MAILBOX
+
+
+@pytest.mark.parametrize("audience", ["personal", "desk"])
+def test_the_outreach_mailbox_is_escaped_for_card_markdown(audience: Audience) -> None:
+    reader = Reader(audience, alt_host_mailbox="desk_events*av@example.edu")
+    finding = Finding(1, "event_outreach_due", "normal", "outreach_due", 240, 240)
+
+    wording = finding_wording(finding, reader)
+
+    assert r"ask them to add desk\_events\*av@example.edu as an alternative host" in wording
+
+
+@pytest.mark.parametrize(
+    "reader", [Reader(alt_host_mailbox=MAILBOX), Reader("desk", "the Commons", MAILBOX)],
+    ids=["personal", "desk"],
+)  # fmt: skip
+def test_cards_show_the_configured_mailbox_on_outreach_rows(
+    reader: Reader, state: AlertState
+) -> None:
+    findings = [Finding(101, "event_outreach_due", "high", "outreach_due", 50, 50)]
+
+    card = build_card(
+        plan(state, findings), {}, {}, NOW, TZ, SUMMARY, title_chars=80, reader=reader
+    )
+
+    text = json.dumps(card, ensure_ascii=False)
+    assert f"ask them to add {MAILBOX} as an alternative host" in text
+    assert "our shared mailbox" not in text
+
+
+def test_requester_section_labels(state: AlertState) -> None:
+    findings = [waiting(101), Finding(102, "follow_up_with_client", "normal", "x", 90)]
+    lines = texts(build_card(plan(state, findings), {}, {}, NOW, TZ, SUMMARY, title_chars=80))
+    assert "Requester waiting (1)" in lines and "Follow up with requester (1)" in lines
+
+
+@pytest.mark.parametrize(
+    ("reminders", "phrase"), [(0, "12 new"), (1, "12 new, 1 reminder"), (2, "12 new, 2 reminders")]
+)
+def test_counts_phrase_leaves_out_zero_reminders(reminders: int, phrase: str) -> None:
+    assert counts_phrase(12, reminders) == phrase
+
+
+@pytest.mark.parametrize("reader", [Reader(), DESK, COMMONS], ids=["personal", "desk", "commons"])
+def test_no_card_uses_another_word_for_the_requester(reader: Reader, tmp_path: Path) -> None:
+    # Cards use one word for the person who opened the ticket, and never shorthand for the
+    # event checklist.
+    banned = re.compile(r"Requestor|\bclient\b|alt\s+host|desk\s+mailbox", re.IGNORECASE)
+    for card in every_card(reader, tmp_path):
+        text = json.dumps(card, ensure_ascii=False)
+        assert not banned.search(text), (banned.search(text), card["body"][0]["text"])

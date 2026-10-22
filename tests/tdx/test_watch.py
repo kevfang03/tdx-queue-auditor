@@ -207,7 +207,7 @@ def test_send_records_only_after_a_successful_post(
     sent = send_alerts(run, settings, path, WEBHOOK)
     assert sent == SendOutcome("sent", 2, 0, 0)
     assert AlertState(path).keys() == [(101, "client_waiting"), (102, "client_waiting")]
-    assert poster.cards[1]["body"][0]["text"] == "TDX queue: 2 new, 0 reminders"
+    assert poster.cards[1]["body"][0]["text"] == "TDX queue: 2 new"
 
     again = send_alerts(make_run([waiting(101), waiting(102)]), settings, path, WEBHOOK)
     assert again == SendOutcome("nothing_new")
@@ -385,8 +385,7 @@ def test_cycles_run_30_minutes_apart(
     assert cycles.times == [at(10, 16, 14, 5), at(10, 16, 14, 35), at(10, 16, 15, 5)]
     lines = capsys.readouterr().out.splitlines()
     assert lines[1] == (
-        "14:05 3 unclaimed, 0 feeds, 2 findings; Teams: sent 1 card (2 new, 0 reminders). "
-        "Next run 14:35."
+        "14:05 3 unclaimed, 0 feeds, 2 findings; Teams: sent 1 card (2 new). Next run 14:35."
     )
     assert lines[2] == "14:35 3 unclaimed, 0 feeds, 2 findings; Teams: nothing new. Next run 15:05."
     assert max(clock.sleeps) <= 30
@@ -429,8 +428,8 @@ def signed_out(count: int) -> list[NotSignedInError]:
 
 def test_the_sign_in_notice_is_runnable_and_takes_the_minutes_from_the_setting() -> None:
     assert NOTICE == (
-        'TDX sign-in expired. On the Mac run "uv run ops-suite tdx login"; the auditor keeps '
-        "running and picks up again within 10 minutes."
+        'TDX sign-in expired. On the computer running the auditor, run "uv run ops-suite tdx '
+        'login"; the auditor keeps running and picks up again within 10 minutes.'
     )
     assert sign_in_notice(15).endswith("within 15 minutes.")
 
@@ -548,7 +547,8 @@ def test_other_errors_while_signed_out_still_count_as_failures() -> None:
     assert cycles.times == [at(10, 16, 14, 5), at(10, 16, 14, 15), at(10, 16, 14, 25)]
     assert notices == [
         NOTICE,
-        "The TDX auditor stopped after 2 failed runs (DashboardStructureError). Check the Mac.",
+        "The TDX auditor stopped after 2 failed runs (DashboardStructureError). "
+        "Check the computer running it.",
     ]
 
 
@@ -618,7 +618,8 @@ def test_three_failures_in_a_row_stop_with_one_notice(
 
     assert code == EXIT_STRUCTURE
     message = (
-        "The TDX auditor stopped after 3 failed runs (DashboardStructureError). Check the Mac."
+        "The TDX auditor stopped after 3 failed runs (DashboardStructureError). "
+        "Check the computer running it."
     )
     assert notices == [message]
     captured = capsys.readouterr()
@@ -715,7 +716,7 @@ def test_three_launch_timeouts_stop_and_name_the_reason(
     assert code == EXIT_BROWSER
     message = (
         "The TDX auditor stopped after 3 failed runs (BrowserStartError: launch_timeout). "
-        "Check the Mac."
+        "Check the computer running it."
     )
     assert notices == [message]
     captured = capsys.readouterr()
@@ -933,7 +934,7 @@ def test_approved_desk_sends_a_card_without_titles(
     outcome = send_alerts(make_run([waiting(101)]), approved, path, DESK_WEBHOOK, "desk")
 
     assert outcome == SendOutcome("sent", 1, 0, 0, "", "desk")
-    assert format_send_outcome(outcome) == "Teams (desk): sent 1 card (1 new, 0 reminders)."
+    assert format_send_outcome(outcome) == "Teams (desk): sent 1 card (1 new)."
     card = json.dumps(poster.cards[0])
     assert TITLE not in card and REQUESTOR not in card
     assert "#101" in card
@@ -1054,7 +1055,7 @@ def test_watch_to_desk_without_a_personal_webhook_warns_once_and_runs(
     out, err = capsys.readouterr()
     assert err.count("sign-in notices need a personal webhook") == 1
     assert "Cards go to the desk chat." in out
-    assert "Teams (desk): sent 1 card (2 new, 0 reminders)." in out
+    assert "Teams (desk): sent 1 card (2 new)." in out
 
 
 def test_watch_to_desk_with_both_webhooks_prints_no_warning(
@@ -1248,7 +1249,7 @@ def test_signed_out_past_the_grace_window_skips_the_slot_and_names_the_reason(
     assert notices == [NOTICE, "07:30 summary not posted: TDX sign-in expired"]
     # Back at 09:20, past grace: an alert card, not a summary.
     assert cycles.requests[-1] is None and cycles.times[-1] == at(10, 19, 9, 20)
-    assert [heading(card) for card in poster.cards] == ["TDX queue: 2 new, 0 reminders"]
+    assert [heading(card) for card in poster.cards] == ["TDX queue: 2 new"]
     assert "09:00 07:30 summary not posted: TDX sign-in expired." in capsys.readouterr().out
     assert not watch_module.summary_state_path(settings, "desk").exists()
 
@@ -1272,7 +1273,7 @@ def test_a_failed_summary_post_is_retried_and_its_reason_kept(
         capsys.readouterr().out
     )
     # Nothing was recorded, so the 08:30 alert card carries both findings as new.
-    assert heading(poster.cards[-1]) == "TDX queue: 2 new, 0 reminders"
+    assert heading(poster.cards[-1]) == "TDX queue: 2 new"
 
 
 @pytest.mark.usefixtures("both_webhooks")
@@ -1377,7 +1378,7 @@ def test_the_summary_lists_ready_to_close_without_recording_or_marking_it(
     lines = [block["text"] for block in poster.cards[0]["body"]]
     assert lines[0] == "TDX queue at 07:30: 2 open (1 new)"
     assert lines[-2] == "Ready to close (1)"
-    assert "(new)" not in lines[-1] and "Desk replied 4 days ago" in lines[-1]
+    assert "(new)" not in lines[-1] and "The help desk replied 4 days ago" in lines[-1]
     assert AlertState(state_path).keys() == [(101, "client_waiting")]
 
 
@@ -1510,7 +1511,7 @@ def test_a_desk_runner_with_summaries_sends_its_alert_cards_to_personal(
     assert not watch_module.alert_state_path(settings, "desk").exists()
     out = capsys.readouterr().out
     assert "Alert cards go to the personal chat; the desk chat gets summaries only." in out
-    assert "09:30 3 unclaimed, 0 feeds, 2 findings; Teams: sent 1 card (2 new, 0 reminders)." in out
+    assert "09:30 3 unclaimed, 0 feeds, 2 findings; Teams: sent 1 card (2 new)." in out
 
 
 def test_without_a_personal_webhook_a_summaries_only_desk_runner_warns_and_sends_no_cards(
@@ -1582,15 +1583,15 @@ def test_a_day_is_one_full_summary_then_deltas_skipped_when_nothing_changed(
     assert full["msteams"]["entities"]  # the mention, on the full post only
     noon_lines = lines_of(noon)
     assert noon_lines[0] == "Since 07:30: 1 new \u00b7 1 cleared \u00b7 3 open"
-    assert noon_lines[2] == "Client waiting (1)"
+    assert noon_lines[2] == "Requester waiting (1)"
     assert noon_lines[3].startswith("[#103](") and "(new)" in noon_lines[3]
     assert len(noon_lines) == 4  # no events, no ready to close, no row for the cleared one
     assert "entities" not in noon["msteams"]
     assert TITLE not in json.dumps(desk_cards(poster)) and EVENT_TITLE not in json.dumps(full)
     # The per-cycle alert cards went to the personal chat: 08:00 (101, 102), 10:00 (103).
     assert [heading(card) for card in personal_cards(poster)] == [
-        "TDX queue: 2 new, 0 reminders",
-        "TDX queue: 1 new, 0 reminders",
+        "TDX queue: 2 new",
+        "TDX queue: 1 new",
     ]
     out = capsys.readouterr().out
     assert "Teams (desk): delta posted (1 new, 1 cleared, 3 open)." in out
@@ -1695,11 +1696,12 @@ def test_an_urgent_event_between_slots_posts_one_desk_card_and_the_summaries_fol
     full, urgent, next_full = desk_cards(poster)  # 12:00 and 17:00 had nothing new
     assert heading(full) == "TDX queue at 07:30: 1 open (1 new)"
     lines = lines_of(urgent)
-    assert lines[0] == "Event soon: 1 needs action"
+    assert lines[0] == "Event soon: 1 needs follow-up"
+    assert lines[1].startswith("The help desk, please follow up on these before the event.")
     assert lines[2] == "Event details pending (1)"
     assert lines[3].startswith("[#103](") and "follow up now" in lines[3]
     assert "(new)" not in lines[3] and len(lines) == 4
-    assert urgent["fallbackText"] == "ops-suite: Event soon: 1 needs action"
+    assert urgent["fallbackText"] == "1 ticket for the help desk"
     assert "entities" not in urgent["msteams"]  # never a mention
     assert TITLE not in json.dumps(urgent) and EVENT_TITLE not in json.dumps(urgent)
     # The next day's full summary still lists it as open, not as new.
@@ -1710,13 +1712,13 @@ def test_an_urgent_event_between_slots_posts_one_desk_card_and_the_summaries_fol
     assert "(new)" not in row and "(event soon)" not in row
     # The personal chat got its alert cards as before, the event's included.
     assert [heading(card) for card in personal_cards(poster)[:2]] == [
-        "TDX queue: 1 new, 0 reminders",
-        "TDX queue: 1 new, 0 reminders",
+        "TDX queue: 1 new",
+        "TDX queue: 1 new",
     ]
     assert "#103" in json.dumps(personal_cards(poster)[1])
     out = capsys.readouterr().out
     assert (
-        "09:00 4 unclaimed, 0 feeds, 2 findings; Teams: sent 1 card (1 new, 0 reminders). "
+        "09:00 4 unclaimed, 0 feeds, 2 findings; Teams: sent 1 card (1 new). "
         "Teams (desk): urgent event card (1). Next run 09:30." in out
     )
     assert out.count("urgent event card") == 1
@@ -1906,9 +1908,45 @@ def test_a_failed_urgent_post_records_nothing_and_is_tried_again_next_run(
     assert len(urgent_cards(poster)) == 2  # the failed try and the retry
 
 
+@pytest.mark.usefixtures("both_webhooks")
+def test_desk_cards_name_the_team_and_personal_cards_do_not(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    poster = Poster()
+    monkeypatch.setattr(watch_module, "post_card", poster)
+    settings = Settings(
+        tdx={"base_url": "https://tdx.example.edu/TDNext/", "summary": {"enabled": True}},
+        teams={"desk": {"approved": True, "team_name": "the Commons"}},
+    )
+
+    watch_module.send_cycle(day_run([waiting(101), soon(103)], at(10, 19, 9)), settings, "desk")
+
+    (urgent,) = urgent_cards(poster)
+    assert lines_of(urgent)[1].startswith("The Commons, please follow up on these before")
+    assert urgent["fallbackText"] == "1 ticket for the Commons"
+    (personal,) = personal_cards(poster)
+    assert "Commons" not in json.dumps(personal)
+    assert personal["fallbackText"] == "2 tickets need attention"
+
+
+def test_card_reader_names_the_desk_team_only_for_the_desk() -> None:
+    settings = Settings(teams={"desk": {"team_name": "the Commons"}})
+    assert watch_module.card_reader(settings, "desk").team == "the Commons"
+    assert watch_module.card_reader(settings, "personal").team == "the help desk"
+    assert watch_module.card_reader(Settings(), "desk").team == "the help desk"
+
+
+def test_card_reader_names_the_alt_host_mailbox_for_both_chats() -> None:
+    # Alert, urgent and summary cards all take their reader from card_reader.
+    settings = Settings(tdx={"events": {"alt_host_mailbox": "events@example.edu"}})
+    assert watch_module.card_reader(settings, "desk").mailbox == "events@example.edu"
+    assert watch_module.card_reader(settings, "personal").mailbox == "events@example.edu"
+    assert watch_module.card_reader(Settings(), "desk").mailbox == "our shared mailbox"
+
+
 def test_urgent_card_headings_and_lines() -> None:
-    assert urgent_heading(1) == "Event soon: 1 needs action"
-    assert urgent_heading(3) == "Event soon: 3 need action"
+    assert urgent_heading(1) == "Event soon: 1 needs follow-up"
+    assert urgent_heading(3) == "Event soon: 3 need follow-up"
     assert watch_module.format_urgent(watch_module.UrgentOutcome("sent", 2)) == (
         "Teams (desk): urgent event card (2)."
     )

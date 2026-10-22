@@ -79,6 +79,7 @@ from ops_suite.tdx.alerts import (
     AlertPlan,
     AlertPolicy,
     AlertState,
+    Reader,
     StateKey,
     SummaryState,
     alertable,
@@ -238,6 +239,17 @@ def alert_state_path(settings: Settings, destination: Destination = "personal") 
     folder; ticket ids, kinds and times only. One file per destination, so each chat gets
     every open finding once."""
     return paths.tdx_dir(settings) / STATE_FILE_NAMES[destination]
+
+
+def card_reader(settings: Settings, destination: Destination) -> Reader:
+    """Who ``destination``'s cards speak to: the desk chat by its team's name
+    (``teams.desk.team_name``), the personal chat as "you". Both name the alternative-host
+    mailbox from ``tdx.events.alt_host_mailbox``."""
+    return Reader(
+        destination,
+        settings.teams.desk.team_name,
+        alt_host_mailbox=settings.tdx.events.alt_host_mailbox,
+    )
 
 
 def summary_state_path(settings: Settings, destination: Destination) -> Path:
@@ -641,6 +653,7 @@ def draft_card(
         summary,
         title_chars=tdx.alerts.title_chars,
         show_titles=settings.teams.show_titles(destination),
+        reader=card_reader(settings, destination),
     )
     return CardDraft(plan, fitted, card)
 
@@ -757,6 +770,7 @@ def draft_summary(
             max_rows=tdx.alerts.max_rows_per_card,
             duplicates=duplicates,
             urgent_keys=urgent,
+            reader=card_reader(settings, destination),
         )
     else:
         events = events_this_week(
@@ -789,6 +803,7 @@ def draft_summary(
             duplicates=duplicates,
             since=request.since,
             urgent_keys=urgent,
+            reader=card_reader(settings, destination),
         )
     shown_keys = {(finding.ticket_id, finding.kind) for finding in shown}
     record = AlertPlan(
@@ -988,10 +1003,10 @@ def send_urgent(
         links,
         run.now,
         ZoneInfo(tdx.display_timezone),
-        tdx.events.near_event_days,
         title_chars=tdx.alerts.title_chars,
         show_titles=settings.teams.show_titles("desk"),
         max_rows=tdx.alerts.max_rows_per_card,
+        reader=card_reader(settings, "desk"),
     )
     counts = {
         "rows": len(shown),
@@ -1142,8 +1157,8 @@ def _sleep_until(
 def sign_in_notice(retry_minutes: int) -> str:
     """The Teams notice sent when the TDX sign-in has expired (no ticket data)."""
     return (
-        f'TDX sign-in expired. On the Mac run "{RUN} tdx login"; the auditor keeps running '
-        f"and picks up again within {retry_minutes} minutes."
+        f'TDX sign-in expired. On the computer running the auditor, run "{RUN} tdx login"; '
+        f"the auditor keeps running and picks up again within {retry_minutes} minutes."
     )
 
 
@@ -1495,7 +1510,7 @@ def watch(
                 if failures >= limit:
                     message = (
                         f"The TDX auditor stopped after {failures} failed runs ({label}). "
-                        "Check the Mac."
+                        "Check the computer running it."
                     )
                     notify(message)
                     print(f"ops-suite: {message}", file=sys.stderr)

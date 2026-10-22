@@ -18,6 +18,9 @@ kind) set open at that post; ``summary_change`` compares. Between slots, an even
 within ``near_event_days`` of its event (``urgent_event``) goes to the chat on a short card
 of its own (``fit_urgent_card``) or, in a summary run, marked "(event soon)" in the summary.
 
+Every card speaks plainly to its ``Reader``: a desk card names the team that should act
+(``teams.desk.team_name``), a personal card speaks to the person running the auditor ("you").
+
 Personal data rule: the card body is the only place a ticket title goes, and only with
 ``show_titles`` (on for the personal chat, off for the desk chat by default, because titles
 can contain names). The state file,
@@ -37,7 +40,7 @@ from pathlib import Path
 from typing import Literal
 from zoneinfo import ZoneInfo
 
-from ops_suite.common.config import TdxAlertSettings, TdxSettings
+from ops_suite.common.config import DEFAULT_TEAM_NAME, TdxAlertSettings, TdxSettings
 from ops_suite.common.teams import CARD_SCHEMA, CARD_VERSION, MentionMode, with_mentions
 from ops_suite.tdx.rows import TicketRow
 from ops_suite.tdx.rules import Finding
@@ -61,8 +64,8 @@ StateKey = tuple[int, str]  # (ticket id, finding kind); kinds are plain strings
 # Card sections, in order. Kinds are plain strings so that a new kind needs only a label
 # and a wording entry; an unknown kind gets its own section after these.
 SECTION_LABELS: dict[str, str] = {
-    "client_waiting": "Client waiting",
-    "follow_up_with_client": "Follow up with client",
+    "client_waiting": "Requester waiting",
+    "follow_up_with_client": "Follow up with requester",
     "needs_review": "Needs review",
     "event_outreach_due": "Event outreach due",
     "event_details_pending": "Event details pending",
@@ -72,44 +75,60 @@ SECTION_LABELS: dict[str, str] = {
 }
 EVENTS_SECTION_LABEL = "Events this week"
 EVENT_SOON_MARK = "(event soon)"
+# The outreach rows' alternative-host mailbox when tdx.events.alt_host_mailbox is empty.
+SHARED_MAILBOX = "our shared mailbox"
 _PRIORITY_ORDER = {"high": 0, "normal": 1, "low": 2}
 # (kind, reason) -> wording; a reason of None matches any reason of that kind. ``{age}`` is
 # the finding's age, ``{days}`` the time until the event (event outreach) and
 # ``{when}`` the same as "in 5 days" and ``{wrote}`` the time since the requester's latest
-# entry. The event outreach rows are a fixed checklist, never a drafted reply.
+# entry. ``{team}`` is the team that answers tickets as the card's reader names it
+# (``{Team}`` at the start of a sentence). Cards call the person who opened the ticket "the
+# requester", whatever the code or TDX calls them. The event outreach rows are a fixed
+# checklist, never a drafted reply: the requester books the room and creates any Zoom
+# meeting; the desk asks for the room number to prepare A/V and, for a hybrid or remote
+# event, for the link, asks the requester to add ``{mailbox}`` (the desk's mailbox as the
+# reader names it) as an alternative host so the desk can start and record the meeting, and
+# asks whether to record. The form has no hybrid or remote question, so every outreach row
+# lists the Zoom asks.
+_OUTREACH_ASK = (
+    "the room number. If it's hybrid or remote, also ask for the Zoom link, ask them to add "
+    "{mailbox} as an alternative host, and ask whether to record. Then update the events "
+    "spreadsheet."
+)
 WORDING: dict[tuple[str, str | None], str] = {
-    ("client_waiting", "requestor_last"): "Requestor wrote last {age} ago: reply or check in",
+    ("client_waiting", "requestor_last"): (
+        "The requester wrote last, {age} ago: reply or check in"
+    ),
     ("client_waiting", "no_reply_yet"): "No reply yet, opened {age} ago",
     # The follow-up classifier's verdicts; "unsure" keeps requestor_last.
-    ("client_waiting", "expects_reply"): "Requestor is waiting for a reply, {age}",
+    ("client_waiting", "expects_reply"): "The requester has waited {age} for a reply",
     ("client_waiting", "event_requester_replied"): (
-        "Event {when}: requester replied {age} ago: process and confirm"
+        "Event {when}. The requester replied {age} ago: read it and confirm the details"
     ),
     ("follow_up_with_client", "client_follow_up"): (
-        "Client said they'd follow up; quiet {age}: check in"
+        "The requester said they'd follow up; quiet {age}: check in"
     ),
     ("follow_up_with_client", "client_no_reply_needed"): (
-        "Client's last message needs no reply; quiet {age}: check in or resolve"
+        "The requester's last message needed no reply; quiet {age}: check in or resolve"
     ),
-    ("needs_review", "other_last"): "Someone else wrote last {age} ago: take a look",
+    ("needs_review", "other_last"): (
+        "The last message, {age} ago, is from someone other than the requester or {team}: "
+        "take a look"
+    ),
     ("event_outreach_due", "outreach_due_requester_wrote"): (
-        "Event in {days}: reach out. Confirm the room · Zoom link if hybrid · desk mailbox as "
-        "Zoom alt host · recording? · then the events sheet; requester wrote {wrote} ago"
+        "Event in {days}; the requester wrote {wrote} ago. Email them for " + _OUTREACH_ASK
     ),
-    ("event_outreach_due", None): (
-        "Event in {days}: reach out. Confirm the room · Zoom link if hybrid · desk mailbox as "
-        "Zoom alt host · recording? · then the events sheet"
-    ),
+    ("event_outreach_due", None): "Event in {days}: email the requester for " + _OUTREACH_ASK,
     ("event_details_pending", "details_pending_near"): (
         "Event {when}: still waiting on the requester (asked {age} ago): follow up now"
     ),
-    ("event_details_pending", None): "Event in {days}; no reply to the desk for {age}: follow up",
+    ("event_details_pending", None): "Event in {days}; no reply to {team} for {age}: follow up",
     ("location_tbd_soon", None): (
         "Location still TBD on the ticket, event in {age}. Check the events spreadsheet; if a "
         "room is listed, update the ticket."
     ),
     ("event_over", None): "Event ended {age} ago: ready to resolve?",
-    ("ready_to_close", None): "Desk replied {age} ago, no reply since: close if nothing new",
+    ("ready_to_close", None): "{Team} replied {age} ago, no reply since: close if nothing new",
 }
 # Summary keys build_card reads from summary_counts.
 SUMMARY_KEYS = ("unclaimed", "feeds_read", "feeds_failed")
@@ -134,6 +153,69 @@ class AlertPolicy:
             old_realert_days=alerts.old_realert_days,
             max_rows_per_card=alerts.max_rows_per_card,
         )
+
+
+Audience = Literal["personal", "desk"]
+
+
+@dataclass(frozen=True, slots=True)
+class Reader:
+    """Who a card speaks to. A desk card names the team that should act (``team_name``, set
+    in ``teams.desk.team_name``); a personal card speaks to the person running the auditor
+    ("you"), and its rows name the team generically. Both name the mailbox requesters add as
+    a Zoom alternative host (``alt_host_mailbox``, set in ``tdx.events.alt_host_mailbox``)."""
+
+    audience: Audience = "personal"
+    team_name: str = DEFAULT_TEAM_NAME
+    alt_host_mailbox: str = ""
+
+    @property
+    def mailbox(self) -> str:
+        """The alternative-host mailbox as a sentence names it: the configured address, or
+        ``our shared mailbox`` when none is set."""
+        return self.alt_host_mailbox or SHARED_MAILBOX
+
+    @property
+    def team(self) -> str:
+        """The team as a sentence names it: ``team_name`` on desk cards, the generic name on
+        personal ones."""
+        return self.team_name if self.audience == "desk" else DEFAULT_TEAM_NAME
+
+    def preview(self, count: int) -> str:
+        """The counts-only preview line, plain text: ``3 tickets for the help desk`` on a
+        desk card, ``3 tickets need attention`` on a personal one. A desk card says "for"
+        the team rather than building its possessive, which no single rule spells well
+        for every name."""
+        if self.audience == "desk":
+            if count == 0:
+                return f"Nothing for {self.team} right now"
+            return f"{_plural(count, 'ticket')} for {self.team}"
+        if count == 0:
+            return "Nothing needs your attention right now"
+        return "1 ticket needs attention" if count == 1 else f"{count} tickets need attention"
+
+    def summary_lead(self, has_findings: bool) -> str:
+        """The full summary's first sentence, as card Markdown (the team's name escaped):
+        ``Tickets for the help desk to look at.`` on a desk card, ``Tickets that need your
+        attention.`` on a personal one, and ``Nothing ... right now.`` with the queue
+        clear."""
+        if self.audience == "desk":
+            team = escape_markdown(self.team)
+            if has_findings:
+                return f"Tickets for {team} to look at."
+            return f"Nothing for {team} to look at right now."
+        if has_findings:
+            return "Tickets that need your attention."
+        return "Nothing needs your attention right now."
+
+
+PERSONAL = Reader()
+
+
+def capitalised(text: str) -> str:
+    """``text`` with a capital first letter, the rest unchanged: ``the help desk`` becomes
+    ``The help desk``."""
+    return text[:1].upper() + text[1:]
 
 
 @dataclass(frozen=True, slots=True)
@@ -398,11 +480,18 @@ def section_label(kind: str) -> str:
     return SECTION_LABELS.get(kind) or kind.replace("_", " ").capitalize()
 
 
-def finding_wording(finding: Finding) -> str:
-    """The card wording for a finding; never fails on an unknown kind, reason or age."""
+def finding_wording(finding: Finding, reader: Reader = PERSONAL) -> str:
+    """The card wording for a finding, naming the team as ``reader`` does; never fails on an
+    unknown kind, reason or age."""
     template = WORDING.get((finding.kind, finding.reason)) or WORDING.get((finding.kind, None))
     if template is not None and finding.age_hours is not None:
-        values = {"age": format_age(finding.age_hours)}
+        team = escape_markdown(reader.team)
+        values = {
+            "age": format_age(finding.age_hours),
+            "team": team,
+            "Team": capitalised(team),
+            "mailbox": escape_markdown(reader.mailbox),
+        }
         if finding.event_in_hours is not None:
             values["days"] = format_age(finding.event_in_hours)
             values["when"] = f"in {values['days']}"
@@ -423,16 +512,29 @@ def _plural(count: int, word: str) -> str:
 
 
 def counts_phrase(new: int, reminders: int) -> str:
-    """``3 new, 1 reminder``."""
+    """``3 new, 1 reminder``; just ``3 new`` when no reminder is due."""
+    if reminders == 0:
+        return f"{new} new"
     return f"{new} new, {_plural(reminders, 'reminder')}"
 
 
-def fallback_text(new: int, reminders: int) -> str:
-    """The card's counts-only preview line: ``ops-suite: 3 tickets need attention (2 new,
-    1 reminder)``. No ids and no titles, so banners and chat previews stay minimal."""
-    total = new + reminders
-    tickets = "1 ticket needs" if total == 1 else f"{total} tickets need"
-    return f"ops-suite: {tickets} attention ({counts_phrase(new, reminders)})"
+def fallback_text(count: int, reader: Reader = PERSONAL) -> str:
+    """A card's counts-only preview line (see ``Reader.preview``): ``3 tickets for the help
+    desk`` on a desk card, ``3 tickets need attention`` on a personal one. No ids and no
+    titles, so banners and chat previews stay minimal."""
+    return reader.preview(count)
+
+
+def checked_line(now: datetime, tz: ZoneInfo, summary_counts: Mapping[str, int]) -> str:
+    """``Checked Thu 12:05: 26 unclaimed tickets, 7 ticket histories read, 1 could not be
+    read.``: the alert card's plain account of the run."""
+    failed = summary_counts.get("feeds_failed", 0)
+    unread = f", {failed} could not be read" if failed else ""
+    return (
+        f"Checked {now.astimezone(tz):%a %H:%M}: "
+        f"{summary_counts.get('unclaimed', 0)} unclaimed tickets, "
+        f"{summary_counts.get('feeds_read', 0)} ticket histories read{unread}."
+    )
 
 
 def card_links(
@@ -466,22 +568,19 @@ def _card(
     summary_counts: Mapping[str, int],
     title_chars: int,
     show_titles: bool,
+    reader: Reader,
 ) -> dict[str, object]:
+    checked = checked_line(now, tz, summary_counts)
+    if reader.audience == "desk":
+        team = capitalised(escape_markdown(reader.team))
+        checked = f"{team}, please follow up on these. {checked}"
     body: list[dict[str, object]] = [
         _text(
             f"TDX queue: {counts_phrase(plan.new, plan.reminders)}",
             weight="Bolder",
             size="Medium",
         ),
-        _text(
-            f"Read-only audit, {now.astimezone(tz):%a %H:%M}. "
-            f"Checked {summary_counts.get('unclaimed', 0)} unclaimed tickets; "
-            f"{summary_counts.get('feeds_read', 0)} feeds read, "
-            f"{summary_counts.get('feeds_failed', 0)} failed.",
-            isSubtle=True,
-            size="Small",
-            spacing="None",
-        ),
+        _text(checked, isSubtle=True, size="Small", spacing="None"),
     ]
     kinds = sorted({due.finding.kind for due in plan.on_card}, key=_kind_order)
     for kind in kinds:
@@ -493,7 +592,7 @@ def _card(
             ticket_id = due.finding.ticket_id
             link = links.get(ticket_id)
             line = f"[#{ticket_id}]({_link_target(link)})" if link else f"#{ticket_id}"
-            wording = finding_wording(due.finding)
+            wording = finding_wording(due.finding, reader)
             if due.why == "reminder":
                 wording += " · reminder"
             if not show_titles:
@@ -516,7 +615,7 @@ def _card(
         "type": "AdaptiveCard",
         "$schema": CARD_SCHEMA,
         "version": CARD_VERSION,
-        "fallbackText": fallback_text(plan.new, plan.reminders),
+        "fallbackText": fallback_text(plan.new + plan.reminders, reader),
         "msteams": {"width": "Full"},
         "body": body,
     }
@@ -537,11 +636,14 @@ def fit_card(
     *,
     title_chars: int,
     show_titles: bool = True,
+    reader: Reader = PERSONAL,
 ) -> tuple[AlertPlan, dict[str, object]]:
     """The card, and the plan actually on it: rows are dropped from the end into the
     overflow count until the card is under ``CARD_MAX_BYTES``. Record the returned plan."""
     while True:
-        card = _card(plan, rows_by_id, links, now, tz, summary_counts, title_chars, show_titles)
+        card = _card(
+            plan, rows_by_id, links, now, tz, summary_counts, title_chars, show_titles, reader
+        )
         if card_size(card) < CARD_MAX_BYTES or not plan.on_card:
             return plan, card
         plan = plan.trimmed(1)
@@ -557,6 +659,7 @@ def build_card(
     *,
     title_chars: int,
     show_titles: bool = True,
+    reader: Reader = PERSONAL,
 ) -> dict[str, object]:
     """An Adaptive Card 1.4: the heading, one section per kind, and the overflow line.
 
@@ -572,6 +675,7 @@ def build_card(
         summary_counts,
         title_chars=title_chars,
         show_titles=show_titles,
+        reader=reader,
     )[1]
 
 
@@ -793,11 +897,6 @@ def delta_heading(new: int, cleared: int, total: int, since: str) -> str:
     return f"Since {since}: {new} new · {cleared} cleared · {total} open"
 
 
-def summary_fallback(heading: str) -> str:
-    """The counts-only preview line: ``ops-suite: TDX queue at 07:30: 6 open (2 new)``."""
-    return f"ops-suite: {heading.removesuffix('.')}"
-
-
 def _summary_card(
     findings: Sequence[Finding],
     new_keys: Set[StateKey],
@@ -813,18 +912,16 @@ def _summary_card(
     events: Sequence[WeekEvent],
     duplicates: Mapping[int, int],
     urgent_keys: Set[StateKey] = frozenset(),
+    reader: Reader = PERSONAL,
 ) -> tuple[tuple[Finding, ...], dict[str, object]]:
+    lead = reader.summary_lead(bool(findings))
+    checked = (
+        f"Checked {summary_counts.get('unclaimed', 0)} unclaimed tickets "
+        f"at {now.astimezone(tz):%H:%M}."
+    )
     body: list[dict[str, object]] = [
         _text(heading, weight="Bolder", size="Medium"),
-        _text(
-            f"Shift summary, read-only audit {now.astimezone(tz):%a %H:%M}. "
-            f"Checked {summary_counts.get('unclaimed', 0)} unclaimed tickets; "
-            f"{summary_counts.get('feeds_read', 0)} feeds read, "
-            f"{summary_counts.get('feeds_failed', 0)} failed.",
-            isSubtle=True,
-            size="Small",
-            spacing="None",
-        ),
+        _text(f"{lead} {checked}", isSubtle=True, size="Small", spacing="None"),
     ]
     if events:
         # The week's agenda, first: each event also keeps any finding row of its own below.
@@ -854,16 +951,17 @@ def _summary_card(
         max_rows,
         duplicates,
         urgent_keys,
+        reader,
     )
-    return shown, _summary_shell(heading, body)
+    return shown, _summary_shell(fallback_text(len(findings), reader), body)
 
 
-def _summary_shell(heading: str, body: list[dict[str, object]]) -> dict[str, object]:
+def _summary_shell(fallback: str, body: list[dict[str, object]]) -> dict[str, object]:
     return {
         "type": "AdaptiveCard",
         "$schema": CARD_SCHEMA,
         "version": CARD_VERSION,
-        "fallbackText": summary_fallback(heading),
+        "fallbackText": fallback,
         "msteams": {"width": "Full"},
         "body": body,
     }
@@ -881,10 +979,12 @@ def _finding_sections(
     max_rows: int,
     duplicates: Mapping[int, int],
     urgent_keys: Set[StateKey] = frozenset(),
+    reader: Reader = PERSONAL,
 ) -> tuple[Finding, ...]:
     """One section per kind with its count, at most ``max_rows`` rows in all (``+N more`` per
     section past that), appended to ``body``. Rows in ``urgent_keys`` are marked ``(event
-    soon)``. Returns the findings shown by id."""
+    soon)``; the wording names the team as ``reader`` does. Returns the findings shown by
+    id."""
     shown: list[Finding] = []
     budget = max(max_rows, 0)
     for kind in sorted({finding.kind for finding in findings}, key=_kind_order):
@@ -905,7 +1005,7 @@ def _finding_sections(
                 line += f" {EVENT_SOON_MARK}"
             if ticket_id in duplicates:
                 line += f" (possible duplicate of #{duplicates[ticket_id]})"
-            wording = finding_wording(finding)
+            wording = finding_wording(finding, reader)
             if key in reminder_keys:
                 wording += " · reminder"
             if not show_titles:
@@ -954,6 +1054,7 @@ def fit_summary_card(
     duplicates: Mapping[int, int] | None = None,
     since: datetime | None = None,
     urgent_keys: Set[StateKey] = frozenset(),
+    reader: Reader = PERSONAL,
 ) -> tuple[tuple[Finding, ...], dict[str, object]]:
     """The summary card and the findings it shows by id (the rest are counted as ``+N
     more``). Rows are dropped from the end until the card, mentions included, is under
@@ -962,7 +1063,8 @@ def fit_summary_card(
     ``events`` is the "Events this week" section, first (at most ``max_rows`` rows);
     ``duplicates`` maps a ticket id to the older ticket it may duplicate; ``since`` is the
     last summary posted, which the heading's "new since" names; ``urgent_keys`` are the
-    findings marked ``(event soon)`` instead of getting a card of their own."""
+    findings marked ``(event soon)`` instead of getting a card of their own; ``reader``,
+    who the card speaks to (the team on a desk card, "you" on a personal one)."""
     ordered = open_findings(findings)
     new = sum((f.ticket_id, f.kind) in new_keys for f in ordered)
     slot_text = f"{slot.astimezone(tz):%H:%M}"
@@ -990,6 +1092,7 @@ def fit_summary_card(
             events,
             duplicates or {},
             urgent_keys,
+            reader,
         )
         card = with_mentions(card, mention, mention_people)
         if card_size(card) < CARD_MAX_BYTES or not shown:
@@ -1016,6 +1119,7 @@ def build_summary_card(
     events: Sequence[WeekEvent] = (),
     duplicates: Mapping[int, int] | None = None,
     since: datetime | None = None,
+    reader: Reader = PERSONAL,
 ) -> dict[str, object]:
     """The shift-summary Adaptive Card: the heading (``Queue clear`` when nothing is open, a
     late marker when late), "Events this week" when there are any, every open finding
@@ -1040,6 +1144,7 @@ def build_summary_card(
         events=events,
         duplicates=duplicates,
         since=since,
+        reader=reader,
     )[1]
 
 
@@ -1064,6 +1169,7 @@ def fit_delta_card(
     max_rows: int,
     duplicates: Mapping[int, int] | None = None,
     urgent_keys: Set[StateKey] = frozenset(),
+    reader: Reader = PERSONAL,
 ) -> tuple[tuple[Finding, ...], dict[str, object]]:
     """A later slot's delta card and the findings it shows by id: the heading ``Since 07:30:
     N new · M cleared · K open`` (``total`` open findings in all), then rows only for
@@ -1075,19 +1181,13 @@ def fit_delta_card(
     ordered = open_findings(findings)
     new = sum((f.ticket_id, f.kind) in new_keys for f in ordered)
     heading = delta_heading(new, cleared, total, f"{since.astimezone(tz):%H:%M}")
+    who = escape_markdown(reader.team) if reader.audience == "desk" else "you"
+    lead = f"New since the last post, for {who} to look at. Checked at {now.astimezone(tz):%H:%M}."
     rows = max_rows
     while True:
         body: list[dict[str, object]] = [
             _text(heading, weight="Bolder", size="Medium"),
-            _text(
-                f"Shift update, read-only audit {now.astimezone(tz):%a %H:%M}. "
-                f"Checked {summary_counts.get('unclaimed', 0)} unclaimed tickets; "
-                f"{summary_counts.get('feeds_read', 0)} feeds read, "
-                f"{summary_counts.get('feeds_failed', 0)} failed.",
-                isSubtle=True,
-                size="Small",
-                spacing="None",
-            ),
+            _text(lead, isSubtle=True, size="Small", spacing="None"),
         ]
         shown = _finding_sections(
             body,
@@ -1101,8 +1201,9 @@ def fit_delta_card(
             rows,
             duplicates or {},
             urgent_keys,
+            reader,
         )
-        card = _summary_shell(heading, body)
+        card = _summary_shell(fallback_text(total, reader), body)
         if card_size(card) < CARD_MAX_BYTES or not shown:
             return shown, card
         rows = len(shown) - 1
@@ -1112,8 +1213,8 @@ def fit_delta_card(
 
 
 def urgent_heading(count: int) -> str:
-    """``Event soon: 2 need action`` (``1 needs action`` for one)."""
-    return f"Event soon: {count} {'needs' if count == 1 else 'need'} action"
+    """``Event soon: 2 need follow-up`` (``1 needs follow-up`` for one)."""
+    return f"Event soon: {count} {'needs' if count == 1 else 'need'} follow-up"
 
 
 def fit_urgent_card(
@@ -1122,31 +1223,29 @@ def fit_urgent_card(
     links: Mapping[int, str | None],
     now: datetime,
     tz: ZoneInfo,
-    near_event_days: int,
     *,
     title_chars: int,
     show_titles: bool,
     max_rows: int,
+    reader: Reader = PERSONAL,
 ) -> tuple[tuple[Finding, ...], dict[str, object]]:
     """The short card that takes urgent event findings to the desk chat between summaries,
-    and the findings it shows by id: the heading ``Event soon: N need action``, then rows
-    like the summary's (linked id, the title only with ``show_titles``, the wording), grouped
-    by kind. No mention, and the counts-only preview line. Rows are dropped from the end
+    and the findings it shows by id: the heading ``Event soon: N need follow-up``, the team
+    ``reader`` names asked to follow up before the event, then rows like the summary's (linked
+    id, the title only with ``show_titles``, the wording), grouped by kind. No mention, and
+    the counts-only preview line. Rows are dropped from the end
     until the card is under ``CARD_MAX_BYTES``; record only the returned findings."""
     ordered = open_findings(findings)
     heading = urgent_heading(len(ordered))
-    within = {0: "the hour", 1: "a day"}.get(near_event_days, f"{near_event_days} days")
+    ask = "please follow up on these before the event."
+    if reader.audience == "desk":
+        ask = f"{capitalised(escape_markdown(reader.team))}, {ask}"
+    lead = f"{capitalised(ask)} Checked {now.astimezone(tz):%a %H:%M}."
     rows = max_rows
     while True:
         body: list[dict[str, object]] = [
             _text(heading, weight="Bolder", size="Medium"),
-            _text(
-                f"Read-only audit {now.astimezone(tz):%a %H:%M}: events within {within} "
-                "that still need the desk. The next summary lists them too.",
-                isSubtle=True,
-                size="Small",
-                spacing="None",
-            ),
+            _text(lead, isSubtle=True, size="Small", spacing="None"),
         ]
         shown = _finding_sections(
             body,
@@ -1159,8 +1258,9 @@ def fit_urgent_card(
             show_titles,
             rows,
             {},
+            reader=reader,
         )
-        card = _summary_shell(heading, body)
+        card = _summary_shell(fallback_text(len(ordered), reader), body)
         if card_size(card) < CARD_MAX_BYTES or not shown:
             return shown, card
         rows = len(shown) - 1

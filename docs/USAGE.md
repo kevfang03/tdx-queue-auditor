@@ -23,7 +23,7 @@ The queue is generated at start, with times relative to now, so the same finding
 - **LLM step:** with an API key saved (`uv run ops-suite llm set-key`), the demo classifies the three "requestor wrote last" messages as synthetic data, even with `llm.enabled = false`. Classified correctly, two of them become "follow up with client". Without a key it prints `LLM: skipped (no API key saved; "uv run ops-suite llm set-key" to see this step).` `--no-llm` turns the step off. Demo tokens count against your real daily budget (`llm-usage.json`). The verdict cache is temporary, so every run classifies again.
 - **`--card-json PATH`** writes the Adaptive Card JSON, for pasting into the [Adaptive Cards Designer](https://adaptivecards.io/designer/).
 - **`--summary`** builds the [shift summary](#shift-summaries) instead of the alert card, as if a summary time were due now: "Events this week" (4 events), every open finding including "Ready to close", and `(possible duplicate of #1000001)` on ticket 1000023. Combine it with `--card-json` or `--send`; `--to desk` shows it without titles. `--summary-kind full|delta` (it implies `--summary`) picks which summary card: `full`, the default, is the day's first post; `delta` is a later slot's card, as if the last post were 4.5 hours ago: `Since 18:42: 2 new · 1 cleared · 11 open`, with rows for the two new findings only ([Shift summaries](#shift-summaries)).
-- **`--send`** posts the card to your saved Teams webhook. It is titled "ops-suite DEMO · synthetic data", and its preview line starts with `DEMO:`. The card's ticket links point at the demo server, which stops when the command ends.
+- **`--send`** posts the card to your saved Teams webhook. It is titled "ops-suite DEMO · synthetic data", and its preview line starts with `DEMO:`. With `--to desk` it names the team from `teams.desk.team_name`, like every desk card ([The team's name](#desk-chat)), so it shows how the desk chat will read. The card's ticket links point at the demo server, which stops when the command ends.
 - Other options: `--headed` shows the browser window, `--verbose`, `--config PATH`.
 
 Exit codes: as for `tdx audit` below; `2` also means `--send` with no webhook saved, and `6` means Teams did not accept the demo card.
@@ -265,7 +265,7 @@ Settings (in [config.example.toml](../config.example.toml)):
 - `[tdx.rules]`: `stale_hours`, `event_over_hours`, `event_tbd_days`, `close_after_days` ("ready to close", 3 days), `duplicate_title_similarity`, `desk_signatures` and `extra_staff_names`.
   - `desk_signatures` (default "SCIS Commons Support" and "CCI Commons Support"): a visible reply whose own text, quoted mail cut first, contains one of these phrases marks its author as desk staff and is remembered like the other strong signals. Matched ignoring case and extra spaces. The requester never becomes desk this way, and no reply text is kept.
   - `extra_staff_names` is an optional override, normally empty. Normally not needed: desk members are learned from Prim Resp, private notes, merge notices and the desk signature in their replies. If you do use it, these are real people's names: keep them only in your own config file, never in the repository.
-- `[tdx.events]`: the event request forms. `form_titles` (the titles that mark an unhandled request, default "CCI Event Request Form" and "SCIS Event Request Form"); `outreach_days` (14: also how far ahead a renamed `EVENT [...]` ticket gets its form and feed read), `details_pending_days` (7), `urgent_days` (3, when "event outreach due" turns high) and `near_event_days` (2, 0 to 30: within this many days, "waiting on the requester" and "requester replied" are raised at once, at high priority); and the option prefixes, matched ignoring case at the start of an answer: `marketing_only_prefixes`, `av_service_prefixes`, `room_space_prefixes` and `known_option_prefixes` (the form's other options, so they are not counted as unknown; both "CCI Operational Assistance" and "SCIS Operational Assistance"). If the desk also reaches out for lobby bookings, add `"Lobby Area"` to `room_space_prefixes`.
+- `[tdx.events]`: the event request forms. `form_titles` (the titles that mark an unhandled request, default "CCI Event Request Form" and "SCIS Event Request Form"); `outreach_days` (14: also how far ahead a renamed `EVENT [...]` ticket gets its form and feed read), `details_pending_days` (7), `urgent_days` (3, when "event outreach due" turns high) and `near_event_days` (2, 0 to 30: within this many days, "waiting on the requester" and "requester replied" are raised at once, at high priority); and the option prefixes, matched ignoring case at the start of an answer: `marketing_only_prefixes`, `av_service_prefixes`, `room_space_prefixes` and `known_option_prefixes` (the form's other options, so they are not counted as unknown; both "CCI Operational Assistance" and "SCIS Operational Assistance"). If the desk also reaches out for lobby bookings, add `"Lobby Area"` to `room_space_prefixes`. `alt_host_mailbox` (default empty) is the mailbox requesters add as a Zoom alternative host; event outreach rows name it so the sender can copy it, and say "our shared mailbox" while it is empty. It must be one email address (such as `events@example.edu`, at most 254 characters); anything else stops the config from loading, with a message that does not repeat the value. Set it in your own `.env` (`OPS_SUITE_TDX__EVENTS__ALT_HOST_MAILBOX=...`) or config file.
 
 ## TDX API (proof of concept)
 
@@ -406,7 +406,7 @@ Runs the audit and prints the same summary as `tdx audit`, then posts **one card
 
 With no webhook saved it prints `Teams: not sent; run "uv run ops-suite teams set-webhook" first.` and still exits `0`, because the audit itself worked. Without `--send`, nothing is posted and the alert state is not touched.
 
-**What the card holds:** each ticket's id with a link to it, its title (cut to 80 characters), and what the finding is and how old, for example "Requestor wrote last 3 days ago: reply or check in". It never holds a requestor's name, an email address, the responsible person or feed text. How often a finding is sent again, and the full wording table, are in [docs/tdx-rules.md](tdx-rules.md#teams-alerts-tdx-audit---send-tdx-watch).
+**What the card holds:** each ticket's id with a link to it, its title (cut to 80 characters), and what the finding is and how old, for example "The requester wrote last, 3 days ago: reply or check in". It never holds a requestor's name, an email address, the responsible person or feed text. How often a finding is sent again, and the full wording table, are in [docs/tdx-rules.md](tdx-rules.md#teams-alerts-tdx-audit---send-tdx-watch).
 
 Settings: `[tdx.alerts]` (`realert_days`, `old_finding_days`, `old_realert_days`, `title_chars`, `max_rows_per_card`, `alert_ready_to_close`) and `[teams]` (`webhook_host_suffixes`, `timeout_seconds`, and `[teams.personal]` / `[teams.desk]`) in [config.example.toml](../config.example.toml). To send to the desk's shared chat instead, add `--to desk`; see [Desk chat](#desk-chat).
 
@@ -530,7 +530,7 @@ Runs the audit-and-send cycle every 30 minutes (`tdx.watch.interval_minutes`, 30
 
 ```text
 Watching the TDX queue every 30 min during desk hours (America/New_York). Ctrl+C stops.
-14:05 26 unclaimed, 7 feeds, 6 findings; Teams: sent 1 card (2 new, 0 reminders). Next run 14:35.
+14:05 26 unclaimed, 7 feeds, 6 findings; Teams: sent 1 card (2 new). Next run 14:35.
 Outside desk hours; next run Sat 08:00.
 ```
 
@@ -538,7 +538,7 @@ Outside desk hours; next run Sat 08:00.
 - **Session expired:** the TDX session lasts less than a day, so expect to sign in about once per desk day. The loop keeps running: it posts **one** plain card ("TDX sign-in expired ...", no ticket data) and prints `14:05 TDX sign-in expired; run "uv run ops-suite tdx login". Checking again every 10 min.` Run `uv run ops-suite tdx login` on the Mac in a second terminal and sign in. The loop checks quietly every 10 minutes inside desk hours (`tdx.watch.signed_out_retry_minutes`, 5 to 30), prints `14:25 Signed in again; resuming.` once you have signed in, and goes back to its normal interval by itself. If you are still signed out on a new day, it sends the notice once more. An expired session never counts toward the failure limit below, and it resets that count, because the browser started and reached TDX.
 - **Profile in use:** while a `tdx login` (or `tdx capture`) window has the browser profile open, the loop cannot start its own browser. That is never a failure, signed in or not: it prints one line per busy spell, `14:05 TDX browser profile in use (a "tdx login" window?); checking again every 10 min.`, checks quietly every `signed_out_retry_minutes`, and goes back to its normal interval after the next successful cycle.
 - **Other failures** (the browser would not start, the page structure changed) print a line such as `14:05 cycle failed (DashboardStructureError); trying again at 14:35.` A browser that would not start also names a reason code: `cycle failed (BrowserStartError: launch_timeout)`. The codes are `not_installed` (run `uv run playwright install chromium`), `launch_timeout` (Chromium did not start within `tdx.browser_launch_timeout_seconds`, default 60; raise it if this repeats), `no_display` (a visible window was asked for where there is no screen), `profile_in_use` (handled as above) and `other`. Playwright's own message is never printed or logged, because it can contain the profile folder and so your user name. After 3 failed cycles in a row (`tdx.watch.failures_before_stop`) it posts one plain "auditor stopped" card and exits with that error's code; the card and the line name the reason code too. A successful cycle resets the count. A Teams post that fails is not a failed cycle: the findings stay due for the next one.
-- Every card carries a short counts-only preview line, such as `ops-suite: 3 tickets need attention (2 new, 1 reminder)`, for places where Teams cannot draw the card (notification banners, the chat list). It holds no ticket ids or titles.
+- Every card carries a short counts-only preview line, such as `3 tickets need attention` (on a desk card, `3 tickets for the help desk`, with the team's name), for places where Teams cannot draw the card (notification banners, the chat list). It holds no ticket ids or titles.
 - A cycle that starts inside desk hours runs to the end. If the next run time falls outside them, the loop waits for the next opening.
 - **Shadow mode** (`tdx.source = "shadow"`): each line also ends with the comparison of the browser and the TDX Web API, such as `API shadow: findings identical.`; see [Shadow mode](#shadow-mode-browser-and-api-side-by-side).
 
@@ -576,6 +576,8 @@ uv run ops-suite tdx demo --send --to desk
 
 The demo card keeps its DEMO title. Like every desk card, it shows each ticket's id with its link, the finding and its age, and **no ticket title**, because titles can contain names. `teams.desk.show_titles` (default `false`) turns titles back on; leave it off unless the desk has agreed to titles in its chat.
 
+**The team's name.** Desk cards say plainly who should act, by the team's name: `teams.desk.team_name` (default "the help desk"; 1 to 40 characters on one line), written as a sentence names the team, for example "the Service Desk". The line under each desk card's title then reads like `The Service Desk, please follow up on these before the event. Checked Thu 12:41.`, rows read `no reply to the Service Desk for 3 days`, and the preview line `2 tickets for the Service Desk`. Your personal cards say "you" instead and never use this name. Set it in your own config or `.env` (`OPS_SUITE_TEAMS__DESK__TEAM_NAME=the Service Desk`) and restart `tdx watch`; every line it changes is listed in [tdx-rules.md](tdx-rules.md#card-wording).
+
 **The approval switch.** Real ticket cards go to the desk chat only when `approved` under `[teams.desk]` is `true` in **your own** config file (never in the repository's example files). Set it only once the desk's lead has approved real ticket cards in the shared chat, in writing. While it is `false` (the default), `tdx audit --send --to desk` and `tdx watch --to desk` stop with exit `2` and one line naming `teams.desk.approved`, before the browser opens. Once it is `true` (on the Mac, under `caffeinate -i` as in [Watching the queue](#watching-the-queue-tdx-watch)):
 
 ```bash
@@ -586,7 +588,7 @@ uv run ops-suite tdx audit --send --to desk
 caffeinate -i uv run ops-suite tdx watch --to desk
 ```
 
-The `Teams:` line names the destination, for example `Teams (desk): sent 1 card (3 new, 0 reminders).`
+The `Teams:` line names the destination, for example `Teams (desk): sent 1 card (3 new).`
 
 - **Separate state.** The desk chat's alert state is `alerts-state-desk.json`, beside `alerts-state.json` in the data folder. So the first desk run posts every open finding once, even the ones your own chat already had, and the two chats' reminders never affect each other.
 - **Operator notices stay with you.** "TDX sign-in expired" and "auditor stopped" always go to your **personal** webhook, never the desk chat. If you run `tdx watch --to desk` with no personal webhook saved, it prints one warning at start ("sign-in notices need a personal webhook") and runs anyway; you will then only see those notices in the terminal.
@@ -617,6 +619,7 @@ These are the defaults. A `[tdx.summary.times]` table in your config replaces al
 
 ```text
 Since 07:30: 1 new · 1 cleared · 6 open
+New since the last post, for the help desk to look at. Checked at 12:00.
 ```
 
 It has a row only for each finding that is new since the last summary posted (marked `(new)`) and each one due again under the [re-alert policy](tdx-rules.md#teams-alerts-tdx-audit---send-tdx-watch) (`· reminder`), grouped by kind; cleared findings are only counted. There is no "Events this week", no "Ready to close" and no mention. A delta with nothing new, nothing cleared and no reminder due is **not posted**: the terminal says `Teams (desk): 12:00 summary skipped (no change).` and nothing goes to your personal chat, because that is not a miss. `Queue clear` is only ever a full summary's heading. New and cleared are counted against the findings open at the last post: a finding whose ticket could not be judged this run (its feed failed, or a widget hit its page limit) is neither new nor cleared, and "Ready to close" findings are left out of both, as they are never `(new)`.
@@ -628,6 +631,8 @@ TDX queue at 07:30: 6 open (2 new since yesterday)
 Queue clear at 07:30: nothing needs attention.
 TDX queue at 08:12 (late: due 07:30): 6 open (2 new since yesterday)
 ```
+
+Under the title, a full summary says `Tickets for the help desk to look at. Checked 26 unclaimed tickets at 07:30.`, or `Nothing for the help desk to look at right now. ...` when the queue is clear, with the team's name from `teams.desk.team_name`.
 
 "New" means not open at the last summary posted ("since yesterday", or `since Fri 17:00` after a gap; just `(2 new)` before the first post).
 
@@ -644,7 +649,8 @@ With summaries off (`enabled = false`), `tdx watch --to desk` alerts the desk ch
 **The one exception: events about to happen.** An event that still needs the desk and is `tdx.events.near_event_days` (2) days away or less should not wait for the next slot, so it goes to the desk chat **at once**, in the cycle it first appears, on one short card:
 
 ```text
-Event soon: 2 need action
+Event soon: 2 need follow-up
+The help desk, please follow up on these before the event. Checked Thu 12:41.
 ```
 
 Its rows look like the summary's (the linked id, the title only with `teams.desk.show_titles`, the wording), grouped by kind; it has no mention and its preview line holds the count only. Several such findings in one cycle share one card. The kinds that count are listed in [tdx-rules.md](tdx-rules.md#urgent-event-findings): outreach due, waiting on the requester, a location still TBD or missing, and a requester's reply on an event ticket. Every other finding still waits for the summaries.

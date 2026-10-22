@@ -1652,7 +1652,7 @@ def test_tdx_audit_send_posts_once_then_nothing_new(
 
     assert main(["tdx", "audit", "--send"]) == 0
     first = capsys.readouterr()
-    assert first.out.splitlines() == [*AUDIT_SUMMARY, "Teams: sent 1 card (1 new, 0 reminders)."]
+    assert first.out.splitlines() == [*AUDIT_SUMMARY, "Teams: sent 1 card (1 new)."]
 
     assert main(["tdx", "audit", "--send"]) == 0
     second = capsys.readouterr()
@@ -1750,8 +1750,7 @@ def test_tdx_watch_runs_a_cycle_and_prints_counts_only(
     captured = capsys.readouterr()
     assert captured.out.splitlines() == [
         "Watching the TDX queue every 30 min during desk hours (America/New_York). Ctrl+C stops.",
-        "14:05 5 unclaimed, 2 feeds, 1 finding; Teams: sent 1 card (1 new, 0 reminders). "
-        "Next run 14:35.",
+        "14:05 5 unclaimed, 2 feeds, 1 finding; Teams: sent 1 card (1 new). Next run 14:35.",
         "Stopped.",
     ]
     assert captured.err == ""  # no progress line in watch mode
@@ -1906,9 +1905,9 @@ def test_tdx_audit_send_posts_the_follow_up_wording(
     assert main(["tdx", "audit", "--send"]) == 0
 
     card_text = json.dumps(post.cards[0])
-    assert "Follow up with client (1)" in card_text
-    assert "Client said they'd follow up; quiet 3 days: check in" in card_text
-    assert "Client waiting" not in card_text
+    assert "Follow up with requester (1)" in card_text
+    assert "The requester said they'd follow up; quiet 3 days: check in" in card_text
+    assert "Requester waiting" not in card_text
     state_text = _state_file(tmp_path).read_text(encoding="utf-8")
     assert "4410001:follow_up_with_client" in state_text
     captured = capsys.readouterr()
@@ -1996,7 +1995,7 @@ def test_tdx_watch_uses_the_same_llm_path_and_takes_no_llm(
     rows_env.setattr(cli, "watch", fixed_watch)
 
     assert main(["tdx", "watch"]) == 0
-    assert "needs no reply; quiet 3 days: check in or resolve" in json.dumps(post.cards[0])
+    assert "needed no reply; quiet 3 days: check in or resolve" in json.dumps(post.cards[0])
     records = [json.loads(line) for line in _log_text(tmp_path).splitlines()]
     cycle = next(r for r in records if r["message"] == "tdx watch cycle")
     assert cycle["llm"]["classified"] == 1
@@ -2231,8 +2230,8 @@ def test_tdx_audit_send_to_approved_desk_posts_without_titles_and_its_own_state(
     assert main(["tdx", "audit", "--send", "--to", "desk"]) == 0
 
     out = capsys.readouterr().out.splitlines()
-    assert out.count("Teams: sent 1 card (1 new, 0 reminders).") == 1
-    assert out.count("Teams (desk): sent 1 card (1 new, 0 reminders).") == 1
+    assert out.count("Teams: sent 1 card (1 new).") == 1
+    assert out.count("Teams (desk): sent 1 card (1 new).") == 1
     assert out.count("Teams (desk): nothing new.") == 1
     assert post.urls == [WEBHOOK, DESK_WEBHOOK]
     assert "Laptop will not connect to campus Wi-Fi" in json.dumps(post.cards[0])
@@ -2276,7 +2275,7 @@ def test_tdx_watch_to_approved_desk_posts_to_desk_and_warns_without_personal(
 
     captured = capsys.readouterr()
     assert "Cards go to the desk chat." in captured.out
-    assert "Teams (desk): sent 1 card (1 new, 0 reminders)." in captured.out
+    assert "Teams (desk): sent 1 card (1 new)." in captured.out
     assert captured.err.count("sign-in notices need a personal webhook") == 1
     assert post.urls == [DESK_WEBHOOK]
     assert "Wi-Fi" not in json.dumps(post.cards[0])

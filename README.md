@@ -64,7 +64,7 @@ Details: [docs/PRIVACY.md](docs/PRIVACY.md) and [docs/DESIGN.md](docs/DESIGN.md#
 
 ![A demo Teams card: synthetic tickets grouped by finding](docs/img/demo-card.png)
 
-*A demo card from synthetic data, with the optional LLM step on (hence "Follow up with client").*
+*A demo card from synthetic data, with the optional LLM step on (hence "Follow up with requester").*
 
 ### Try it in 2 minutes
 

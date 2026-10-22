@@ -582,7 +582,7 @@ def test_nothing_from_the_form_reaches_the_summary_state_file_or_card(
             title_chars=80,
             show_titles=show_titles,
         )
-        assert "Confirm the room" in json.dumps(card)
+        assert "email the requester for the room number" in json.dumps(card)
         shown = json.dumps(card)
         for secret in SECRETS:
             assert secret not in shown

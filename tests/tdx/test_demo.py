@@ -6,6 +6,7 @@ import tempfile
 from collections import Counter
 from datetime import datetime
 from pathlib import Path
+from types import SimpleNamespace
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -26,16 +27,24 @@ from ops_suite.tdx.demo.dataset import (
     demo_tickets,
     expected_findings,
 )
-from ops_suite.tdx.demo.run import DEMO_CARD_TITLE, DEMO_HEADER, DemoLlmClient, demo_card
+from ops_suite.tdx.demo.run import (
+    DEMO_CARD_TITLE,
+    DEMO_HEADER,
+    DemoLlmClient,
+    demo_card,
+    demo_settings,
+)
 from ops_suite.tdx.duplicates import possible_duplicates
 from ops_suite.tdx.event_form import EventFormOptions, description_text, parse_event_form
 from ops_suite.tdx.feed import parse_feed
 from ops_suite.tdx.followup import FollowUpAnswer
 from ops_suite.tdx.rows import parse_widget
 from ops_suite.tdx.rules import RuleSettings, evaluate
+from ops_suite.tdx.watch import card_reader
 from ops_suite.tdx.week import events_this_week
 
 TZ = ZoneInfo("America/New_York")
+MAILBOX = "events@example.edu"
 FEED_END = '<div class="text-center NoPrint js-feed-end">'
 DESCRIPTION_MARK = "<!-- ticket description -->"
 INDICATOR = '<div class="refresh-indicator-wrapper NoPrint">'
@@ -302,6 +311,7 @@ def test_demo_without_the_llm_prints_the_findings_and_leaves_nothing_behind(
     card = json.loads(card_path.read_text(encoding="utf-8"))
     assert card["body"][0]["text"] == DEMO_CARD_TITLE
     assert card["fallbackText"].startswith("DEMO: ")
+    assert "ask them to add our shared mailbox as an alternative host" in json.dumps(card)
     assert list((tmp_path / "temp").iterdir()) == []  # the temporary data folder is gone
     for path, content in real_files.items():
         assert path.read_bytes() == content
@@ -335,10 +345,8 @@ def test_demo_with_a_key_classifies_as_synthetic_and_sends_a_demo_card(
     assert client.settings.paths.data_dir == tmp_path / "appdata"
     (card,) = post.cards
     assert card["body"][0]["text"] == DEMO_CARD_TITLE
-    assert card["fallbackText"] == (
-        "DEMO: ops-suite: 12 tickets need attention (12 new, 0 reminders)"
-    )
-    assert out[-1] == "Teams: sent 1 demo card (12 new, 0 reminders)."
+    assert card["fallbackText"] == "DEMO: 12 tickets need attention"
+    assert out[-1] == "Teams: sent 1 demo card (12 new)."
     assert list((tmp_path / "temp").iterdir()) == []
     for path, content in real_files.items():
         assert path.read_bytes() == content
@@ -360,10 +368,11 @@ def test_demo_send_to_desk_is_allowed_without_approval_and_shows_no_titles(
 
     out = capsys.readouterr().out.splitlines()
     assert code == 0
-    assert out[-1] == "Teams (desk): sent 1 demo card (12 new, 0 reminders)."
+    assert out[-1] == "Teams (desk): sent 1 demo card (12 new)."
     assert post.urls == [desk]
     (card,) = post.cards
     assert card["body"][0]["text"] == DEMO_CARD_TITLE
+    assert card["fallbackText"] == "DEMO: 12 tickets for the help desk"
     text = json.dumps(card)
     for ticket in demo_tickets(datetime.now(TZ)):
         assert ticket.title not in text
@@ -371,6 +380,40 @@ def test_demo_send_to_desk_is_allowed_without_approval_and_shows_no_titles(
     for path, content in real_files.items():
         assert path.read_bytes() == content
     assert not (tmp_path / "appdata" / "tdx" / "alerts-state-desk.json").exists()
+
+
+def test_demo_settings_keep_only_the_mailbox_from_the_tdx_section(tmp_path: Path) -> None:
+    settings = Settings(
+        tdx={"events": {"alt_host_mailbox": MAILBOX, "outreach_days": 30}, "headless": False}
+    )
+    server = SimpleNamespace(base_url="http://127.0.0.1:1", frame=lambda query: f"/f?{query}")
+
+    demo = demo_settings(settings, server, tmp_path, headless=True)  # type: ignore[arg-type]
+
+    assert demo.tdx.events.alt_host_mailbox == MAILBOX
+    assert demo.tdx.events.outreach_days == 14  # every other rule is the default
+    assert card_reader(demo, "desk").mailbox == MAILBOX
+
+
+@pytest.mark.browser
+def test_demo_desk_card_shows_the_configured_mailbox(
+    tmp_path: Path,
+    real_files: dict[Path, bytes],
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("OPS_SUITE_TDX__EVENTS__ALT_HOST_MAILBOX", MAILBOX)
+    card_path = tmp_path / "card.json"
+
+    code = main(["tdx", "demo", "--no-llm", "--to", "desk", "--card-json", str(card_path)])
+
+    capsys.readouterr()
+    assert code == 0
+    text = json.dumps(json.loads(card_path.read_text(encoding="utf-8")), ensure_ascii=False)
+    assert f"ask them to add {MAILBOX} as an alternative host" in text
+    assert "our shared mailbox" not in text
+    for path, content in real_files.items():
+        assert path.read_bytes() == content
 
 
 @pytest.mark.browser
@@ -392,7 +435,7 @@ def test_demo_summary_shows_events_duplicates_and_ready_to_close(
     sections = [line for line in lines if line.endswith(")") and " (" in line[-5:]]
     assert sections == [
         "Events this week (8)",
-        "Client waiting (6)",
+        "Requester waiting (6)",
         "Needs review (1)",
         "Event outreach due (1)",
         "Event details pending (1)",
@@ -400,7 +443,7 @@ def test_demo_summary_shows_events_duplicates_and_ready_to_close(
         "Event over (1)",
         "Ready to close (1)",
     ]
-    week = lines[lines.index("Events this week (8)") + 1 : lines.index("Client waiting (6)")]
+    week = lines[lines.index("Events this week (8)") + 1 : lines.index("Requester waiting (6)")]
     assert [line.split("]")[0] for line in week] == [
         f"[#{ticket_id}" for ticket_id in EXPECTED_WEEK_EVENTS
     ]
@@ -427,9 +470,13 @@ def test_demo_summary_shows_events_duplicates_and_ready_to_close(
 
 @pytest.mark.browser
 def test_demo_summary_kind_delta_shows_new_cleared_and_open(
-    tmp_path: Path, real_files: dict[Path, bytes], capsys: pytest.CaptureFixture[str]
+    tmp_path: Path,
+    real_files: dict[Path, bytes],
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     card_path = tmp_path / "delta.json"
+    monkeypatch.setenv("OPS_SUITE_TEAMS__DESK__TEAM_NAME", "the Commons")
 
     code = main(
         ["tdx", "demo", "--no-llm", "--summary-kind", "delta", "--to", "desk"]
@@ -441,8 +488,8 @@ def test_demo_summary_kind_delta_shows_new_cleared_and_open(
     lines = [block["text"] for block in card["body"]]
     assert lines[0] == DEMO_CARD_TITLE
     assert lines[1].startswith("Since ") and lines[1].endswith(": 2 new · 1 cleared · 13 open")
-    assert lines[2].startswith("Shift update, read-only audit ")
-    assert lines[3] == "Client waiting (2)"
+    assert lines[2].startswith("New since the last post, for the Commons to look at. Checked at ")
+    assert lines[3] == "Requester waiting (2)"
     assert "Events this week" not in json.dumps(card) and "Ready to close" not in json.dumps(card)
     assert all("(new)" in line for line in lines[4:] if line.startswith("[#"))
     for path, content in real_files.items():

@@ -16,7 +16,7 @@ from pathlib import Path
 
 from pydantic import BaseModel
 
-from ops_suite.common.config import PathsSettings, Settings, TdxSettings
+from ops_suite.common.config import PathsSettings, Settings, TdxEventSettings, TdxSettings
 from ops_suite.common.llm import LlmClient, LlmResult
 from ops_suite.common.scrub import DataClass, ScrubbedText
 from ops_suite.tdx.alerts import alertable, open_findings
@@ -74,12 +74,14 @@ def demo_settings(
     The TDX part is built from defaults, not copied: the person's own rules (staff names
     included), dashboard address, profile folder and ticket template stay out of the demo,
     and the expected counts do not depend on them. No pause between tickets on localhost.
+    Only the alternative-host mailbox is kept, so the outreach rows read as real cards do.
     """
     tdx = TdxSettings(
         base_url=server.base_url,
         dashboard_url=server.frame("d=2"),
         headless=headless,
         feed_delay_seconds=0,
+        events=TdxEventSettings(alt_host_mailbox=settings.tdx.events.alt_host_mailbox),
     )
     paths = PathsSettings(data_dir=data_dir, log_dir=settings.paths.log_dir)
     return settings.model_copy(update={"tdx": tdx, "paths": paths})

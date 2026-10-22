@@ -184,7 +184,7 @@ def demo_tickets(now: datetime) -> list[DemoTicket]:
     workshop = _at_day(now, 1, 18)
     town_hall = _at_day(now, 1, 11)
     return [
-        # Client waiting, no reply yet: nobody has answered for three days.
+        # Requester waiting, no reply yet: nobody has answered for three days.
         DemoTicket(
             1000001,
             "unclaimed",
@@ -194,7 +194,7 @@ def demo_tickets(now: datetime) -> list[DemoTicket]:
             "client_waiting/no_reply_yet",
             service="Printing",
         ),
-        # Requestor wrote last, three times: expects a reply, will follow up, needs no reply.
+        # The requester wrote last, three times: expects a reply, will follow up, needs no reply.
         DemoTicket(
             1000002,
             "unclaimed",
@@ -448,8 +448,8 @@ def demo_tickets(now: datetime) -> list[DemoTicket]:
                 DemoEntry(
                     DESK,
                     ago(30),
-                    "Hi Avery,\n\nCould you send the Zoom link and add the desk mailbox as an "
-                    "alternate host?\n\nDana\nIT Service Desk",
+                    "Hi Avery,\n\nCould you send the Zoom link and add our shared mailbox as an "
+                    "alternative host?\n\nDana\nIT Service Desk",
                 ),
                 DemoEntry("Avery Sample", ago(3), "Here is the link; the host is added."),
             ),
@@ -480,9 +480,9 @@ def demo_tickets(now: datetime) -> list[DemoTicket]:
                 DemoEntry(
                     DESK,
                     ago(72),
-                    "Hi Frankie,\n\nThanks for your event request. Could you confirm the room "
-                    "booking, send the Zoom link if it is hybrid, add the desk mailbox as a Zoom "
-                    "alternate host and tell us whether you want it recorded?\n\nDana\n"
+                    "Hi Frankie,\n\nThanks for your event request. Could you send the room "
+                    "number and, if it is hybrid or remote, the Zoom link, add our shared mailbox "
+                    "as an alternative host and tell us whether you want it recorded?\n\nDana\n"
                     "IT Service Desk",
                 ),
             ),
