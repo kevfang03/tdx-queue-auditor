@@ -8,26 +8,27 @@ A read-only auditor for a university IT service desk's TeamDynamix ("TDX") ticke
 
 The desk already gets an alert when something happens to a ticket. Nothing notices when **nothing** happens: a client replied two days ago and nobody answered, a reply came from someone outside the desk, an event is three days out and its room is still "TBD". Finding those meant reading every ticket by hand.
 
-The obvious fix, the TDX REST API, is not available: student staff cannot be issued API keys. So the auditor reads the queue the way a person does, through a browser with the person's own sign-in, and a request guard makes sure that browser can only read.
+The REST API's usual keys are not issued to student staff, so the auditor first read the queue the way a person does: through a browser with the person's own sign-in, behind a request guard that makes sure that browser can only read. With the desk's approval, it can now also read through the TDX Web API, using a token from the system's own SSO sign-in, and a side-by-side trial compares the two.
 
 ## What it does
 
-Every 30 minutes during desk hours, `tdx watch` reads the desk's dashboard and applies deterministic rules:
+Every 30 minutes during desk hours, `tdx watch` reads the desk's queue, from the dashboard in a browser or from two saved reports through the TDX Web API, and applies deterministic rules:
 
-- **Dashboard rows:** the "Unclaimed" and "Claimed by others" widgets, every page. Claimed tickets belong to full-time staff and are only counted.
+- **Queue rows:** the "Unclaimed" and "Claimed by others" dashboard widgets, every page, or the two saved reports that replace them. Claimed tickets belong to full-time staff and are only counted.
 - **Feeds, only where needed:** a ticket's activity feed is opened only when it is 48+ hours old, is an event request form, or is an event within 14 days. Only entries the client can see count; private notes and status changes are skipped.
 - **The 48-hour rules:** *client waiting* (no reply yet, or the client wrote last 48+ hours ago), *needs review* (someone outside the desk wrote last), and *ready to close* (the desk replied last 3+ days ago, shown in summaries only).
 - **Events:** dates and locations read from the ticket title and the request form, then *event outreach due*, *event details pending*, *location TBD soon* and *event over, ready to resolve*. Outreach cards carry a fixed checklist, never a drafted reply.
 - **Shift summaries:** the day's first summary lists every open finding, the events this week and the tickets ready to close; later slots post only what changed, and nothing at all when nothing did.
-- **Teams cards:** one Adaptive Card per cycle, sent only when a finding is new or due again, through a Teams Workflows webhook.
+- **"Event soon" cards:** when an event finding falls within 2 days of its event, a short card goes to the desk at once instead of waiting for the next shift slot.
+- **Teams cards:** shift summaries and "Event soon" cards go to the desk's Teams chat; the per-cycle alert card, sent only when a finding is new or due again, and the sign-in notices go to the runner's own chat. Desk cards name the team and say plainly who should act. All of them go through Teams Workflows webhooks.
 
 ```mermaid
 flowchart TD
     W["Dashboard widgets"] --> G["Read-only request guard"]
-    G --> R["Ticket rows"]
+    G --> R["TicketRow + TicketFeed"]
+    A["TDX Web API (GET only)"] --> R
     R -->|"claimed: counted only"| X["No finding"]
-    R --> F["Feeds and event forms, only where needed"]
-    F --> S["Deterministic rules"]
+    R --> S["Deterministic rules"]
     S -->|"client wrote last (optional)"| L["Scrub, gate, budget, classify"]
     L --> D["De-duplication against alert state"]
     S --> D
@@ -36,7 +37,6 @@ flowchart TD
         G
         R
         X
-        F
         S
         D
     end
@@ -59,6 +59,14 @@ It is **off by default**, and every rule, card and summary works without it. Whe
 - the model can only pick one of four labels, and every failure (unsure, refusal, error, closed gate, spent budget) keeps the louder *client waiting* finding.
 
 Details: [docs/PRIVACY.md](docs/PRIVACY.md) and [docs/DESIGN.md](docs/DESIGN.md#deterministic-rules-first-an-optional-llm-step-second).
+
+## Two sources, one set of rules
+
+The rules depend only on two data types, `TicketRow` (a queue row) and `TicketFeed` (a ticket's visible entries), and both readers produce exactly those, so the rules, cards and summaries are the same whichever one runs. The API reader is read-only too: it sends only `GET` requests on a short allowlist, checked before anything is sent, and its token comes from a second sign-in the person makes, lives only in the OS keychain and expires after about 24 hours.
+
+One setting, `tdx.source`, picks the reader: `browser` (the default); `shadow`, where the browser drives the cards while the API reads the same tickets and a counts-only record of the comparison is kept (`tdx api compare` reports it); or `api`, where the API drives the cards and the browser takes over any cycle the API cannot run, with a logged reason code. With `api`, the comparison keeps running with the roles swapped. The shadow trial comes before the switch because the cards must not change when the source does.
+
+Setup and commands: [the TDX API](docs/USAGE.md#tdx-api-proof-of-concept), [shadow mode](docs/USAGE.md#shadow-mode-browser-and-api-side-by-side) and [reading through the API](docs/USAGE.md#reading-through-the-api).
 
 ## Demo
 
@@ -130,12 +138,13 @@ Each finding is listed by ticket id, kind, reason code and age in hours (for *ev
 
 ## Design highlights
 
-- **Read-only by construction.** Every browser request passes a guard that allows reads and a two-entry allowlist of data loads, refuses live-update connections, and counts every exception in the run summary.
+- **Read-only by construction.** Every browser request passes a guard that allows reads and a two-entry allowlist of data loads, refuses live-update connections, and counts every exception in the run summary. The API reader sends only `GET` requests on a short allowlist, checked before anything is sent.
+- **Two independent readers, compared before trusted.** The API reader ran beside the browser reader before it could drive a card, and the first side-by-side run caught a real browser bug: answers in event request forms were missed when their full text sat in the collapsed part of the description.
 - **Rules first, tokens last.** The grid and the feeds settle almost every ticket for free; a cycle with nothing to classify costs $0.00.
 - **Privacy enforced in types, not habits.** The LLM client accepts only a `ScrubbedText` that only the scrubber can create.
 - **Alerts that do not nag.** Findings are de-duplicated against a small state file; shift summaries post in full once a day, then only the changes.
 - **No real data in development.** Selectors were built from structure-only page captures (tags, classes, column headers; every other text a placeholder) and tested on synthetic pages.
-- **Sign-in stays human.** The person signs in once, MFA included; on expiry the tool asks again and waits. It never stores a password.
+- **Sign-in stays human.** The person signs in once, MFA included; on expiry the tool asks again and waits. It never stores a password; the API token comes from a second sign-in the person makes and lives only in the keychain.
 
 The reasoning behind each, and the rest of the decisions, are in [docs/DESIGN.md](docs/DESIGN.md).
 
@@ -147,11 +156,13 @@ Piloted with the desk's approval on its live queue:
 - **Rule tuning** against manual spot-checks cut *client waiting* findings on the same queue from 14 to 4; in the final checked run, all 3 findings were confirmed by manual review.
 - **The loop:** 5 cycles over 2 hours, all on schedule. The first sent one card and the next four reported "nothing new", so de-duplication held.
 - **The optional LLM step:** a synthetic eval scored 24 of 24 (development set) and 12 of 12 (holdout, run once) with 0 unsafe errors, for about $0.001; on live tickets, 2 of 2 verdicts were judged right, for about $0.0002, and repeat cycles cost nothing.
-- **Tests:** more than 1,500, run in CI on Linux, Windows and macOS on every push. No test needs a network, a keychain, a webhook or TDX.
+- **In daily use:** the auditor runs on one desk member's own computer with the LLM step off, posting to the desk's Teams group chat: a full summary at the day's first shift slot, which replaced a weekly ticket check-in that a person used to compile by reading every ticket; short "since last slot" updates when something changed; and a short "Event soon" card when an event finding falls within 2 days of its event.
+- **Browser and API side by side:** the first side-by-side run showed the browser reader missing answers in event request forms whose full text sits in the collapsed part of the description (the API read 5 forms correctly; a manual check confirmed 2 of 2). The browser reader was fixed, and the two then agreed on findings, event states and id rows. A shadow trial is under way; its first comparison, one cycle on the live queue, matched rows 40 of 40 and feeds 7 of 7, with identical findings and 0 mismatches. The API cycle took 17.9 s with 16 requests, all `GET`; the browser cycle took 27.9 s.
+- **Tests:** more than 1,900, run in CI on Linux, Windows and macOS on every push. No test needs a network, a keychain, a webhook or TDX.
 
-## Future
+## Next
 
-**A read-only TDX API adapter.** If the TDX administrators grant read-only API access, a second row source would sit behind the same `TicketRow` and `TicketFeed` types, so the rules, alerts and summaries stay unchanged and the browser reader remains as the fallback. It would first run in a shadow mode beside the browser reader, logging counts-only differences between the two sources.
+**A weekly queue report:** a counts-only card for the desk.
 
 ## Documentation
 

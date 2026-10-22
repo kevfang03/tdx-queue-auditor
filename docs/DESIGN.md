@@ -10,10 +10,14 @@ src/ops_suite/
   tdx/              the queue auditor
     browser.py, session.py, guard.py     Playwright, the persistent profile, the request guard
     dashboard.py, rows.py, feed.py       dashboard widgets -> TicketRow, activity feed -> TicketFeed
+    api_client.py, api_token.py,         the TDX Web API reader: GET allowlist, SSO token in the keychain,
+      api_source.py                      saved reports -> TicketRow / TicketFeed
+    shadow.py, api_primary.py            source selection, shadow comparison, browser fallback
     event_form.py, events.py, week.py    event request forms, event titles, "events this week"
     rules.py                             TicketRow + TicketFeed -> findings (pure Python)
     followup.py                          the optional LLM classification of the client's message
     alerts.py, watch.py                  de-duplication, Teams cards, shift summaries, the loop
+    duplicates.py                        possible duplicate tickets, for the shift summary
     desk_memory.py, names.py             who counts as desk staff
     capture.py, skeleton.py              structure-only page captures
     demo/                                synthetic TDX pages and the offline demo
@@ -22,9 +26,9 @@ src/ops_suite/
   mail/             an offline scan of a shared mailbox's drop folder (separate tool)
 ```
 
-A cycle runs in one direction: the browser reads the dashboard and the feeds it needs through the request guard, the rules turn rows and feeds into findings, the optional LLM step may lower the priority of one kind of finding, and the alert step decides what is new or due before posting one card. Rows and feed text live in memory for the length of a run; only ids, finding kinds and timestamps are written down.
+A cycle runs in one direction: the browser reads the dashboard and the feeds it needs through the request guard (or the API reader reads the same rows and feeds through two saved reports), the rules turn rows and feeds into findings, the optional LLM step may lower the priority of one kind of finding, and the alert step decides what is new or due before posting one card. Rows and feed text live in memory for the length of a run; only ids, finding kinds and timestamps are written down.
 
-The rules depend only on two data types, `TicketRow` (a dashboard row) and `TicketFeed` (a ticket's visible entries). That boundary is what makes a future read-only TDX API adapter a drop-in second source.
+The rules depend only on two data types, `TicketRow` (a queue row) and `TicketFeed` (a ticket's visible entries). That boundary is what let the read-only TDX Web API reader drop in as a second source without changing a rule.
 
 ## The read-only request guard
 
@@ -38,7 +42,21 @@ Every request the page makes passes a Playwright route handler before it leaves 
 - Every allowed non-`GET` request and every blocked one is counted in the run summary, so a reviewer can check them against "one per widget load, one per page turn, one per feed".
 - The only element the tool ever clicks is a widget's "next page" button.
 
-**Why:** with no API, the tool drives the same web app a person uses, signed in as that person. A bug in a selector must not be able to change a ticket. Allowlisting known reads, rather than blocking known write endpoints, means an unknown request fails closed. New entries are added only after the blocked request has been reviewed.
+**Why:** when reading through the web app, the tool drives the same app a person uses, signed in as that person, and that path remains both the default and the fallback for the API reader. A bug in a selector must not be able to change a ticket. Allowlisting known reads, rather than blocking known write endpoints, means an unknown request fails closed. New entries are added only after the blocked request has been reviewed.
+
+## A second source, trusted only after a side-by-side trial
+
+**Principle:** a new reader drives the cards only after it has agreed with the old one on the live queue.
+
+The TDX Web API reader sends only `GET` requests on a short allowlist, checked before anything is sent. Its token is issued by the ticketing system's own SSO endpoint for the person's signed-in session, through a second sign-in the person makes; it lives only in the OS keychain, is never printed and expires after about 24 hours ([PRIVACY.md](PRIVACY.md) has the rest). Two saved reports replace the two dashboard widgets, and rows and feeds come back as the same `TicketRow` and `TicketFeed`.
+
+One setting, `tdx.source`, picks the reader:
+
+- `browser` (the default): the browser reads, through the request guard.
+- `shadow`: the browser drives the cards while the API reads the same tickets, and only a counts-only record of the comparison is kept; `tdx api compare` reports it.
+- `api`: the API drives the cards. The browser takes over any cycle the API cannot run, with a logged reason code, and the comparison keeps running with the roles swapped.
+
+**Why:** the cards must not change when the source does, and two independent readers check each other on the real queue in a way synthetic pages cannot. The first side-by-side run showed the browser reader missing answers in event request forms whose full text sits in the collapsed part of the description, which the API read correctly. The browser reader was fixed, and the two then agreed on findings, event states and id rows.
 
 ## Structure-only captures, and the review rule
 
@@ -77,7 +95,7 @@ One question is beyond a rule: when the client wrote last, is the desk still exp
 
 The alert state is a small file of (ticket id, finding kind) pairs with timestamps. A finding alerts once, again every 3 days while it stays open, and weekly once it is 30+ days old. A cleared finding is forgotten, so a return alerts as new. A failed feed read or a truncated dashboard read never clears a record, and the state is written only after Teams accepted the card.
 
-A shared desk chat gets **summaries only**. The day's first slot is the full summary: every open finding grouped by kind, the events this week and the tickets ready to close. Later slots are deltas ("Since 07:30: 2 new · 1 cleared · 11 open") with rows only for new findings and due reminders, and they are skipped when nothing changed. A missed first slot makes the next posted slot full. The 30-minute alert cards go to the runner's own chat instead.
+A shared desk chat gets summaries, not per-cycle cards. The day's first slot is the full summary: every open finding grouped by kind, the events this week and the tickets ready to close. Later slots are deltas ("Since 07:30: 2 new · 1 cleared · 11 open") with rows only for new findings and due reminders, and they are skipped when nothing changed. A missed first slot makes the next posted slot full. The 30-minute alert cards go to the runner's own chat instead. The one exception is an event finding within 2 days of its event: it posts once to the desk straight away as a short "Event soon" card, or rides in the summary when one is due that cycle, because an event hours away cannot wait for the next slot.
 
 **Why:** the existing alerts fire once, when something happens; silence is exactly what they cannot see. Re-checking the whole queue every cycle catches silence, and the state file keeps that from turning into the same card every 30 minutes. In a shared chat, one full picture per shift plus short deltas is useful; a card every half hour is noise.
 
