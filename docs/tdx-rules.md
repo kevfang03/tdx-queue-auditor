@@ -146,9 +146,9 @@ Then the rules below, which may add an event finding of their own. **One row per
 |---|---|---|---|---|---|
 | Marketing only | any | | none (counted `event_marketing_only`) | | |
 | No A/V and no classroom | any | | none (counted `event_no_outreach`) | | |
-| A/V or classroom | **no outreach yet**: no visible desk reply | the next date 14 days away or less (`outreach_days`) | event outreach due | normal; high at 3 days or less (`urgent_days`) | `outreach_due` |
-| A/V or classroom | no outreach yet | further out | none (counted `event_outreach_not_due`) | | |
-| Unknown (no form) | no outreach yet | | none (counted `event_form_missing`) | | |
+| A/V or classroom | **not emailed yet**: no visible desk reply | the next date 14 days away or less (`outreach_days`) | event outreach due | normal; high at 3 days or less (`urgent_days`) | `outreach_due` |
+| A/V or classroom | not emailed yet | further out | none (counted `event_outreach_not_due`) | | |
+| Unknown (no form) | not emailed yet | | none (counted `event_form_missing`) | | |
 | A/V, classroom or unknown | **waiting on the requester**: the desk wrote last, and nothing from the requester since the first outreach | the next date 2 days away or less (`near_event_days`): the **near-event override**, at once whatever the quiet time | event details pending | **high** | `details_pending_near` |
 | A/V, classroom or unknown | waiting on the requester | the desk's last entry 48+ hours old and the next date 7 days away or less (`details_pending_days`) | event details pending | normal | `details_pending` |
 | A/V, classroom or unknown | waiting on the requester | otherwise | none (counted `event_outreach_done`) | | |
@@ -164,8 +164,8 @@ The rows are tried in this order. The requester writing last is the one case whe
 **Worked examples** (run time Thursday 2026-10-08 12:00):
 
 - Ticket 1020, created yesterday, asks for A/V for an event on 10/18 at 14:00, 242 hours away. Nobody from the desk has replied: `event_outreach_due`, normal, "Event in 10 days: email the requester for the room number. If it's hybrid or remote, ..." On 10/15 from 14:00 it becomes high.
-- Ticket 1021 asks for a classroom on 10/13 at 15:00, 123 hours away. Pat Helpdesk asked for the details on Monday at 12:00, 72 hours ago, and the requester has not answered: `event_details_pending`, normal, "Event in 5 days; no reply to the help desk for 3 days: follow up". Had the event been on 10/20, there would be nothing yet (counted `event_outreach_done`). Had it been tomorrow, the near-event override would raise it at once, high: "Event in 27 h: still waiting on the requester (asked 3 days ago): follow up now".
-- Ticket 1024 was renamed `EVENT [10/9 2pm Room 101] Example Talk` when Pat first asked for the details, 20 hours ago; its form asks for A/V. The requester answered an hour ago: `client_waiting`, high (the event is 26 hours away), "Event in 26 h. The requester replied 1 h ago: read it and confirm the details". Once Pat confirms, the ticket is `in progress (requester answered)`: no finding.
+- Ticket 1021 asks for a classroom on 10/13 at 15:00, 123 hours away. Pat Helpdesk asked for the details on Monday at 12:00, 72 hours ago, and the requester has not answered: `event_details_pending`, normal, "Event in 5 days; no reply to the help desk for 3 days: follow up". Had the event been on 10/20, there would be nothing yet (counted `event_outreach_done`). Had it been tomorrow, the near-event override would raise it at once, high: "Event in 27 hours: still waiting on the requester (asked 3 days ago): follow up now".
+- Ticket 1024 was renamed `EVENT [10/9 2pm Room 101] Example Talk` when Pat first asked for the details, 20 hours ago; its form asks for A/V. The requester answered an hour ago: `client_waiting`, high (the event is 26 hours away), "Event in 26 hours. The requester replied 1 hour ago: read it and confirm the details". Once Pat confirms, the ticket is `in progress (requester answered)`: no finding.
 - Ticket 1025 is `EVENT [10/9/26 6PM-7PM] Resume Review`: a date and a time and no room. The event is 30 hours away: `location_tbd_soon`, reason `location_missing`, with the TBD wording.
 - Ticket 1022 is marketing only, for 10/12 with no time, so the event counts as ending at 23:59: no finding (counted `event_marketing_only`). From 10/14 00:00, more than 24 hours later, it gives `event_over`, like every event ticket.
 
@@ -185,11 +185,11 @@ If the feed had no visible entry at all, the finding would be `client_waiting`, 
 
 **Event with several dates.** Ticket 1010, unclaimed, is titled "EVENT [10/1/26, 10/20/26, 10/27/26 3:00 PM - 5:00 PM Room 101] Example Workshop". All three dates share the time after the last one: Oct 1, 20 and 27, each at 15:00. The first was a week ago, but the **last** date is Oct 27, still ahead, so the event is not over: no finding, counted `event_multi_date`. Once Oct 27 15:00 is more than 24 hours past, it gives `event_over`, aged from Oct 27. Had the title said TBD, "location TBD soon" would count down to Oct 20, the next upcoming date, and fire from Oct 17 15:00.
 
-**Location TBD soon.** Ticket 1003, unclaimed, is titled "EVENT [10/10 2pm TBD] Example Talk". The event is Saturday at 14:00, 50 hours away, within 3 days, and the location is still TBD: finding `location_tbd_soon`, reason `tbd_soon`, 50 hours.
+**Location still TBD, event soon.** Ticket 1003, unclaimed, is titled "EVENT [10/10 2pm TBD] Example Talk". The event is Saturday at 14:00, 50 hours away, within 3 days, and the location is still TBD: finding `location_tbd_soon`, reason `tbd_soon`, 50 hours.
 
 **Recurring event.** Ticket 1009 is titled "EVENT [Bi-Weekly, Mon/Wed 2-3pm] Example Club". It has no single date: counted `event_recurring`, no finding.
 
-**Needs review.** Ticket 1004, unclaimed, created 80 hours ago. Its latest visible entry is a reply from Casey Testperson, 75 hours ago, who is not the requestor, appears on no other ticket in the run, wrote no private note, and is not in `extra_staff_names` (perhaps a CC'd colleague). The rules cannot tell who is holding things up: finding `needs_review`, reason `other_last`, 75 hours. These are only reported, for a person to look at; the follow-up classifier never sees them. Had Casey's reply been 3 hours old, there would be no finding (counted `other_recent`): someone just acted on the ticket.
+**Needs review.** Ticket 1004, unclaimed, created 80 hours ago. Its latest visible entry is a reply from Casey Testperson, 75 hours ago, who is not the requestor, appears on no other ticket in the run, wrote no private note, and is not in `extra_staff_names` (perhaps a CC'd colleague). The rules cannot tell who is holding things up: finding `needs_review`, reason `other_last`, 75 hours. These are only reported, for a person to look at; the follow-up classifier never sees them. The card row says what to check: "The last message, 3 days ago, came from someone other than the requester or the help desk: check whether the requester still needs a reply". The writer is usually a CC'd person (an instructor, a department contact) or a desk member the rules do not recognise yet, so the question is whether the requester is still owed an answer. Had Casey's reply been 3 hours old, there would be no finding (counted `other_recent`): someone just acted on the ticket.
 
 ## The run summary
 
@@ -200,7 +200,7 @@ Findings: client waiting 1, follow up with client 0, event outreach due 0, event
 Checked: 10 unclaimed (6 feeds needed, 3 missing), 2 claimed (counted only). Events: 5, 1 recurring, 1 multi-date, 1 with an unreadable date, 0 without a location. Form-titled tickets: 0 (0 recurring, 0 unreadable); renamed: 0 with a form, 0 without. Event states (no finding): 0 waiting on requester, 0 in progress, 0 outreach not due yet, 0 marketing only, 0 no outreach. Desk members known: 1.
 ```
 
-When a desk member opened some tickets (above), the `Checked:` line adds `Internal (desk requester): N.` after the claimed count; with none, the line is as shown. `Event states (no finding)` counts the upcoming events whose page was read and that raised nothing, by state: waiting on the requester before the details-pending window, in progress, no outreach yet before the outreach window, marketing only and no outreach needed.
+When a desk member opened some tickets (above), the `Checked:` line adds `Internal (desk requester): N.` after the claimed count; with none, the line is as shown. `Event states (no finding)` counts the upcoming events whose page was read and that raised nothing, by state: waiting on the requester before the details-pending window, in progress, not emailed yet before the outreach window, marketing only and no email needed.
 
 With `show_ids`, one line per finding (most urgent first: priority, then longest waiting), one per event with an unreadable date, so the date reader can be improved, one per unreadable event request form, and one per renamed event without a form:
 
@@ -243,16 +243,16 @@ Findings become one Adaptive Card per run, posted to the own Teams chat of the p
 
 With `tdx.summary.enabled`, the desk runner's `tdx watch` also posts a summary at each configured time (defaults: 07:30, 12:00 and 17:00 on weekdays; 08:00, 12:00 and 17:00 on Saturday; 12:00 on Sunday). It lists **every** open finding, grouped by kind in the order above with each kind's count, and marks the ones not yet alerted `(new)`; the rows use the wording below. It replaces that cycle's alert card, and the new or due findings it shows are recorded as alerted, so the re-alert policy above carries on from there. Settings, late and skipped slots, and mentions: [USAGE.md](USAGE.md#shift-summaries).
 
-Only the day's **first** summary posted is that full list (a missed first slot makes the next one full); it marks `(new)` the alertable findings not open at the last summary posted. Later slots post a **delta**, `Since 07:30: N new · M cleared · K open`, with rows only for the new findings and the reminders now due, and the cleared ones as a count. A finding missing from this run counts as cleared by the same rule that clears alert records (its ticket judged this run, or gone from a queue read in full); otherwise it is still remembered as open. A delta with nothing new, cleared or due is not posted. While summaries go to the desk chat, the desk runner's alert cards go to the personal chat (`tdx.summary.desk_alerts`, `personal_alerts`); only [urgent event findings](#urgent-event-findings) reach the desk chat between slots.
+Only the day's **first** summary posted is that full list (a missed first slot makes the next one full); it marks `(new)` the alertable findings not open at the last summary posted. Later slots post an **update**, `Since 7:30 AM: 1 new ticket and 2 reminders for {team}`, with rows only for the new findings and the reminders now due, and the cleared ones as a count in its lead line. A finding missing from this run counts as cleared by the same rule that clears alert records (its ticket judged this run, or gone from a queue read in full); otherwise it is still remembered as open. An update posts only when it has a row: a new finding, a due reminder or an urgent event finding. In a shared chat, an update with nothing to act on is noise, so a slot where findings only cleared posts nothing; the cleared ones are forgotten all the same, so a later update does not count them again. While summaries go to the desk chat, the desk runner's alert cards go to the personal chat (`tdx.summary.desk_alerts`, `personal_alerts`); only [urgent event findings](#urgent-event-findings) reach the desk chat between slots.
 
 The summary also has three things, all worked out in memory from the same run, with no LLM:
 
-- **Sections, in order:** Events this week, Requester waiting, Follow up with requester, Needs review, Event outreach due, Event details pending, Location TBD soon, Event over, Ready to close.
-- **Events this week** (first): every unclaimed event ticket, an event request form or a renamed `EVENT [...]` ticket, with a date from the summary time to `tdx.summary.events_days` (7) days later, one row per event at its next date in that window, sorted by date. A row is the linked id (the title only with `show_titles`), then `Wed 10/21 15:00–17:00 · Lobby · A/V on form: yes · outreach due`:
-  - the date and start time (date only when none was given), and the end time when the form or title gives a range;
-  - the space type from the form, renamed tickets' included: `Lobby`, `Classroom`, `Other`, or `—` (no form, or an answer that was not read);
-  - `A/V on form: yes/no` from the form's services checklist, `—` without a form. A/V asked for later, in a comment or elsewhere, is not seen, so `no` does not mean "no A/V needed";
-  - the state. A renamed title first: `location TBD` (TBD in the title) or `location missing` (a date and a time but no room). Then the form: `marketing only`, or `no outreach needed` (no A/V and no classroom). Otherwise the feed state above: `no outreach yet`, `waiting on requester since Tue 08:26` (the desk's last entry; no time when it is undated), `requester replied` or `in progress (requester answered)`; `page not read` when the run could not read the ticket's page (a failed or deferred feed).
+- **Sections, in order:** Events this week, Requester waiting, Follow up with requester, Someone else wrote last, Event: email the requester, Event: follow up with the requester, Event soon: room still TBD, Event over: resolve, Ready to close.
+- **Events this week** (first): every unclaimed event ticket, an event request form or a renamed `EVENT [...]` ticket, with a date from the summary time to `tdx.summary.events_days` (7) days later, one row per event at its next date in that window, sorted by date. A row is the linked id (the title only with `show_titles`), then `Wed 10/21 3:00–5:00 PM · Lobby · A/V on form: yes · not emailed yet`, or `Sat 10/24 6:00–7:00 PM · no form · location missing` for an event without a form (the space and A/V parts are replaced by `no form`, said once):
+  - the date and start time (date only when none was given), and the end time when the form or title gives a range, in 12-hour form like the ticket titles (`11:30 AM–12:30 PM` across noon);
+  - the space type from the form, renamed tickets' included: `Lobby`, `Classroom`, `Other`, or `—` when the form's answer was not read;
+  - `A/V on form: yes/no` from the form's services checklist. A/V asked for later, in a comment or elsewhere, is not seen, so `no` does not mean "no A/V needed";
+  - the state. A renamed title first: `location TBD` (TBD in the title) or `location missing` (a date and a time but no room). Then the form: `marketing only`, or `no email needed` (no A/V and no classroom). Otherwise the feed state above: `not emailed yet`, `waiting on requester since Tue 8:26 AM` (the desk's last entry; no time when it is undated), `requester replied` or `in progress (requester answered)`; `not checked yet` when the run could not read the ticket's page (a failed or deferred feed).
   - Recurring events and unreadable dates are left out, as the rules leave them out. An event that already started before the summary time is not listed.
   - Never shown: requester or handler names, the A/V free-text answer or any other form field. An event's finding row, if it has one, still appears in its own section: this section is the week's agenda.
 - **Possible duplicates:** among this run's unclaimed tickets, two are possible duplicates when the requester is the same person (matched as names are everywhere else) and the titles are similar: after lower-casing, dropping punctuation and a few stop words ("a", "the", "re", "fw", "please" and similar), their word sets overlap by at least `tdx.rules.duplicate_title_similarity` (0.6, Jaccard), or one title's words appear inside the other's. The newer ticket's row gets `(possible duplicate of #<older id>)`, pointing at the oldest such ticket. Event tickets and request forms are left out (all forms share one title, and two events by one requester look alike). It is never a finding, nothing about it is stored or logged, and names are compared in memory only.
@@ -261,16 +261,25 @@ The summary also has three things, all worked out in memory from the same run, w
 
 While summaries go to the desk chat, one kind of finding does not wait for the next slot. A finding is **urgent** when its event's next date is `tdx.events.near_event_days` (2) days away or less (whole hours until the event, at most 24 × that) and it is one of:
 
-- `event_outreach_due` (no outreach yet);
+- `event_outreach_due` (not emailed yet);
 - `event_details_pending` (waiting on the requester);
 - `location_tbd_soon` (TBD or missing in the title);
 - `client_waiting` with reason `event_requester_replied` (the requester wrote last on an event ticket).
 
-Within that window each of these is already high priority, except a TBD location, which stays normal. In the cycle an urgent finding is first new to the desk chat (not shown there by a summary or an urgent card since it opened), it goes to the desk chat on one `Event soon: N need follow-up` card with no mention, or, when a summary is due that cycle, into the summary marked `(event soon)`. It is then remembered as shown, so it is not posted again until it clears by the rule above and comes back; the next delta does not list it as new. The personal chat's alert cards are unchanged. `tdx.summary.urgent_events_to_desk = false` turns this off; it never applies without `teams.desk.approved`.
+Within that window each of these is already high priority, except a TBD location, which stays normal. In the cycle an urgent finding is first new to the desk chat (not shown there by a summary or an urgent card since it opened), it goes to the desk chat on one `Event soon: N need follow-up` card with no mention, or, when a summary is due that cycle, into the summary marked `(event soon)`. It is then remembered as shown, so it is not posted again until it clears by the rule above and comes back; the next update does not list it as new. The personal chat's alert cards are unchanged. `tdx.summary.urgent_events_to_desk = false` turns this off; it never applies without `teams.desk.approved`.
 
 ### Card wording
 
-Ages read `N h` under 48 hours and `N days` (whole days, rounded down) from 48 hours; `{days}` is the time until the event, in the same form, and `{when}` is `in {days}`. `{team}` is `teams.desk.team_name` (default "the help desk") on desk cards and "the help desk" on personal cards; `{Team}` is the same with a capital first letter. `{mailbox}` is `tdx.events.alt_host_mailbox`, the address requesters add as a Zoom alternative host, on desk and personal cards alike (Markdown escaped, so it can be copied as it reads), or "our shared mailbox" when it is not set. A reminder adds ` · reminder`. Section labels: "Requester waiting" (`client_waiting`) and "Follow up with requester" (`follow_up_with_client`); the others read as their kind. The card's title counts the rows, `TDX queue: 12 new, 1 reminder`, or just `TDX queue: 12 new` when no reminder is due.
+Ages are written out, because desk staff read words faster than unit symbols: `less than an hour`, `1 hour` and `N hours` under 48 hours, then `N days` (whole days, rounded down) from 48 hours (terminal output, logs and `--show-ids` keep their short `73h` form); `{days}` is the time until the event, in the same form, and `{when}` is `in {days}`. `{team}` is `teams.desk.team_name` (default "the help desk") on desk cards and "the help desk" on personal cards; `{Team}` is the same with a capital first letter. `{mailbox}` is `tdx.events.alt_host_mailbox`, the address requesters add as a Zoom alternative host, on desk and personal cards alike (Markdown escaped, so it can be copied as it reads), or "our shared mailbox" when it is not set. A reminder adds ` · reminder`. Section labels are in the desk's own words: "Requester waiting" (`client_waiting`), "Follow up with requester" (`follow_up_with_client`), "Someone else wrote last" (`needs_review`), "Event: email the requester" (`event_outreach_due`), "Event: follow up with the requester" (`event_details_pending`), "Event soon: room still TBD" (`location_tbd_soon`), "Event over: resolve" (`event_over`) and "Ready to close" (`ready_to_close`). The alert card's title counts the rows, `TDX queue: 12 new, 1 reminder`, or just `TDX queue: 12 new` when no reminder is due.
+
+Every time on a card is 12-hour, like the ticket titles: `7:30 AM`, `12:00 PM`, `Tue 1:37 PM`, a range `1:30–2:30 PM` (or `11:30 AM–12:30 PM` across noon). Settings, state files, logs and the terminal keep 24-hour times. The summary headings say how many tickets need a look and for whom, never "open", which reads as open tickets in the queue:
+
+| card | heading |
+|---|---|
+| Full summary | `TDX queue at 7:30 AM: 3 tickets for {team} (1 new since yesterday)`; late: `TDX queue at 8:50 AM (late: due 7:30 AM): …`; nothing open: `Queue clear at 7:30 AM: nothing needs attention.` |
+| Update | `Since 7:30 AM: 2 new tickets for {team}`, `Since 12:00 PM: 1 reminder for {team}` or `Since 7:30 AM: 1 new ticket and 2 reminders for you`: the new rows, then every other row (due reminders, and an urgent finding open at the last post) |
+
+Personal cards say "you" where desk cards name `{team}`.
 
 | kind / reason | text |
 |---|---|
@@ -280,11 +289,11 @@ Ages read `N h` under 48 hours and `N days` (whole days, rounded down) from 48 h
 | `client_waiting` / `event_requester_replied` | Event {when}. The requester replied {age} ago: read it and confirm the details |
 | `follow_up_with_client` / `client_follow_up` | The requester said they'd follow up; quiet {age}: check in |
 | `follow_up_with_client` / `client_no_reply_needed` | The requester's last message needed no reply; quiet {age}: check in or resolve |
-| `needs_review` / `other_last` | The last message, {age} ago, is from someone other than the requester or {team}: take a look |
+| `needs_review` / `other_last` | The last message, {age} ago, came from someone other than the requester or {team}: check whether the requester still needs a reply |
 | `event_outreach_due` / `outreach_due` | Event in {days}: email the requester for the room number. If it's hybrid or remote, also ask for the Zoom link, ask them to add {mailbox} as an alternative host, and ask whether to record. Then update the events spreadsheet. |
 | `event_outreach_due` / `outreach_due_requester_wrote` | Event in {days}; the requester wrote {wrote} ago. Email them for the room number. If it's hybrid or remote, also ask for the Zoom link, ask them to add {mailbox} as an alternative host, and ask whether to record. Then update the events spreadsheet. (`{wrote}`: the time since the requester's latest entry) |
 | `event_details_pending` / `details_pending_near` | Event {when}: still waiting on the requester (asked {age} ago): follow up now |
-| `event_details_pending` / `details_pending` | Event in {days}; no reply to {team} for {age}: follow up |
+| `event_details_pending` / `details_pending` | Event in {days}; the requester hasn't answered for {age}: follow up |
 | `location_tbd_soon` (`tbd_soon` and `location_missing`) | Location still TBD on the ticket, event in {age}. Check the events spreadsheet; if a room is listed, update the ticket. |
 | `event_over` | Event ended {age} ago: ready to resolve? |
 | `ready_to_close` | {Team} replied {age} ago, no reply since: close if nothing new |
@@ -296,11 +305,11 @@ Each row starts with the ticket id, linked to the ticket when its address is on 
 
 | card | line under the title | preview line |
 |---|---|---|
-| Event soon (desk) | {Team}, please follow up on these before the event. Checked Thu 12:41. | N tickets for {team} |
-| Full summary | Tickets for {team} to look at (Tickets that need your attention, on a personal card). Checked N unclaimed tickets at 07:30. With nothing open: Nothing for {team} to look at right now (Nothing needs your attention right now). … | N tickets for {team} |
-| Delta | New since the last post, for {team} (for you) to look at. Checked at 12:00. | N tickets for {team} (the N open) |
-| Alert card (personal) | Checked Thu 12:05: N unclaimed tickets, M ticket histories read, K could not be read. (the last part only when K > 0) | N tickets need attention |
-| Alert card (desk) | {Team}, please follow up on these. Checked Thu 12:05: … as above | N tickets for {team} |
+| Event soon (desk) | {Team}, please follow up on these before the event. Checked Thu 12:41 PM. | N tickets for {team} |
+| Full summary | Tickets for {team} to look at (Tickets that need your attention, on a personal card). Checked N unclaimed tickets at 7:30 AM. With nothing open: Nothing for {team} to look at right now (Nothing needs your attention right now). … | N tickets for {team} |
+| Update | 5 tickets need a look in all; 1 was handled. Checked at 12:00 PM. (the handled part only when findings cleared since the last post; `1 ticket needs a look in all.` for one) | N tickets for {team} (all N that need a look) |
+| Alert card (personal) | Checked Thu 12:05 PM: N unclaimed tickets, M ticket histories read, K could not be read. (the last part only when K > 0) | N tickets need attention |
+| Alert card (desk) | {Team}, please follow up on these. Checked Thu 12:05 PM: … as above | N tickets for {team} |
 
 On a personal card the preview line drops the team: `N tickets need attention`. With nothing to count it reads `Nothing for {team} right now` (`Nothing needs your attention right now` on a personal card). Desk cards say "for" the team rather than its possessive, which no single rule spells well for every name. The cards never use internal terms such as "the desk" or "read-only audit"; the read-only design is explained in these docs, not on cards.
 

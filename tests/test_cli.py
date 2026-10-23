@@ -2593,7 +2593,7 @@ def test_tdx_watch_posts_a_due_summary_instead_of_the_alert_card(
     )
     assert len(post.cards) == 1
     card = post.cards[0]
-    assert card["body"][0]["text"] == "TDX queue at 14:00: 1 open (1 new)"
+    assert card["body"][0]["text"] == "TDX queue at 2:00 PM: 1 ticket for you (1 new)"
     assert card["msteams"]["entities"][0]["mentioned"]["id"] == MENTION_ADDRESS
     records = [json.loads(line) for line in _log_text(tmp_path).splitlines()]
     summary = next(r for r in records if r["message"] == "tdx summary")

@@ -18,7 +18,7 @@ Shift summaries (``tdx.summary``): the loop also wakes at the configured summary
 times, and a cycle that runs while a slot is due posts ``send_summary`` instead of the alert
 card, recording its findings as alerted. The day's first summary posted is full
 (every open finding, with the mention); later slots post a delta (new findings and due
-reminders, cleared ones as a count) or nothing when nothing changed. While summaries go to the
+reminders, cleared ones as a count) or nothing when no row is new or due. While summaries go to the
 desk chat, a desk watch's alert cards go to the personal chat (``alert_destination``,
 ``tdx.summary.desk_alerts`` / ``personal_alerts``). The summary state file
 (``summary-state-desk.json``) holds the last slot dealt with, the last one posted and the
@@ -588,7 +588,7 @@ def format_send_outcome(outcome: SendOutcome) -> str:
         return f"{label}: summary posted ({outcome.open} open, {outcome.new} new)."
     if outcome.status == "no_change":
         slot = f"{outcome.slot:%H:%M} " if outcome.slot is not None else ""
-        return f"{label}: {slot}summary skipped (no change)."
+        return f"{label}: {slot}summary skipped (nothing new to show)."
     if outcome.status == "off":
         why = "no personal webhook" if outcome.reason == "no_personal_webhook" else "summaries only"
         return f"{label}: no alert card ({why})."
@@ -716,7 +716,8 @@ def draft_summary(
       marked, possible duplicates pointed out) and the configured mentions.
     - **Delta** (later slots): rows only for the new findings and the reminders due under the
       alert policy (``state``), the cleared ones as a count; no events and no mention. Its
-      ``card`` is None when nothing is new, cleared or due: the slot is skipped.
+      ``card`` is None when no row is new, due or urgent, cleared findings or not: the slot
+      is skipped and ``open_keys`` leaves the cleared ones out.
 
     ``urgent``: urgent event findings new for the chat this cycle. They go into this summary,
     marked "(event soon)", instead of on a card of their own; a delta lists them even when
@@ -749,7 +750,9 @@ def draft_summary(
         } - change.new
         listed = change.new | reminder_keys | urgent
         rows = [f for f in alert_on if (f.ticket_id, f.kind) in listed]
-        if not rows and not change.cleared:
+        if not rows:
+            # Nothing to act on: in a shared chat that card is noise. The cleared findings
+            # still leave the open set, so a later update does not count them again.
             empty = AlertPlan(on_card=(), overflow=0, cleared=())
             return SummaryDraft(plan, empty, None, len(findings), 0, 0, "delta", 0, change.open)
         links = card_links(rows_by_id, [finding.ticket_id for finding in rows], tdx)
@@ -842,7 +845,7 @@ def send_summary(
     After a successful post, every new or due finding shown on it is recorded in
     ``state_path`` as alerted, so the next cycle does not repeat it; due findings counted only
     in a "+N more" line stay due. Cleared records are dropped (and saved) whatever happens to
-    the post. A delta with nothing new, cleared or due posts nothing (``no_change``). ``desk``
+    the post. A delta with no new, due or urgent row posts nothing (``no_change``). ``desk``
     without ``teams.desk.approved`` sends nothing and touches no state. The caller records the
     slot and the outcome's ``open_keys`` itself (``SummaryState``). ``urgent``: the urgent
     event findings new for the chat, marked on the summary instead of a card of their own.
@@ -1311,8 +1314,8 @@ def watch(
     otherwise as ``run_cycle()``. The request is ``full`` when nothing was posted yet that
     day (so a missed first slot makes the next one full), else a ``delta`` against the set open
     at the last post. A sent summary records its slot and open set in the summary state, so a
-    restart in the same slot does not post again; a delta with no change records its slot
-    without a post or a notice. A slot posted more than 15 minutes late, or skipped because no
+    restart in the same slot does not post again; a delta with nothing new or due records its
+    slot without a post or a notice. A slot posted more than 15 minutes late, or skipped because no
     cycle posted it in time, sends one notice naming the time (and, when skipped, the last
     failure's reason).
 

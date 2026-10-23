@@ -18,7 +18,7 @@ Every 30 minutes during desk hours, `tdx watch` reads the desk's queue, from the
 - **Feeds, only where needed:** a ticket's activity feed is opened only when it is 48+ hours old, is an event request form, or is an event within 14 days. Only entries the client can see count; private notes and status changes are skipped.
 - **The 48-hour rules:** *client waiting* (no reply yet, or the client wrote last 48+ hours ago), *needs review* (someone outside the desk wrote last), and *ready to close* (the desk replied last 3+ days ago, shown in summaries only).
 - **Events:** dates and locations read from the ticket title and the request form, then *event outreach due*, *event details pending*, *location TBD soon* and *event over, ready to resolve*. Outreach cards carry a fixed checklist, never a drafted reply.
-- **Shift summaries:** the day's first summary lists every open finding, the events this week and the tickets ready to close; later slots post only what changed, and nothing at all when nothing did.
+- **Shift summaries:** the day's first summary lists every open finding, the events this week and the tickets ready to close; later slots post only when there is something new to look at or a reminder is due, and nothing at all otherwise. Cards use the desk's own words and 12-hour times, like the ticket titles.
 - **"Event soon" cards:** when an event finding falls within 2 days of its event, a short card goes to the desk at once instead of waiting for the next shift slot.
 - **Teams cards:** shift summaries and "Event soon" cards go to the desk's Teams chat; the per-cycle alert card, sent only when a finding is new or due again, and the sign-in notices go to the runner's own chat. Desk cards name the team and say plainly who should act. All of them go through Teams Workflows webhooks.
 
@@ -142,7 +142,7 @@ Each finding is listed by ticket id, kind, reason code and age in hours (for *ev
 - **Two independent readers, compared before trusted.** The API reader ran beside the browser reader before it could drive a card, and the first side-by-side run caught a real browser bug: answers in event request forms were missed when their full text sat in the collapsed part of the description.
 - **Rules first, tokens last.** The grid and the feeds settle almost every ticket for free; a cycle with nothing to classify costs $0.00.
 - **Privacy enforced in types, not habits.** The LLM client accepts only a `ScrubbedText` that only the scrubber can create.
-- **Alerts that do not nag.** Findings are de-duplicated against a small state file; shift summaries post in full once a day, then only the changes.
+- **Alerts that do not nag.** Findings are de-duplicated against a small state file; shift summaries post in full once a day, then only what is new or due again.
 - **No real data in development.** Selectors were built from structure-only page captures (tags, classes, column headers; every other text a placeholder) and tested on synthetic pages.
 - **Sign-in stays human.** The person signs in once, MFA included; on expiry the tool asks again and waits. It never stores a password; the API token comes from a second sign-in the person makes and lives only in the keychain.
 

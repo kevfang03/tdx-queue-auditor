@@ -196,29 +196,47 @@ def test_the_row_text_has_date_times_space_av_and_state_only() -> None:
                         "waiting_on_requester", asked)  # fmt: skip
 
     assert event_details(timed, TZ) == (
-        "Wed 10/21 15:00–17:00 · Lobby · A/V on form: yes · no outreach yet"
+        "Wed 10/21 3:00–5:00 PM · Lobby · A/V on form: yes · not emailed yet"
     )
     assert event_details(start_only, TZ) == (
-        "Thu 10/22 09:30 · Classroom · A/V on form: no · in progress (requester answered)"
+        "Thu 10/22 9:30 AM · Classroom · A/V on form: no · in progress (requester answered)"
     )
-    assert event_details(untimed, TZ) == "Fri 10/23 · — · A/V on form: — · location missing"
+    assert event_details(untimed, TZ) == "Fri 10/23 · no form · location missing"
     assert event_details(waiting, TZ) == (
-        "Fri 10/23 14:00 · — · A/V on form: yes · waiting on requester since Tue 08:26"
+        "Fri 10/23 2:00 PM · — · A/V on form: yes · waiting on requester since Tue 8:26 AM"
+    )
+
+
+def test_an_event_across_noon_names_both_halves_of_the_day() -> None:
+    event = WeekEvent(1, datetime(2026, 10, 21, 11, 30, tzinfo=TZ), True, time(12, 30),
+                      "classroom", True, "requester_replied")  # fmt: skip
+
+    assert event_when(event, TZ) == "Wed 10/21 11:30 AM–12:30 PM"
+
+
+def test_event_times_are_shown_in_the_display_time_zone() -> None:
+    # The same instant, read with a different display time zone: the card follows it.
+    asked = datetime(2026, 10, 20, 12, 26, tzinfo=ZoneInfo("UTC"))
+    event = WeekEvent(1, datetime(2026, 10, 23, 18, 0, tzinfo=ZoneInfo("UTC")), True, None,
+                      None, True, "waiting_on_requester", asked)  # fmt: skip
+
+    assert event_details(event, ZoneInfo("America/Los_Angeles")) == (
+        "Fri 10/23 11:00 AM · — · A/V on form: yes · waiting on requester since Tue 5:26 AM"
     )
 
 
 @pytest.mark.parametrize(
     ("state", "label"),
     [
-        ("no_outreach_yet", "no outreach yet"),
+        ("no_outreach_yet", "not emailed yet"),
         ("waiting_on_requester", "waiting on requester"),
         ("requester_replied", "requester replied"),
         ("in_progress", "in progress (requester answered)"),
         ("location_missing", "location missing"),
         ("location_tbd", "location TBD"),
         ("marketing_only", "marketing only"),
-        ("no_outreach", "no outreach needed"),
-        ("not_read", "page not read"),
+        ("no_outreach", "no email needed"),
+        ("not_read", "not checked yet"),
     ],
 )
 def test_state_labels(state: str, label: str) -> None:

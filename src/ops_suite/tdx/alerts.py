@@ -12,7 +12,8 @@ marks the new ones, and may mention people. It shows the "Events this week" sect
 "(possible duplicate of #<id>)" on rows, and "Ready to close" last. "Ready to close" findings
 stay out of the alert cards and the alert state unless ``alert_ready_to_close``
 (``alertable``). The day's first summary posted is that full card; later slots post a delta
-(``fit_delta_card``: new findings and due reminders as rows, cleared ones as a count).
+(``fit_delta_card``: new findings and due reminders as rows, cleared ones as a count), and
+only when it has a row: in a shared chat, an update with nothing to act on is noise.
 ``SummaryState`` remembers the last slot dealt with, the last one posted and the (ticket id,
 kind) set open at that post; ``summary_change`` compares. Between slots, an event finding
 within ``near_event_days`` of its event (``urgent_event``) goes to the chat on a short card
@@ -20,6 +21,8 @@ of its own (``fit_urgent_card``) or, in a summary run, marked "(event soon)" in 
 
 Every card speaks plainly to its ``Reader``: a desk card names the team that should act
 (``teams.desk.team_name``), a personal card speaks to the person running the auditor ("you").
+Labels are in the desk's own words, and card times are 12-hour like the ticket titles
+(``card_time``).
 
 Personal data rule: the card body is the only place a ticket title goes, and only with
 ``show_titles`` (on for the personal chat, off for the desk chat by default, because titles
@@ -42,6 +45,7 @@ from zoneinfo import ZoneInfo
 
 from ops_suite.common.config import DEFAULT_TEAM_NAME, TdxAlertSettings, TdxSettings
 from ops_suite.common.teams import CARD_SCHEMA, CARD_VERSION, MentionMode, with_mentions
+from ops_suite.tdx.card_time import card_time
 from ops_suite.tdx.rows import TicketRow
 from ops_suite.tdx.rules import Finding
 from ops_suite.tdx.tickets import ticket_addresses
@@ -66,11 +70,11 @@ StateKey = tuple[int, str]  # (ticket id, finding kind); kinds are plain strings
 SECTION_LABELS: dict[str, str] = {
     "client_waiting": "Requester waiting",
     "follow_up_with_client": "Follow up with requester",
-    "needs_review": "Needs review",
-    "event_outreach_due": "Event outreach due",
-    "event_details_pending": "Event details pending",
-    "location_tbd_soon": "Location TBD soon",
-    "event_over": "Event over",
+    "needs_review": "Someone else wrote last",
+    "event_outreach_due": "Event: email the requester",
+    "event_details_pending": "Event: follow up with the requester",
+    "location_tbd_soon": "Event soon: room still TBD",
+    "event_over": "Event over: resolve",
     "ready_to_close": "Ready to close",
 }
 EVENTS_SECTION_LABEL = "Events this week"
@@ -112,8 +116,8 @@ WORDING: dict[tuple[str, str | None], str] = {
         "The requester's last message needed no reply; quiet {age}: check in or resolve"
     ),
     ("needs_review", "other_last"): (
-        "The last message, {age} ago, is from someone other than the requester or {team}: "
-        "take a look"
+        "The last message, {age} ago, came from someone other than the requester or {team}: "
+        "check whether the requester still needs a reply"
     ),
     ("event_outreach_due", "outreach_due_requester_wrote"): (
         "Event in {days}; the requester wrote {wrote} ago. Email them for " + _OUTREACH_ASK
@@ -122,7 +126,9 @@ WORDING: dict[tuple[str, str | None], str] = {
     ("event_details_pending", "details_pending_near"): (
         "Event {when}: still waiting on the requester (asked {age} ago): follow up now"
     ),
-    ("event_details_pending", None): "Event in {days}; no reply to {team} for {age}: follow up",
+    ("event_details_pending", None): (
+        "Event in {days}; the requester hasn't answered for {age}: follow up"
+    ),
     ("location_tbd_soon", None): (
         "Location still TBD on the ticket, event in {age}. Check the events spreadsheet; if a "
         "room is listed, update the ticket."
@@ -472,8 +478,14 @@ def clean_title(title: str, limit: int) -> str:
 
 
 def format_age(hours: int) -> str:
-    """``N h`` under 48 hours, ``N days`` (whole days, rounded down) from 48."""
-    return f"{hours} h" if hours < 48 else f"{hours // 24} days"
+    """A card's age in words: ``less than an hour``, ``1 hour``, ``N hours`` under 48 hours,
+    then ``N days`` (whole days, rounded down). Desk staff read words faster than unit symbols;
+    terminal output and logs keep their own short forms."""
+    if hours >= 48:
+        return f"{hours // 24} days"
+    if hours < 1:
+        return "less than an hour"
+    return "1 hour" if hours == 1 else f"{hours} hours"
 
 
 def section_label(kind: str) -> str:
@@ -526,12 +538,12 @@ def fallback_text(count: int, reader: Reader = PERSONAL) -> str:
 
 
 def checked_line(now: datetime, tz: ZoneInfo, summary_counts: Mapping[str, int]) -> str:
-    """``Checked Thu 12:05: 26 unclaimed tickets, 7 ticket histories read, 1 could not be
+    """``Checked Thu 12:05 PM: 26 unclaimed tickets, 7 ticket histories read, 1 could not be
     read.``: the alert card's plain account of the run."""
     failed = summary_counts.get("feeds_failed", 0)
     unread = f", {failed} could not be read" if failed else ""
     return (
-        f"Checked {now.astimezone(tz):%a %H:%M}: "
+        f"Checked {card_time(now, tz, weekday=True)}: "
         f"{summary_counts.get('unclaimed', 0)} unclaimed tickets, "
         f"{summary_counts.get('feeds_read', 0)} ticket histories read{unread}."
     )
@@ -691,7 +703,7 @@ class SummaryState:
     "last_posted": "<ISO local>", "open": ["<id>:<kind>", ...], "known": [...]}``. Ticket ids,
     kinds and slot times only.
 
-    ``last_slot`` is the last slot dealt with (posted, or skipped because nothing changed);
+    ``last_slot`` is the last slot dealt with (posted, or skipped with nothing new to show);
     ``last_posted`` the last slot actually posted, which a delta counts "since"; ``open`` the
     alertable findings open at that post, plus any posted on an urgent event card since.
     ``known`` is every finding the chat has been shown, by a summary or an urgent card, that
@@ -743,7 +755,7 @@ class SummaryState:
 
     def posted(self, slot: datetime) -> bool:
         """Whether ``slot`` (or a later one) was dealt with already: posted, or skipped
-        because nothing changed."""
+        with nothing new to show."""
         return self.last_slot is not None and slot <= self.last_slot
 
     def full_due(self, slot: datetime) -> bool:
@@ -756,9 +768,9 @@ class SummaryState:
     def record(
         self, slot: datetime, *, posted: bool = True, open_keys: Set[StateKey] | None = None
     ) -> None:
-        """Remember ``slot`` as dealt with (``posted``, or skipped as unchanged) and the open
-        set, which the chat has now been shown (``known``), and write the file atomically.
-        Only after a post, or the decision to skip."""
+        """Remember ``slot`` as dealt with (``posted``, or skipped with nothing new to show)
+        and the open set, which the chat has now been shown (``known``), and write the file
+        atomically. Only after a post, or the decision to skip."""
         self.last_slot = slot
         if posted:
             self.last_posted = slot
@@ -868,33 +880,61 @@ def _summary_order(finding: Finding) -> tuple[object, ...]:
 
 
 def summary_heading(
-    total: int, new: int, at: str, late_due: str | None = None, since: str | None = None
+    total: int,
+    new: int,
+    at: str,
+    late_due: str | None = None,
+    since: str | None = None,
+    *,
+    who: str = "you",
 ) -> str:
-    """``TDX queue at 07:30: 6 open (2 new since yesterday)`` (just ``(2 new)`` without
-    ``since``) or ``Queue clear at 07:30: nothing needs attention.``, with ``(late: due
-    07:30)`` after the time for a late summary."""
+    """``TDX queue at 7:30 AM: 6 tickets for the help desk (2 new since yesterday)`` (just
+    ``(2 new)`` without ``since``) or ``Queue clear at 7:30 AM: nothing needs attention.``,
+    with ``(late: due 7:30 AM)`` after the time for a late summary. ``who`` is the card's
+    reader as ``reader_name`` gives it. "Tickets for" the reader rather than "open", which
+    reads as open tickets in the queue."""
     when = at if late_due is None else f"{at} (late: due {late_due})"
     if total == 0:
         return f"Queue clear at {when}: nothing needs attention."
     new_text = f"{new} new" if since is None else f"{new} new since {since}"
-    return f"TDX queue at {when}: {total} open ({new_text})"
+    return f"TDX queue at {when}: {_plural(total, 'ticket')} for {who} ({new_text})"
+
+
+def reader_name(reader: Reader) -> str:
+    """Who a heading names, as card Markdown: the team on a desk card (escaped), ``you`` on
+    a personal one."""
+    return escape_markdown(reader.team) if reader.audience == "desk" else "you"
 
 
 def since_text(since: datetime, slot: datetime, tz: ZoneInfo) -> str:
     """When the last summary was posted, as the full heading says it: ``yesterday`` for the day
-    before ``slot``, ``07:30`` for the same day, else ``Fri 17:00``."""
+    before ``slot``, ``7:30 AM`` for the same day, else ``Fri 5:00 PM``."""
     posted = since.astimezone(tz)
     day = slot.astimezone(tz).date()
     if posted.date() == day - timedelta(days=1):
         return "yesterday"
-    if posted.date() == day:
-        return f"{posted:%H:%M}"
-    return f"{posted:%a %H:%M}"
+    return card_time(posted, tz, weekday=posted.date() != day)
 
 
-def delta_heading(new: int, cleared: int, total: int, since: str) -> str:
-    """``Since 07:30: 1 new · 1 cleared · 6 open``: the heading of a later slot's delta."""
-    return f"Since {since}: {new} new · {cleared} cleared · {total} open"
+def delta_heading(new: int, reminders: int, since: str, *, who: str = "you") -> str:
+    """``Since 7:30 AM: 1 new ticket and 2 reminders for the help desk``: the heading of a later
+    slot's update, naming only the parts it has. ``new`` counts the rows marked new,
+    ``reminders`` every other row (due reminders, and urgent findings open at the last post);
+    ``who`` as ``reader_name`` gives it."""
+    parts = [
+        _plural(count, word)
+        for count, word in ((new, "new ticket"), (reminders, "reminder"))
+        if count
+    ]
+    return f"Since {since}: {' and '.join(parts)} for {who}"
+
+
+def delta_lead(total: int, cleared: int, checked: str) -> str:
+    """``5 tickets need a look in all; 1 was handled. Checked at 12:00 PM.``: the update's
+    lead, the whole queue's count and the findings cleared since the last post."""
+    need = f"{_plural(total, 'ticket')} {'needs' if total == 1 else 'need'} a look in all"
+    handled = f"; {cleared} {'was' if cleared == 1 else 'were'} handled" if cleared else ""
+    return f"{need}{handled}. Checked at {checked}."
 
 
 def _summary_card(
@@ -916,8 +956,7 @@ def _summary_card(
 ) -> tuple[tuple[Finding, ...], dict[str, object]]:
     lead = reader.summary_lead(bool(findings))
     checked = (
-        f"Checked {summary_counts.get('unclaimed', 0)} unclaimed tickets "
-        f"at {now.astimezone(tz):%H:%M}."
+        f"Checked {summary_counts.get('unclaimed', 0)} unclaimed tickets at {card_time(now, tz)}."
     )
     body: list[dict[str, object]] = [
         _text(heading, weight="Bolder", size="Medium"),
@@ -1067,14 +1106,15 @@ def fit_summary_card(
     who the card speaks to (the team on a desk card, "you" on a personal one)."""
     ordered = open_findings(findings)
     new = sum((f.ticket_id, f.kind) in new_keys for f in ordered)
-    slot_text = f"{slot.astimezone(tz):%H:%M}"
+    slot_text = card_time(slot, tz)
     since_label = since_text(since, slot, tz) if since is not None else None
+    who = reader_name(reader)
     if late:
         heading = summary_heading(
-            len(ordered), new, f"{now.astimezone(tz):%H:%M}", slot_text, since_label
+            len(ordered), new, card_time(now, tz), slot_text, since_label, who=who
         )
     else:
-        heading = summary_heading(len(ordered), new, slot_text, since=since_label)
+        heading = summary_heading(len(ordered), new, slot_text, since=since_label, who=who)
     rows = max_rows
     while True:
         shown, card = _summary_card(
@@ -1171,18 +1211,19 @@ def fit_delta_card(
     urgent_keys: Set[StateKey] = frozenset(),
     reader: Reader = PERSONAL,
 ) -> tuple[tuple[Finding, ...], dict[str, object]]:
-    """A later slot's delta card and the findings it shows by id: the heading ``Since 07:30:
-    N new · M cleared · K open`` (``total`` open findings in all), then rows only for
-    ``findings``, the new ones (``new_keys``, marked ``(new)``) and the due reminders
-    (``reminder_keys``, marked ``· reminder``), grouped by kind; urgent event findings
-    (``urgent_keys``) are marked ``(event soon)``. Cleared findings are a count only; no
-    "Events this week" and no mention. Titles only with ``show_titles``; rows are
-    dropped from the end until the card is under ``CARD_MAX_BYTES``."""
+    """A later slot's update card and the findings it shows by id: the heading ``Since 7:30
+    AM: N new tickets and M reminders for {who}``, the lead ``K tickets need a look in all; J
+    were handled.`` (``total`` open findings in all, ``cleared`` gone since the last post),
+    then rows only for ``findings``: the new ones (``new_keys``, marked ``(new)``) and the
+    due reminders (``reminder_keys``, marked ``· reminder``), grouped by kind; urgent event
+    findings (``urgent_keys``) are marked ``(event soon)``. Cleared findings are a count only;
+    no "Events this week" and no mention. Titles only with ``show_titles``; rows are dropped
+    from the end until the card is under ``CARD_MAX_BYTES``. The caller posts it only when
+    ``findings`` has a row."""
     ordered = open_findings(findings)
     new = sum((f.ticket_id, f.kind) in new_keys for f in ordered)
-    heading = delta_heading(new, cleared, total, f"{since.astimezone(tz):%H:%M}")
-    who = escape_markdown(reader.team) if reader.audience == "desk" else "you"
-    lead = f"New since the last post, for {who} to look at. Checked at {now.astimezone(tz):%H:%M}."
+    heading = delta_heading(new, len(ordered) - new, card_time(since, tz), who=reader_name(reader))
+    lead = delta_lead(total, cleared, card_time(now, tz))
     rows = max_rows
     while True:
         body: list[dict[str, object]] = [
@@ -1240,7 +1281,7 @@ def fit_urgent_card(
     ask = "please follow up on these before the event."
     if reader.audience == "desk":
         ask = f"{capitalised(escape_markdown(reader.team))}, {ask}"
-    lead = f"{capitalised(ask)} Checked {now.astimezone(tz):%a %H:%M}."
+    lead = f"{capitalised(ask)} Checked {card_time(now, tz, weekday=True)}."
     rows = max_rows
     while True:
         body: list[dict[str, object]] = [

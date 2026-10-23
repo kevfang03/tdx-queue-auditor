@@ -7,10 +7,13 @@ date in that window, with its state:
 
 - a renamed title with TBD, or with a date and time but no location: ``location TBD`` or
   ``location missing``;
-- a form needing no outreach: ``marketing only`` or ``no outreach needed``;
-- otherwise the feed state from the rules (``rules.event_status``): ``no outreach yet``,
-  ``waiting on requester since Tue 08:26``, ``requester replied`` or ``in progress
-  (requester answered)``; ``page not read`` when this run could not read the ticket's page.
+- a form needing no outreach: ``marketing only`` or ``no email needed``;
+- otherwise the feed state from the rules (``rules.event_status``): ``not emailed yet``,
+  ``waiting on requester since Tue 8:26 AM``, ``requester replied`` or ``in progress
+  (requester answered)``; ``not checked yet`` when this run could not read the ticket's page.
+
+The labels are in the desk's own words ("emailed", not "outreach"), and the times are
+12-hour like the ticket titles (``card_time``).
 
 Space and "A/V on form" come from the form, renamed tickets' included; "—" when there is
 no form.
@@ -26,6 +29,7 @@ from datetime import datetime, time, timedelta
 from typing import Literal
 from zoneinfo import ZoneInfo
 
+from ops_suite.tdx.card_time import card_time, clock_range, clock_text
 from ops_suite.tdx.event_form import EventForm, SpaceType
 from ops_suite.tdx.events import is_event_title, is_recurring_event, parse_event_title
 from ops_suite.tdx.rows import TicketRow
@@ -49,15 +53,15 @@ EventState = Literal[
     "not_read",
 ]
 STATE_LABELS: dict[EventState, str] = {
-    "no_outreach_yet": "no outreach yet",
+    "no_outreach_yet": "not emailed yet",
     "waiting_on_requester": "waiting on requester",
     "requester_replied": "requester replied",
     "in_progress": "in progress (requester answered)",
     "location_missing": "location missing",
     "location_tbd": "location TBD",
     "marketing_only": "marketing only",
-    "no_outreach": "no outreach needed",
-    "not_read": "page not read",
+    "no_outreach": "no email needed",
+    "not_read": "not checked yet",
 }
 SPACE_LABELS: dict[SpaceType, str] = {"lobby": "Lobby", "classroom": "Classroom", "other": "Other"}
 
@@ -150,31 +154,34 @@ def events_this_week(
 
 
 def event_when(event: WeekEvent, tz: ZoneInfo) -> str:
-    """``Tue 10/21 15:00–17:00``; ``Tue 10/21 15:00`` without an end; ``Tue 10/21`` without
-    a time."""
+    """``Tue 10/21 3:00–5:00 PM``; ``Tue 10/21 3:00 PM`` without an end; ``Tue 10/21``
+    without a time."""
     local = event.when.astimezone(tz)
     text = f"{local:%a} {local.month}/{local.day}"
     if not event.has_time:
         return text
-    text += f" {local:%H:%M}"
     if event.end_time is not None:
-        text += f"–{event.end_time:%H:%M}"
-    return text
+        return f"{text} {clock_range(local, event.end_time)}"
+    return f"{text} {clock_text(local)}"
 
 
 def event_state_label(event: WeekEvent, tz: ZoneInfo) -> str:
-    """``waiting on requester since Tue 08:26`` when that time is known, else the label."""
+    """``waiting on requester since Tue 8:26 AM`` when that time is known, else the label."""
     label = STATE_LABELS[event.state]
     if event.since is not None:
-        local = event.since.astimezone(tz)
-        label += f" since {local:%a %H:%M}"
+        label += f" since {card_time(event.since, tz, weekday=True)}"
     return label
 
 
 def event_details(event: WeekEvent, tz: ZoneInfo) -> str:
-    """``Tue 10/21 15:00–17:00 · Lobby · A/V on form: yes · no outreach yet``: no names, no
+    """``Tue 10/21 3:00–5:00 PM · Lobby · A/V on form: yes · not emailed yet``: no names, no
     free text. "A/V on form" because only the form's checklist is read: A/V asked for later
-    is not seen, so "no" does not mean "no A/V needed"."""
+    is not seen, so "no" does not mean "no A/V needed". Without a form the line says ``no
+    form`` once; a form whose space was not read keeps ``—`` for the space alone."""
+    when = event_when(event, tz)
+    state = event_state_label(event, tz)
+    if event.space is None and event.av is None:
+        return f"{when} · no form · {state}"
     space = SPACE_LABELS[event.space] if event.space is not None else "—"
     av = av_on_form_label(event.av)
-    return f"{event_when(event, tz)} · {space} · A/V on form: {av} · {event_state_label(event, tz)}"
+    return f"{when} · {space} · A/V on form: {av} · {state}"
