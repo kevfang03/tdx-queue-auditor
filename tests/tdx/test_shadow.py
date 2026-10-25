@@ -786,6 +786,25 @@ def test_a_record_names_the_primary_source() -> None:
     ]
 
 
+def test_a_named_period_replaces_the_days_in_both_headings_only() -> None:
+    browser, api = same_both_sides()
+    records = [
+        shadow_record(compare(browser, api), NOW, TIMING),
+        shadow_record(compare(browser, api), NOW, TIMING, primary="api"),
+    ]
+
+    default = compare_report(records, days=1)
+    today = compare_report(records, days=1, period="today")
+
+    headings = [line for line in today if line.startswith(("API shadow,", "API primary,"))]
+    assert headings == [
+        "API shadow, today: 1 cycle; 1 compared, 0 API failures.",
+        "API primary, today: 1 cycle; 1 read through the API, 0 browser fallbacks.",
+    ]
+    assert [line.replace("today", "last 1 day") for line in today] == default
+    assert compare_report(records, days=1, period=None) == default
+
+
 # --- urgent event cards: the browser run only ------------------------------------------------
 
 DESK_URL = "https://prod-02.westus.logic.azure.com/workflows/desk/invoke?sig=D"

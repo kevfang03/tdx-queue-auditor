@@ -353,6 +353,18 @@ def event_status(feed: TicketFeed, requestor: str, is_desk: Callable[[str], bool
     return EventStatus("waiting_on_requester", latest.created)
 
 
+def _desk_acted_after(feed: TicketFeed, requestor: str, is_desk: Callable[[str], bool]) -> bool:
+    """A desk member (never the requestor) wrote an entry of any kind newer than the latest
+    visible reply. The feed's order decides "newer", never the timestamps, so an undated
+    entry counts by its place."""
+    for entry in feed.entries:  # newest first
+        if entry.kind == "reply":
+            return False
+        if not same_person(entry.author, requestor) and is_desk(entry.author):
+            return True
+    return False
+
+
 # --- desk members ------------------------------------------------------------------------
 
 
@@ -508,23 +520,24 @@ def evaluate(
         counts[kind] += 1
 
     def judge_event(
-        row: TicketRow, feed: TicketFeed, form: EventForm | None, upcoming: datetime
+        row: TicketRow,
+        feed: TicketFeed,
+        form: EventForm | None,
+        upcoming: datetime,
+        room_set: bool = False,
     ) -> None:
         """The feed-state rules for an upcoming event whose page was read (docs/tdx-rules.md,
-        "Event state"). ``form`` None: a renamed ticket without a form, services unknown."""
+        "Event state"). ``form`` None: a renamed ticket without a form, services unknown.
+        ``room_set``: a renamed ticket whose title names a location (not TBD, not missing).
+
+        More than ``urgent_days`` before the event, two signs that the desk has the open
+        question in hand keep the ticket quiet: a desk member's entry of any kind newer than
+        the requester's latest message, and a room in the title while the desk waits on the
+        requester. Within ``urgent_days`` the usual rows come back as a last check."""
         until = _hours(now, upcoming)
         near = until <= rules.near_event_days * 24
+        quiet_window = until > rules.urgent_days * 24
         status = event_status(feed, row.requestor, is_desk)
-        states[row.ticket_id] = status
-        reads.append(
-            EventRead(
-                row.ticket_id,
-                event_state(form, status.state),
-                form.wants_av if form is not None else None,
-                form.space if form is not None else None,
-            )
-        )
-        since = _hours(status.since, now) if status.since is not None else None
         # Whatever the services and whether or not the desk has replied yet: the requester
         # wrote last, so the desk owes a reply, as on any ticket.
         visible = [entry for entry in feed.entries if entry.kind == "reply"]
@@ -532,11 +545,32 @@ def evaluate(
         replied = latest is not None and (
             same_person(latest.author, row.requestor) or not is_desk(latest.author)
         )
+        # A desk entry newer than the requester's message (a private note, a title change)
+        # shows the desk has read it and acted, even where the requester cannot see it.
+        handled = replied and quiet_window and _desk_acted_after(feed, row.requestor, is_desk)
+        # A room in the title means the main detail is in; the last check before the event
+        # covers the Zoom link and recording.
+        room_quiet = room_set and quiet_window and status.state == "waiting_on_requester"
+        shown = status
+        if (handled and status.state == "requester_replied") or room_quiet:
+            shown = EventStatus("in_progress")
+        states[row.ticket_id] = shown
+        reads.append(
+            EventRead(
+                row.ticket_id,
+                event_state(form, shown.state),
+                form.wants_av if form is not None else None,
+                form.space if form is not None else None,
+            )
+        )
+        since = _hours(status.since, now) if status.since is not None else None
         waited = _hours(latest.created, now) if replied and latest.created is not None else None
         owed: Priority | None = None  # the client_waiting priority, when one is due
         if replied:
             if internal(row):
                 counts["internal_requestor"] += 1
+            elif handled:
+                pass  # the desk acted after the requester's message: nothing owed yet
             elif near:
                 owed = "high"
             elif waited is not None and waited >= rules.stale_hours:
@@ -585,7 +619,14 @@ def evaluate(
             if form is not None:
                 counts["event_outreach_not_due"] += 1
         elif status.state == "waiting_on_requester":
-            if near:
+            if room_set:
+                # The room is in; only a last check within urgent_days, at high priority.
+                due = near or (since is not None and since >= rules.stale_hours)
+                if until <= rules.urgent_days * 24 and due:
+                    add(row, "event_details_pending", "high", "details_room_set", since, until)
+                else:
+                    counts["event_outreach_done"] += 1
+            elif near:
                 add(row, "event_details_pending", "high", "details_pending_near", since, until)
             elif (
                 since is not None
@@ -596,7 +637,9 @@ def evaluate(
             else:
                 counts["event_outreach_done"] += 1
         elif status.state == "requester_replied":
-            pass  # judged above, with every requester-last event
+            # Judged above, with every requester-last event; handled ones count as in progress.
+            if handled:
+                counts["event_in_progress"] += 1
         else:
             # The requester has answered and the desk wrote last: without the events
             # spreadsheet, finished cannot be told from unfinished, so nothing is raised.
@@ -670,7 +713,8 @@ def evaluate(
                 missing_forms.append(row.ticket_id)
             else:
                 counts["event_renamed_with_form"] += 1
-            judge_event(row, feed, form, next_date)
+            room_set = info.location_named
+            judge_event(row, feed, form, next_date, room_set)
             continue
 
         if row.created is None:

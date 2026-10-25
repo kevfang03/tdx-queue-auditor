@@ -914,17 +914,22 @@ def _comparison_lines(tally: _Tally, verdict: str) -> list[str]:
     return [*lines, line + "."]
 
 
-def _shadow_period(tally: _Tally, days: int) -> list[str]:
+def _period_words(days: int, period: str | None) -> str:
+    """``last 3 days``, or ``period`` (``today``) in its place."""
+    return period if period is not None else f"last {_plural(days, 'day')}"
+
+
+def _shadow_period(tally: _Tally, days: int, period: str | None = None) -> list[str]:
     """The browser primary, the API compared."""
     return [
-        f"API shadow, last {_plural(days, 'day')}: {_plural(tally.cycles, 'cycle')}; "
+        f"API shadow, {_period_words(days, period)}: {_plural(tally.cycles, 'cycle')}; "
         f"{tally.compared} compared, {_plural(tally.failed, 'API failure')}"
         f"{_reasons(tally.failures)}.",
         *_comparison_lines(tally, "API matched the browser"),
     ]
 
 
-def _api_period(tally: _Tally, days: int) -> list[str]:
+def _api_period(tally: _Tally, days: int, period: str | None = None) -> list[str]:
     """The API primary, with its browser fallbacks; the browser compared."""
     fallbacks = sum(tally.fallbacks.values())
     skipped = sum(tally.skips.values())
@@ -934,7 +939,7 @@ def _api_period(tally: _Tally, days: int) -> list[str]:
     if skipped:
         shadow += f", {skipped} skipped{_reasons(tally.skips)}"
     lines = [
-        f"API primary, last {_plural(days, 'day')}: {_plural(tally.cycles, 'cycle')}; "
+        f"API primary, {_period_words(days, period)}: {_plural(tally.cycles, 'cycle')}; "
         f"{tally.cycles - fallbacks} read through the API, "
         f"{_plural(fallbacks, 'browser fallback')}{_reasons(tally.fallbacks)}.",
         shadow + ".",
@@ -944,11 +949,16 @@ def _api_period(tally: _Tally, days: int) -> list[str]:
     return lines
 
 
-def compare_report(records: Sequence[Mapping], *, days: int, show_ids: bool = False) -> list[str]:
+def compare_report(
+    records: Sequence[Mapping], *, days: int, show_ids: bool = False, period: str | None = None
+) -> list[str]:
     """The ``tdx api compare`` lines over ``records``: for each period found (the browser
     primary, then the API primary), counts, percentages, medians and a verdict, and for the
     API primary its cycles by source with the fallbacks by reason; ticket ids only with
-    ``show_ids``. Unreadable records are skipped and counted."""
+    ``show_ids``. Unreadable records are skipped and counted.
+
+    ``period`` names the stretch in both period headings instead of ``last N days`` (the
+    day-end notice says ``today``)."""
     periods: dict[str, list[Mapping]] = {"browser": [], "api": []}
     unknown = 0
     for record in records:
@@ -961,9 +971,9 @@ def compare_report(records: Sequence[Mapping], *, days: int, show_ids: bool = Fa
     unreadable = unknown + shadow.unreadable + api.unreadable
     lines: list[str] = []
     if shadow.cycles:
-        lines += _shadow_period(shadow, days)
+        lines += _shadow_period(shadow, days, period)
     if api.cycles:
-        lines += _api_period(api, days)
+        lines += _api_period(api, days, period)
     if not lines:
         lines.append(
             f"No API shadow records in the last {_plural(days, 'day')}. Set tdx.source = "

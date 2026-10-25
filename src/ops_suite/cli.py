@@ -73,6 +73,7 @@ from ops_suite.tdx.api_token import (
     browser_fetcher,
     expiry_text,
     fetch_token,
+    load_token,
     save_token,
 )
 from ops_suite.tdx.browser import PROFILE_IN_USE_MESSAGE, BrowserStartError, TdxBrowser
@@ -1623,6 +1624,7 @@ def _tdx_watch(args: argparse.Namespace) -> int:
             notify=notify,
             destination=destination,
             shadow=shadow,
+            day_end=load_token,
         )
     return _finished(command, code)
 

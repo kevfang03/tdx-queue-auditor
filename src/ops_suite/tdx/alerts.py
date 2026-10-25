@@ -8,11 +8,12 @@ run, or from a queue read in full, deletes its record. The state is recorded onl
 successful post.
 
 The shift summary (``build_summary_card``) lists **all** open findings at a configured time,
-marks the new ones, and may mention people. It shows the "Events this week" section first,
-"(possible duplicate of #<id>)" on rows, and "Ready to close" last. "Ready to close" findings
+marks the ones added since the last post "(added)", and may mention people. It shows the
+"Events this week" section first, "(possible duplicate of #<id>)" on rows, and "Ready to
+close" last. "Ready to close" findings
 stay out of the alert cards and the alert state unless ``alert_ready_to_close``
 (``alertable``). The day's first summary posted is that full card; later slots post a delta
-(``fit_delta_card``: new findings and due reminders as rows, cleared ones as a count), and
+(``fit_delta_card``: added findings and due reminders as rows, cleared ones as a count), and
 only when it has a row: in a shared chat, an update with nothing to act on is noise.
 ``SummaryState`` remembers the last slot dealt with, the last one posted and the (ticket id,
 kind) set open at that post; ``summary_change`` compares. Between slots, an event finding
@@ -73,7 +74,7 @@ SECTION_LABELS: dict[str, str] = {
     "needs_review": "Someone else wrote last",
     "event_outreach_due": "Event: email the requester",
     "event_details_pending": "Event: follow up with the requester",
-    "location_tbd_soon": "Event soon: room still TBD",
+    "location_tbd_soon": "Event soon: no room yet",
     "event_over": "Event over: resolve",
     "ready_to_close": "Ready to close",
 }
@@ -119,18 +120,28 @@ WORDING: dict[tuple[str, str | None], str] = {
         "The last message, {age} ago, came from someone other than the requester or {team}: "
         "check whether the requester still needs a reply"
     ),
+    # Every event row starts "Event in 5 days." and goes on in full sentences.
     ("event_outreach_due", "outreach_due_requester_wrote"): (
-        "Event in {days}; the requester wrote {wrote} ago. Email them for " + _OUTREACH_ASK
+        "Event in {days}. The requester wrote {wrote} ago. Email them for " + _OUTREACH_ASK
     ),
-    ("event_outreach_due", None): "Event in {days}: email the requester for " + _OUTREACH_ASK,
+    ("event_outreach_due", None): "Event in {days}. Email the requester for " + _OUTREACH_ASK,
     ("event_details_pending", "details_pending_near"): (
-        "Event {when}: still waiting on the requester (asked {age} ago): follow up now"
+        "Event {when}. Still waiting on the requester (asked {age} ago): follow up now"
+    ),
+    # A room in the title means the main detail is in: what may be left is the Zoom side.
+    ("event_details_pending", "details_room_set"): (
+        "Event {when}. The room is set; confirm the Zoom link and recording if they're still open"
     ),
     ("event_details_pending", None): (
-        "Event in {days}; the requester hasn't answered for {age}: follow up"
+        "Event in {days}. The requester hasn't answered for {age}: follow up"
+    ),
+    # A title with a date and time but no room never says TBD, so its row says what is there.
+    ("location_tbd_soon", "location_missing"): (
+        "Event in {age}. No room on the ticket yet. Check the events spreadsheet; if a room is "
+        "listed, update the ticket."
     ),
     ("location_tbd_soon", None): (
-        "Location still TBD on the ticket, event in {age}. Check the events spreadsheet; if a "
+        "Event in {age}. Location still TBD on the ticket. Check the events spreadsheet; if a "
         "room is listed, update the ticket."
     ),
     ("event_over", None): "Event ended {age} ago: ready to resolve?",
@@ -888,16 +899,20 @@ def summary_heading(
     *,
     who: str = "you",
 ) -> str:
-    """``TDX queue at 7:30 AM: 6 tickets for the help desk (2 new since yesterday)`` (just
-    ``(2 new)`` without ``since``) or ``Queue clear at 7:30 AM: nothing needs attention.``,
-    with ``(late: due 7:30 AM)`` after the time for a late summary. ``who`` is the card's
-    reader as ``reader_name`` gives it. "Tickets for" the reader rather than "open", which
-    reads as open tickets in the queue."""
-    when = at if late_due is None else f"{at} (late: due {late_due})"
+    """``TDX queue at 7:30 AM: 6 tickets for the help desk (2 added since yesterday)`` (just
+    ``(2 added)`` without ``since``; nothing when none was added) or ``Queue clear at 7:30
+    AM: nothing needs attention.``, with ``(late, due 7:30 AM)`` after the time for a late
+    summary. ``who`` is the card's reader as ``reader_name`` gives it. "Tickets for" the
+    reader rather than "open", which reads as open tickets in the queue; "added" rather than
+    "new", because these are older tickets newly on the list, not tickets that just came in."""
+    when = at if late_due is None else f"{at} (late, due {late_due})"
     if total == 0:
         return f"Queue clear at {when}: nothing needs attention."
-    new_text = f"{new} new" if since is None else f"{new} new since {since}"
-    return f"TDX queue at {when}: {_plural(total, 'ticket')} for {who} ({new_text})"
+    heading = f"TDX queue at {when}: {_plural(total, 'ticket')} for {who}"
+    if new == 0:
+        return heading
+    added = f"{new} added" if since is None else f"{new} added since {since}"
+    return f"{heading} ({added})"
 
 
 def reader_name(reader: Reader) -> str:
@@ -917,24 +932,54 @@ def since_text(since: datetime, slot: datetime, tz: ZoneInfo) -> str:
 
 
 def delta_heading(new: int, reminders: int, since: str, *, who: str = "you") -> str:
-    """``Since 7:30 AM: 1 new ticket and 2 reminders for the help desk``: the heading of a later
-    slot's update, naming only the parts it has. ``new`` counts the rows marked new,
-    ``reminders`` every other row (due reminders, and urgent findings open at the last post);
-    ``who`` as ``reader_name`` gives it."""
+    """``Since 7:30 AM: 1 more ticket and 2 reminders for the help desk``: the heading of a
+    later slot's update, naming only the parts it has. ``new`` counts the tickets added to
+    the list since the last post (their rows are marked "(added)"), ``reminders`` every other
+    row (due reminders, and urgent findings open at the last post); ``who`` as
+    ``reader_name`` gives it. "More", because the earlier posts already listed the rest."""
     parts = [
         _plural(count, word)
-        for count, word in ((new, "new ticket"), (reminders, "reminder"))
+        for count, word in ((new, "more ticket"), (reminders, "reminder"))
         if count
     ]
     return f"Since {since}: {' and '.join(parts)} for {who}"
 
 
-def delta_lead(total: int, cleared: int, checked: str) -> str:
-    """``5 tickets need a look in all; 1 was handled. Checked at 12:00 PM.``: the update's
-    lead, the whole queue's count and the findings cleared since the last post."""
-    need = f"{_plural(total, 'ticket')} {'needs' if total == 1 else 'need'} a look in all"
-    handled = f"; {cleared} {'was' if cleared == 1 else 'were'} handled" if cleared else ""
-    return f"{need}{handled}. Checked at {checked}."
+def _need(count: int) -> str:
+    return "needs" if count == 1 else "need"
+
+
+def delta_lead(total_tickets: int, shown_tickets: int, cleared: int, checked: str) -> str:
+    """The update's lead, counting tickets (one ticket can carry two findings): ``4 tickets
+    need attention in total: the 2 below, plus 2 posted earlier today.``, or when nothing
+    else is open ``1 ticket needs attention: the one below.``, ``2 tickets need attention,
+    both below.``, ``3 tickets need attention, all below.``; then ``1 no longer needs
+    attention.`` for the tickets cleared since the last post, and ``Checked at 12:00 PM.``
+
+    ``shown_tickets`` are the tickets the update selected, before the card is fitted to size
+    (a ``+N more`` line says when rows were dropped). "No longer needs attention" rather than
+    "handled": a finding also clears when its event has passed."""
+    total = max(total_tickets, shown_tickets)
+    earlier = total - shown_tickets
+    if total == 0:
+        need = "Nothing needs attention."
+    elif shown_tickets <= 0:
+        need = f"{_plural(total, 'ticket')} {_need(total)} attention, all posted earlier today."
+    elif earlier:
+        below = "the one below" if shown_tickets == 1 else f"the {shown_tickets} below"
+        need = (
+            f"{_plural(total, 'ticket')} {_need(total)} attention in total: {below}, "
+            f"plus {earlier} posted earlier today."
+        )
+    elif total == 1:
+        need = "1 ticket needs attention: the one below."
+    elif total == 2:
+        need = "2 tickets need attention, both below."
+    else:
+        need = f"{total} tickets need attention, all below."
+    if cleared:
+        need += f" {cleared} no longer {_need(cleared)} attention."
+    return f"{need} Checked at {checked}."
 
 
 def _summary_card(
@@ -1039,7 +1084,7 @@ def _finding_sections(
             key = (ticket_id, finding.kind)
             line = _id_link(ticket_id, links)
             if key in new_keys:
-                line += " (new)"
+                line += " (added)"
             if key in urgent_keys:
                 line += f" {EVENT_SOON_MARK}"
             if ticket_id in duplicates:
@@ -1048,7 +1093,7 @@ def _finding_sections(
             if key in reminder_keys:
                 wording += " · reminder"
             if not show_titles:
-                # One line, no title: "#<id> (new) · <finding wording>".
+                # One line, no title: "#<id> (added) · <finding wording>".
                 body.append(_text(f"{line} · {wording}", spacing="Small"))
                 continue
             title = _shown_title(rows_by_id.get(ticket_id), title_chars, show_titles)
@@ -1101,7 +1146,7 @@ def fit_summary_card(
 
     ``events`` is the "Events this week" section, first (at most ``max_rows`` rows);
     ``duplicates`` maps a ticket id to the older ticket it may duplicate; ``since`` is the
-    last summary posted, which the heading's "new since" names; ``urgent_keys`` are the
+    last summary posted, which the heading's "added since" names; ``urgent_keys`` are the
     findings marked ``(event soon)`` instead of getting a card of their own; ``reader``,
     who the card speaks to (the team on a desk card, "you" on a personal one)."""
     ordered = open_findings(findings)
@@ -1163,7 +1208,7 @@ def build_summary_card(
 ) -> dict[str, object]:
     """The shift-summary Adaptive Card: the heading (``Queue clear`` when nothing is open, a
     late marker when late), "Events this week" when there are any, every open finding
-    grouped by kind with its count, linked ids marked ``(new)`` and ``(possible duplicate of
+    grouped by kind with its count, linked ids marked ``(added)`` and ``(possible duplicate of
     #<id>)``, titles only with ``show_titles``, ``+N more`` past ``max_rows``, the counts-only
     preview line, and the optional mentions."""
     return fit_summary_card(
@@ -1212,18 +1257,22 @@ def fit_delta_card(
     reader: Reader = PERSONAL,
 ) -> tuple[tuple[Finding, ...], dict[str, object]]:
     """A later slot's update card and the findings it shows by id: the heading ``Since 7:30
-    AM: N new tickets and M reminders for {who}``, the lead ``K tickets need a look in all; J
-    were handled.`` (``total`` open findings in all, ``cleared`` gone since the last post),
-    then rows only for ``findings``: the new ones (``new_keys``, marked ``(new)``) and the
-    due reminders (``reminder_keys``, marked ``· reminder``), grouped by kind; urgent event
+    AM: N more tickets and M reminders for {who}``, the lead (``delta_lead``: ``total``
+    tickets with an open finding in all, ``cleared`` tickets with none left since the last
+    post), then rows only for ``findings``: the added ones (``new_keys``, marked
+    ``(added)``) and the due reminders (``reminder_keys``, marked ``· reminder``), grouped by
+    kind; urgent event
     findings (``urgent_keys``) are marked ``(event soon)``. Cleared findings are a count only;
     no "Events this week" and no mention. Titles only with ``show_titles``; rows are dropped
     from the end until the card is under ``CARD_MAX_BYTES``. The caller posts it only when
     ``findings`` has a row."""
     ordered = open_findings(findings)
-    new = sum((f.ticket_id, f.kind) in new_keys for f in ordered)
-    heading = delta_heading(new, len(ordered) - new, card_time(since, tz), who=reader_name(reader))
-    lead = delta_lead(total, cleared, card_time(now, tz))
+    added = [f for f in ordered if (f.ticket_id, f.kind) in new_keys]
+    added_tickets = len({f.ticket_id for f in added})
+    reminders = len(ordered) - len(added)
+    heading = delta_heading(added_tickets, reminders, card_time(since, tz), who=reader_name(reader))
+    shown_tickets = len({f.ticket_id for f in ordered})
+    lead = delta_lead(total, shown_tickets, cleared, card_time(now, tz))
     rows = max_rows
     while True:
         body: list[dict[str, object]] = [

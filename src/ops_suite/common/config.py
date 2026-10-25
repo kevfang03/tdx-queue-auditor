@@ -223,6 +223,9 @@ class TdxWatchSettings(BaseModel):
     failures_before_stop: int = Field(default=3, ge=1, le=10)
     # Minutes between quiet checks while the TDX sign-in has expired.
     signed_out_retry_minutes: int = Field(default=10, ge=5, le=30)
+    # At each desk day's close, one notice to the personal chat with the day's comparison and
+    # the API token's state; only while tdx.source is "shadow" or "api".
+    day_end_notice: bool = True
 
 
 class TdxSummarySettings(BaseModel):

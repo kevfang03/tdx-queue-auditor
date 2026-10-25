@@ -8,7 +8,7 @@ A read-only auditor for a university IT service desk's TeamDynamix ("TDX") ticke
 
 The desk already gets an alert when something happens to a ticket. Nothing notices when **nothing** happens: a client replied two days ago and nobody answered, a reply came from someone outside the desk, an event is three days out and its room is still "TBD". Finding those meant reading every ticket by hand.
 
-The REST API's usual keys are not issued to student staff, so the auditor first read the queue the way a person does: through a browser with the person's own sign-in, behind a request guard that makes sure that browser can only read. With the desk's approval, it can now also read through the TDX Web API, using a token from the system's own SSO sign-in, and a side-by-side trial compares the two.
+The REST API's usual keys are not issued to student staff, so the auditor first read the queue the way a person does: through a browser with the person's own sign-in, behind a request guard that makes sure that browser can only read. With the desk's approval, it now also reads through the TDX Web API, using a token from the system's own SSO sign-in. The API drives the cards, and the browser keeps reading beside it so the two can be compared.
 
 ## What it does
 
@@ -70,9 +70,9 @@ Setup and commands: [the TDX API](docs/USAGE.md#tdx-api-proof-of-concept), [shad
 
 ## Demo
 
-![A demo Teams card: synthetic tickets grouped by finding](docs/img/demo-card.png)
+![A demo Teams shift summary: synthetic tickets grouped by what the help desk should do](docs/img/demo-card.png)
 
-*A demo card from synthetic data, with the optional LLM step on (hence "Follow up with requester").*
+*A demo shift summary from synthetic data: the first post of the day in the desk chat, in the default no-AI mode.*
 
 ### Try it in 2 minutes
 
@@ -157,7 +157,7 @@ Piloted with the desk's approval on its live queue:
 - **The loop:** 5 cycles over 2 hours, all on schedule. The first sent one card and the next four reported "nothing new", so de-duplication held.
 - **The optional LLM step:** a synthetic eval scored 24 of 24 (development set) and 12 of 12 (holdout, run once) with 0 unsafe errors, for about $0.001; on live tickets, 2 of 2 verdicts were judged right, for about $0.0002, and repeat cycles cost nothing.
 - **In daily use:** the auditor runs on one desk member's own computer with the LLM step off, posting to the desk's Teams group chat: a full summary at the day's first shift slot, which replaced a weekly ticket check-in that a person used to compile by reading every ticket; short "since last slot" updates when something changed; and a short "Event soon" card when an event finding falls within 2 days of its event.
-- **Browser and API side by side:** the first side-by-side run showed the browser reader missing answers in event request forms whose full text sits in the collapsed part of the description (the API read 5 forms correctly; a manual check confirmed 2 of 2). The browser reader was fixed, and the two then agreed on findings, event states and id rows. A shadow trial is under way; its first comparison, one cycle on the live queue, matched rows 40 of 40 and feeds 7 of 7, with identical findings and 0 mismatches. The API cycle took 17.9 s with 16 requests, all `GET`; the browser cycle took 27.9 s.
+- **Browser and API side by side:** the first side-by-side run showed the browser reader missing answers in event request forms whose full text sits in the collapsed part of the description (the API read 5 forms correctly; a manual check confirmed 2 of 2). The browser reader was fixed, and the two then agreed on findings, event states and id rows. Two days of side-by-side comparison on the live queue followed: 56 of 56 cycles compared, rows matched 2,080 of 2,080 and feeds 526 of 526, with 0 mismatches. On the first day the median cycle took 19.9 s through the API and 37.6 s through the browser. The API then became the source of every card. The browser still reads beside it each cycle and the comparison keeps running; switching back is one setting (`tdx.source = "shadow"`).
 - **Tests:** more than 1,900, run in CI on Linux, Windows and macOS on every push. No test needs a network, a keychain, a webhook or TDX.
 
 ## Next

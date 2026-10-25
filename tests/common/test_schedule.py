@@ -96,6 +96,105 @@ def test_every_day_closed_raises() -> None:
     assert not hours.is_open(at(2026, 10, 16, 12))
     with pytest.raises(ValueError, match="closed on every day"):
         hours.next_open(at(2026, 10, 16, 12))
+    with pytest.raises(ValueError, match="closed on every day"):
+        hours.next_window(at(2026, 10, 16, 12))
+    assert hours.window_at(at(2026, 10, 16, 12)) is None
+    assert hours.last_closed(at(2026, 10, 16, 12)) is None
+
+
+# --- whole windows: the one now, the last closed, the next ---------------------------------
+
+FRIDAY = (at(2026, 10, 16, 7, 30), at(2026, 10, 16, 22, 0))
+SATURDAY = (at(2026, 10, 17, 8, 0), at(2026, 10, 17, 18, 0))
+SUNDAY = (at(2026, 10, 18, 12, 0), at(2026, 10, 18, 17, 0))
+MONDAY = (at(2026, 10, 19, 7, 30), at(2026, 10, 19, 22, 0))
+
+
+@pytest.mark.parametrize(
+    ("now", "expected"),
+    [
+        (at(2026, 10, 16, 7, 29), None),
+        (at(2026, 10, 16, 7, 30), FRIDAY),  # the start is inside
+        (at(2026, 10, 16, 21, 59), FRIDAY),
+        (at(2026, 10, 16, 22, 0), None),  # the end is outside
+        (at(2026, 10, 17, 12, 0), SATURDAY),
+        (at(2026, 10, 18, 12, 0), SUNDAY),
+        (at(2026, 10, 18, 17, 0), None),
+    ],
+)
+def test_window_at(now: datetime, expected: tuple[datetime, datetime] | None) -> None:
+    assert DESK.window_at(now) == expected
+
+
+@pytest.mark.parametrize(
+    ("now", "expected"),
+    [
+        (at(2026, 10, 16, 21, 59), (at(2026, 10, 15, 7, 30), at(2026, 10, 15, 22, 0))),
+        (at(2026, 10, 16, 22, 0), FRIDAY),  # the end itself counts as closed
+        (at(2026, 10, 17, 7, 0), FRIDAY),  # Saturday before the open
+        (at(2026, 10, 17, 18, 0), SATURDAY),
+        (at(2026, 10, 18, 11, 0), SATURDAY),  # Sunday morning
+        (at(2026, 10, 18, 17, 0), SUNDAY),
+        (at(2026, 10, 19, 3, 0), SUNDAY),  # Monday before the open
+    ],
+)
+def test_last_closed(now: datetime, expected: tuple[datetime, datetime]) -> None:
+    assert DESK.last_closed(now) == expected
+
+
+@pytest.mark.parametrize(
+    ("now", "expected"),
+    [
+        (at(2026, 10, 16, 7, 0), FRIDAY),  # before today's window
+        (at(2026, 10, 16, 7, 30), FRIDAY),  # at the start
+        (at(2026, 10, 16, 14, 0), FRIDAY),  # inside: the window itself
+        (at(2026, 10, 16, 22, 0), SATURDAY),  # at the end: the next one
+        (at(2026, 10, 17, 18, 0), SUNDAY),
+        (at(2026, 10, 18, 17, 0), MONDAY),
+    ],
+)
+def test_next_window(now: datetime, expected: tuple[datetime, datetime]) -> None:
+    assert DESK.next_window(now) == expected
+
+
+def test_windows_skip_a_closed_day() -> None:
+    hours = DeskHours.from_settings(
+        ScheduleSettings(desk_hours={"fri": "07:30-22:00", "mon": "07:30-22:00"})
+    )
+    assert hours.window_at(at(2026, 10, 17, 12)) is None  # Saturday: closed
+    assert hours.last_closed(at(2026, 10, 18, 12)) == FRIDAY  # Sunday: Friday's window
+    assert hours.next_window(at(2026, 10, 17, 12)) == MONDAY
+    # Friday before its close: the window before it is Monday's, four days back.
+    assert hours.last_closed(at(2026, 10, 16, 21)) == (
+        at(2026, 10, 12, 7, 30),
+        at(2026, 10, 12, 22, 0),
+    )
+
+
+def test_last_closed_finds_a_window_a_week_back() -> None:
+    hours = DeskHours.from_settings(ScheduleSettings(desk_hours={"mon": "07:30-22:00"}))
+    # Monday before its open: last Monday's window.
+    assert hours.last_closed(at(2026, 10, 19, 7, 0)) == (
+        at(2026, 10, 12, 7, 30),
+        at(2026, 10, 12, 22, 0),
+    )
+
+
+def test_windows_keep_their_wall_clock_times_across_dst_2026_11_01() -> None:
+    # Clocks go back at 02:00 on Sunday 2026-11-01: Sunday is EST, Saturday was EDT.
+    sunday = DESK.window_at(datetime(2026, 11, 1, 18, 0, tzinfo=UTC))  # 13:00 EST
+    assert sunday == (at(2026, 11, 1, 12, 0), at(2026, 11, 1, 17, 0))
+    assert sunday[0].astimezone(UTC) == datetime(2026, 11, 1, 17, 0, tzinfo=UTC)
+    assert sunday[1].astimezone(UTC) == datetime(2026, 11, 1, 22, 0, tzinfo=UTC)
+    # Sunday's close, then Monday's whole window.
+    assert DESK.last_closed(at(2026, 11, 1, 17, 0)) == sunday
+    monday = DESK.next_window(at(2026, 11, 1, 17, 0))
+    assert monday == (at(2026, 11, 2, 7, 30), at(2026, 11, 2, 22, 0))
+    assert monday[1].astimezone(UTC) == datetime(2026, 11, 3, 3, 0, tzinfo=UTC)
+    # Saturday's window, read from Sunday morning before the change, is still EDT.
+    saturday = DESK.last_closed(datetime(2026, 11, 1, 5, 30, tzinfo=UTC))  # 01:30 EDT
+    assert saturday is not None
+    assert saturday[1].astimezone(UTC) == datetime(2026, 10, 31, 22, 0, tzinfo=UTC)
 
 
 def test_naive_time_is_refused() -> None:

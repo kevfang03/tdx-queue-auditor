@@ -34,11 +34,18 @@ on one short "Event soon" card per run (``send_urgent``), or marked "(event soon
 summary when one is due that run. The summary state remembers it, so the next delta does not
 list it as new and it is not posted again until it clears.
 
+Day-end notice (``tdx.watch.day_end_notice``, while ``tdx.source`` is "shadow" or "api"): at
+each desk day's close the loop sends one plain notice to the personal chat with the day's
+comparison (counts only) and whether the stored API token lasts through the next desk day,
+saying when to refresh it if not. ``day-end-state.json`` holds the last day sent.
+
 Output and log records carry counts, kinds, reason codes, times and error class names only:
 never a ticket title, a name or the webhook URL.
 """
 
+import json
 import logging
+import os
 import sys
 import time
 from collections import Counter
@@ -95,8 +102,15 @@ from ops_suite.tdx.alerts import (
     urgent_event,
 )
 from ops_suite.tdx.api_client import TdxApiClient
-from ops_suite.tdx.api_token import TokenError, TokenSource, browser_fetcher
+from ops_suite.tdx.api_token import (
+    TOKEN_LIFETIME,
+    ApiToken,
+    TokenError,
+    TokenSource,
+    browser_fetcher,
+)
 from ops_suite.tdx.browser import BrowserStartError, TdxBrowser
+from ops_suite.tdx.card_time import card_time
 from ops_suite.tdx.dashboard import (
     DashboardRead,
     DashboardStructureError,
@@ -756,12 +770,16 @@ def draft_summary(
             empty = AlertPlan(on_card=(), overflow=0, cleared=())
             return SummaryDraft(plan, empty, None, len(findings), 0, 0, "delta", 0, change.open)
         links = card_links(rows_by_id, [finding.ticket_id for finding in rows], tdx)
+        # The lead counts tickets, not findings: one ticket can carry two findings, and a
+        # ticket cleared of one finding still needs attention while another stays open.
+        open_ids = {finding.ticket_id for finding in findings}
+        cleared_ids = {ticket_id for ticket_id, _ in change.cleared} - open_ids
         shown, card = fit_delta_card(
             rows,
             change.new,
             reminder_keys,
-            len(change.cleared),
-            len(findings),
+            len(cleared_ids),
+            len(open_ids),
             rows_by_id,
             links,
             request.since,
@@ -1281,6 +1299,148 @@ def _utc(when: datetime) -> datetime:
     return when.astimezone(UTC)
 
 
+# --- the day-end notice ------------------------------------------------------------------
+
+DAY_END_STATE_FILE = "day-end-state.json"
+TOKEN_COMMAND = f'"{RUN} tdx api token --headed"'
+DAY_END_MISMATCH_ADVICE = (
+    "The browser and the API disagreed. To let the browser make the cards again, set "
+    'tdx.source = "shadow" and restart tdx watch; "tdx api compare --days 1 --show-ids" lists '
+    "the tickets on this computer."
+)
+# The day-end notice's line when no run recorded a comparison during the day.
+DAY_END_NO_RECORDS = "No runs were recorded for comparison today."
+TokenCode = Literal["ok", "refresh_now", "refresh_later", "missing", "off"]
+
+
+def day_end_state_path(settings: Settings) -> Path:
+    """``day-end-state.json`` in the TDX data folder: the last desk day whose notice went out."""
+    return paths.tdx_dir(settings) / DAY_END_STATE_FILE
+
+
+class DayEndState:
+    """``day-end-state.json``: ``{"last_sent": "YYYY-MM-DD"}``, the local date of the last desk
+    day whose day-end notice was sent. A missing or unreadable file counts as never sent: at
+    worst one notice goes out twice."""
+
+    def __init__(self, path: Path) -> None:
+        self.path = path
+        self.last_sent: date | None = None
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+            self.last_sent = date.fromisoformat(str(data["last_sent"]))
+        except FileNotFoundError:
+            pass
+        except (OSError, ValueError, KeyError, TypeError):
+            log.warning("day-end state unreadable")
+
+    def __repr__(self) -> str:
+        return f"DayEndState(last_sent={self.last_sent!r})"
+
+    def record(self, day: date) -> None:
+        """Remember ``day`` as sent and write the file atomically."""
+        self.last_sent = day
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        temp_path = self.path.with_name(self.path.name + ".tmp")
+        temp_path.write_text(json.dumps({"last_sent": day.isoformat()}), encoding="utf-8")
+        os.replace(temp_path, self.path)
+
+
+def token_line(token: ApiToken | None, now: datetime, hours: DeskHours) -> tuple[str, TokenCode]:
+    """Whether the stored API token lasts through the next desk day, and when to refresh it if
+    not: the notice's line and its log code.
+
+    A token lasts ``TOKEN_LIFETIME`` from its refresh, so one refreshed after
+    ``next_close - TOKEN_LIFETIME`` covers the whole next desk day. The arithmetic is on aware
+    datetimes in UTC, so a DST change in between is counted right; the times shown are in the
+    desk's time zone, 12-hour like the cards.
+    """
+    tz = hours.tz
+    next_start, next_close = hours.next_window(now)
+    if token is None or _utc(token.expires) <= _utc(now):
+        return (
+            "API token missing or expired. Refresh it before the desk opens "
+            f"{card_time(next_start, tz, weekday=True)}: {TOKEN_COMMAND}.",
+            "missing",
+        )
+    expires = card_time(token.expires, tz, weekday=True)
+    if _utc(token.expires) >= _utc(next_close):
+        tomorrow = now.astimezone(tz).date() + timedelta(days=1)
+        covers = "tomorrow" if next_start.date() == tomorrow else f"{next_start:%a}"
+        return f"API token valid until {expires}; it covers {covers}.", "ok"
+    before = (
+        f"API token expires {expires}, before the desk closes "
+        f"{card_time(next_close, tz, weekday=True)}."
+    )
+    refresh_after = max(_utc(now), _utc(next_close) - TOKEN_LIFETIME)
+    if refresh_after <= _utc(now):
+        return f"{before} Refresh it now: {TOKEN_COMMAND}.", "refresh_now"
+    return (
+        f"{before} Refresh it after {card_time(refresh_after, tz, weekday=True)} so it lasts "
+        f"the whole day: {TOKEN_COMMAND}.",
+        "refresh_later",
+    )
+
+
+def day_end_notice(
+    settings: Settings,
+    window: tuple[datetime, datetime],
+    now: datetime,
+    hours: DeskHours,
+    records: Sequence[Mapping],
+    token: ApiToken | None,
+) -> tuple[str, dict[str, object]]:
+    """The day-end notice for the desk day ``window`` and its log extras. Pure: ``records``
+    are the comparison records written since the window opened, ``token`` the stored API
+    token (or None).
+
+    The first line names the day and the token's state, so a phone's preview shows what to
+    do; then the day's comparison, counts only (``compare_report`` never shows ticket ids
+    here); then, while the API makes the cards, what to do about a mismatch.
+    """
+    # The comparison report lives beside the shadow runner, which imports this module.
+    from ops_suite.tdx.shadow import compare_report
+
+    if settings.tdx.api.enabled:
+        token_text, code = token_line(token, now, hours)
+    else:
+        token_text, code = "", "off"
+    day = window[0].astimezone(hours.tz)
+    lines = [f"Desk day done ({day:%a}). {token_text}".rstrip()]
+    if records:
+        report = compare_report(records, days=1, show_ids=False, period="today")
+    else:
+        report = [DAY_END_NO_RECORDS]
+    lines += report
+    mismatches = any(
+        line.startswith("Mismatches:") and line != "Mismatches: none." for line in report
+    )
+    if mismatches and settings.tdx.source == "api":
+        lines.append(DAY_END_MISMATCH_ADVICE)
+    compared = sum(1 for record in records if record.get("result") == "compared")
+    extras: dict[str, object] = {
+        "day": day.date().isoformat(),
+        "compared": compared,
+        "mismatches": mismatches,
+        "token": code,
+    }
+    # Blank lines between them: card text is Markdown, where a single line break may be joined.
+    return "\n\n".join(lines), extras
+
+
+def day_end_on(settings: Settings) -> bool:
+    """Whether ``tdx watch`` sends the day-end notice: the setting, and a source that records
+    a comparison (``shadow`` or ``api``)."""
+    return settings.tdx.watch.day_end_notice and settings.tdx.source in ("shadow", "api")
+
+
+def _day_records(settings: Settings, since: datetime) -> list[dict[str, object]]:
+    """The comparison records written from ``since`` on."""
+    from ops_suite.tdx.shadow import ShadowLog, shadow_log_path  # see day_end_notice
+
+    return ShadowLog(shadow_log_path(settings)).since(since)
+
+
 def watch(
     settings: Settings,
     *,
@@ -1290,6 +1450,7 @@ def watch(
     notify: Callable[[str], None],
     destination: Destination = "personal",
     shadow: Callable[[AuditRun], str | None] | None = None,
+    day_end: Callable[[datetime], ApiToken | None] | None = None,
 ) -> int:
     """Run ``run_cycle`` every ``interval_minutes`` during desk hours until Ctrl+C.
 
@@ -1333,6 +1494,16 @@ def watch(
     ``tdx.source = "api"``: ``run_cycle`` reads through the API and falls back to the browser
     for the cycle by itself (``ApiFirst``), so only the browser's errors reach this loop and
     are handled as above. Each cycle's line starts with its source.
+
+    ``day_end``: the stored API token's reader (no refresh, no network). Given, and with
+    ``day_end_on``, the loop also wakes at each desk window's close (unless the next run or a
+    summary slot comes first) and sends one day-end notice to the personal chat
+    (``day_end_notice``): the day's comparison, counts only, and the token's state. Any wake
+    while the desk is closed sends the notice for the most recent closed day if it was not
+    sent yet (``day-end-state.json``), so a restart or a wake from sleep after the close still
+    sends it once; a day the loop slept through until the next open gets none. It never
+    touches the failure count, the alert, summary or sign-in state, and nothing it raises
+    stops the loop.
     """
     hours = DeskHours.from_settings(settings.schedule)
     interval = timedelta(minutes=settings.tdx.watch.interval_minutes)
@@ -1367,10 +1538,17 @@ def watch(
         slots = SummarySlots.from_settings(summary, settings.schedule)
         summary_path = summary_state_path(settings, destination)
         summary_state = SummaryState(summary_path)
+    day_end_active = day_end is not None and day_end_on(settings)
 
     def next_run(cycle_start: datetime, step: timedelta) -> datetime:
         due = cycle_start + step
-        wake = due if hours.is_open(due) else hours.next_open(due)
+        if hours.is_open(due):
+            wake = due
+        else:
+            wake = hours.next_open(due)
+            window = hours.window_at(cycle_start) if day_end_active else None
+            if window is not None and _utc(window[1]) < _utc(wake):
+                wake = window[1]  # the close, for the day-end notice
         slot = slots.next_after(cycle_start) if slots is not None else None
         if slot is not None and _utc(slot) < _utc(wake):
             return slot
@@ -1384,6 +1562,30 @@ def watch(
         if slot is None or summary_state.posted(slot) or _utc(now) >= _utc(slot) + grace:
             return None
         return slot
+
+    def send_day_end(now: datetime) -> None:
+        """The day-end notice for the most recent closed day, unless it went out already."""
+        assert day_end is not None
+        try:
+            window = hours.last_closed(now)
+            if window is None:
+                return
+            day = local(window[0]).date()
+            state = DayEndState(day_end_state_path(settings))
+            if state.last_sent is not None and state.last_sent >= day:
+                return
+            token = day_end(now) if settings.tdx.api.enabled else None
+            records = _day_records(settings, window[0])
+            text, extras = day_end_notice(settings, window, now, hours, records, token)
+            notify(text)
+            # Recorded even when the post failed (the notifier logs that), so a broken webhook
+            # does not send it again at every wake.
+            state.record(day)
+        except Exception as error:  # the notice must never stop the loop
+            log.info("tdx watch day-end notice failed", extra={"reason": type(error).__name__})
+            return
+        print(f"{local(now):%H:%M} Day-end notice sent.", flush=True)
+        log.info("tdx watch day-end notice", extra=extras)
 
     if alerts_to == destination:
         to_desk = "" if destination == "personal" else f" Cards go to the {destination} chat."
@@ -1443,6 +1645,8 @@ def watch(
                 pending_reason = None
             pending = due
             if not hours.is_open(now):
+                if day_end_active:
+                    send_day_end(now)
                 wake = hours.next_open(now)
                 print(f"Outside desk hours; next run {local(wake):%a %H:%M}.", flush=True)
                 log.info("tdx watch waiting", extra={"next_run": wake.isoformat()})

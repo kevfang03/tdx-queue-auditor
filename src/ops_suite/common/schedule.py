@@ -66,6 +66,49 @@ class DeskHours:
                 return start
         raise ValueError("desk hours are closed on every day of the week")
 
+    def _window_on(self, day: date) -> tuple[datetime, datetime] | None:
+        """``day``'s window as aware datetimes in ``tz``, or None when the desk is closed."""
+        window = self.windows.get(day.weekday())
+        if window is None:
+            return None
+        return (
+            datetime.combine(day, window[0], tzinfo=self.tz),
+            datetime.combine(day, window[1], tzinfo=self.tz),
+        )
+
+    def window_at(self, now: datetime) -> tuple[datetime, datetime] | None:
+        """The window containing ``now`` (the start inside, the end outside), or None."""
+        local = self._local(now)
+        window = self._window_on(local.date())
+        moment = local.astimezone(UTC)
+        if window is not None and window[0].astimezone(UTC) <= moment < window[1].astimezone(UTC):
+            return window
+        return None
+
+    def last_closed(self, now: datetime) -> tuple[datetime, datetime] | None:
+        """The most recent window that ended at or before ``now`` (searching back
+        ``SEARCH_DAYS`` days), or None."""
+        local = self._local(now)
+        moment = local.astimezone(UTC)
+        for offset in range(SEARCH_DAYS + 1):
+            window = self._window_on(local.date() - timedelta(days=offset))
+            if window is not None and window[1].astimezone(UTC) <= moment:
+                return window
+        return None
+
+    def next_window(self, now: datetime) -> tuple[datetime, datetime]:
+        """The window containing ``now``, else the next one to start after it.
+
+        ValueError if every day is closed.
+        """
+        current = self.window_at(now)
+        if current is not None:
+            return current
+        start = self.next_open(now)
+        window = self._window_on(start.date())
+        assert window is not None  # next_open only returns a window's start
+        return window
+
 
 @dataclass(frozen=True, slots=True)
 class SummarySlots:

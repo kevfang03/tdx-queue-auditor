@@ -1160,7 +1160,7 @@ def test_a_due_summary_replaces_the_alert_card_and_records_its_findings(
     assert cycles.times == [at(10, 19, 7, 30), at(10, 19, 8, 0)]
     assert [r.slot if r else None for r in cycles.requests] == [at(10, 19, 7, 30), None]
     assert len(poster.cards) == 1  # one card for the shift, not two
-    assert heading(poster.cards[0]) == "TDX queue at 7:30 AM: 2 tickets for the help desk (2 new)"
+    assert heading(poster.cards[0]) == "TDX queue at 7:30 AM: 2 tickets for the help desk (2 added)"
     assert TITLE not in json.dumps(poster.cards[0])  # desk default: no titles
     out = capsys.readouterr().out
     assert "Shift summaries go to the desk chat; next Mon 07:30." in out
@@ -1232,7 +1232,7 @@ def test_a_late_summary_within_grace_is_marked_late_with_one_notice(
     assert cycles.times[-1] == at(10, 19, 8, 0)
     assert notices == [NOTICE, "07:30 summary posted late at 08:00"]
     assert heading(poster.cards[0]) == (
-        "TDX queue at 8:00 AM (late: due 7:30 AM): 2 tickets for the help desk (2 new)"
+        "TDX queue at 8:00 AM (late, due 7:30 AM): 2 tickets for the help desk (2 added)"
     )
 
 
@@ -1378,9 +1378,9 @@ def test_the_summary_lists_ready_to_close_without_recording_or_marking_it(
 
     assert outcome.status == "sent" and outcome.open == 2 and outcome.new == 1
     lines = [block["text"] for block in poster.cards[0]["body"]]
-    assert lines[0] == "TDX queue at 7:30 AM: 2 tickets for the help desk (1 new)"
+    assert lines[0] == "TDX queue at 7:30 AM: 2 tickets for the help desk (1 added)"
     assert lines[-2] == "Ready to close (1)"
-    assert "(new)" not in lines[-1] and "The help desk replied 4 days ago" in lines[-1]
+    assert "(added)" not in lines[-1] and "The help desk replied 4 days ago" in lines[-1]
     assert AlertState(state_path).keys() == [(101, "client_waiting")]
 
 
@@ -1426,9 +1426,7 @@ def test_the_summary_draft_adds_events_and_duplicates_from_the_run(
     assert lines[3].endswith(
         ") · Wed 10/21 2:00–4:00 PM · no form · waiting on requester since Sun 8:00 AM"
     )
-    assert lines[4].endswith(
-        ") · Fri 10/23 3:00 PM · Other · A/V on form: yes · in progress (requester answered)"
-    )
+    assert lines[4].endswith(") · Fri 10/23 3:00 PM · Other · A/V on form: yes · in progress")
     (duplicate,) = [line for line in lines if "duplicate" in line]
     assert duplicate.startswith("[#102](") and "(possible duplicate of #101)" in duplicate
     text = json.dumps(draft.card)
@@ -1579,15 +1577,18 @@ def test_a_day_is_one_full_summary_then_deltas_skipped_when_nothing_changed(
     ]
     full, noon = desk_cards(poster)  # nothing posted at 17:00
     full_lines = lines_of(full)
-    assert full_lines[0] == "TDX queue at 7:30 AM: 3 tickets for the help desk (2 new)"
+    assert full_lines[0] == "TDX queue at 7:30 AM: 3 tickets for the help desk (2 added)"
     assert full_lines[2] == "Events this week (1)"
     assert "Ready to close (1)" in full_lines
     assert full["msteams"]["entities"]  # the mention, on the full post only
     noon_lines = lines_of(noon)
-    assert noon_lines[0] == "Since 7:30 AM: 1 new ticket for the help desk"
-    assert noon_lines[1] == "3 tickets need a look in all; 1 was handled. Checked at 12:00 PM."
+    assert noon_lines[0] == "Since 7:30 AM: 1 more ticket for the help desk"
+    assert noon_lines[1] == (
+        "3 tickets need attention in total: the one below, plus 2 posted earlier today. "
+        "1 no longer needs attention. Checked at 12:00 PM."
+    )
     assert noon_lines[2] == "Requester waiting (1)"
-    assert noon_lines[3].startswith("[#103](") and "(new)" in noon_lines[3]
+    assert noon_lines[3].startswith("[#103](") and "(added)" in noon_lines[3]
     assert len(noon_lines) == 4  # no events, no ready to close, no row for the cleared one
     assert "entities" not in noon["msteams"]
     assert TITLE not in json.dumps(desk_cards(poster)) and EVENT_TITLE not in json.dumps(full)
@@ -1625,7 +1626,7 @@ def test_an_update_with_only_cleared_findings_posts_nothing_and_forgets_them(
     # 12:00 had a cleared finding only: no post, no notice, the slot done and 102 forgotten.
     assert code == 0 and notices == []
     (full,) = desk_cards(poster)
-    assert heading(full) == "TDX queue at 7:30 AM: 2 tickets for the help desk (2 new)"
+    assert heading(full) == "TDX queue at 7:30 AM: 2 tickets for the help desk (2 added)"
     assert "12:00 summary skipped (nothing new to show)" in capsys.readouterr().out
     state = watch_module.SummaryState(watch_module.summary_state_path(settings, "desk"))
     assert state.last_slot == at(10, 19, 12) and state.last_posted == at(10, 19, 7, 30)
@@ -1638,11 +1639,12 @@ def test_an_update_with_only_cleared_findings_posts_nothing_and_forgets_them(
     _, update = desk_cards(poster)
     lines = lines_of(update)
     assert lines[:2] == [
-        "Since 7:30 AM: 1 new ticket for the help desk",
-        "2 tickets need a look in all. Checked at 5:00 PM.",
+        "Since 7:30 AM: 1 more ticket for the help desk",
+        "2 tickets need attention in total: the one below, plus 1 posted earlier today. "
+        "Checked at 5:00 PM.",
     ]
-    assert lines[3].startswith("[#103](") and "(new)" in lines[3]
-    assert "#102" not in json.dumps(update) and "handled" not in json.dumps(update)
+    assert lines[3].startswith("[#103](") and "(added)" in lines[3]
+    assert "#102" not in json.dumps(update) and "no longer" not in json.dumps(update)
 
 
 @pytest.mark.usefixtures("both_webhooks")
@@ -1667,7 +1669,7 @@ def test_a_missed_first_slot_makes_the_next_slot_full(monkeypatch: pytest.Monkey
     assert request.kind == "full"
     (card,) = desk_cards(poster)
     assert heading(card) == (
-        "TDX queue at 12:00 PM: 2 tickets for the help desk (1 new since yesterday)"
+        "TDX queue at 12:00 PM: 2 tickets for the help desk (1 added since yesterday)"
     )
 
 
@@ -1695,8 +1697,8 @@ def test_a_restart_mid_day_keeps_the_open_set_and_posts_nothing_twice(
     assert [r.kind if r else None for r in noon_cycles.requests] == [None, "delta"]
     assert again_cycles.requests == [None]
     assert [heading(card) for card in desk_cards(poster)] == [
-        "TDX queue at 7:30 AM: 2 tickets for the help desk (2 new)",
-        "Since 7:30 AM: 1 new ticket for the help desk",
+        "TDX queue at 7:30 AM: 2 tickets for the help desk (2 added)",
+        "Since 7:30 AM: 1 more ticket for the help desk",
     ]
 
 
@@ -1742,24 +1744,22 @@ def test_an_urgent_event_between_slots_posts_one_desk_card_and_the_summaries_fol
 
     assert code == 0 and notices == []
     full, urgent, next_full = desk_cards(poster)  # 12:00 and 17:00 had nothing new
-    assert heading(full) == "TDX queue at 7:30 AM: 1 ticket for the help desk (1 new)"
+    assert heading(full) == "TDX queue at 7:30 AM: 1 ticket for the help desk (1 added)"
     lines = lines_of(urgent)
     assert lines[0] == "Event soon: 1 needs follow-up"
     assert lines[1].startswith("The help desk, please follow up on these before the event.")
     assert lines[2] == "Event: follow up with the requester (1)"
     assert lines[3].startswith("[#103](") and "follow up now" in lines[3]
-    assert "(new)" not in lines[3] and len(lines) == 4
+    assert "(added)" not in lines[3] and len(lines) == 4
     assert urgent["fallbackText"] == "1 ticket for the help desk"
     assert "entities" not in urgent["msteams"]  # never a mention
     assert TITLE not in json.dumps(urgent) and EVENT_TITLE not in json.dumps(urgent)
-    # The next day's full summary still lists it as open, not as new.
-    assert heading(next_full) == (
-        "TDX queue at 7:30 AM: 2 tickets for the help desk (0 new since yesterday)"
-    )
+    # The next day's full summary still lists it as open, not as added.
+    assert heading(next_full) == "TDX queue at 7:30 AM: 2 tickets for the help desk"
     (row,) = [
         line for line in lines_of(next_full) if line.startswith("[#103](") and "follow" in line
     ]
-    assert "(new)" not in row and "(event soon)" not in row
+    assert "(added)" not in row and "(event soon)" not in row
     # The personal chat got its alert cards as before, the event's included.
     assert [heading(card) for card in personal_cards(poster)[:2]] == [
         "TDX queue: 1 new",
@@ -1817,8 +1817,8 @@ def test_an_urgent_event_in_a_summary_run_goes_into_the_delta_with_no_card_of_it
     assert urgent_cards(poster) == []
     _, noon = desk_cards(poster)
     lines = lines_of(noon)
-    assert lines[0] == "Since 7:30 AM: 1 new ticket for the help desk"
-    assert lines[3].startswith("[#103](") and "(new) (event soon) · " in lines[3]
+    assert lines[0] == "Since 7:30 AM: 1 more ticket for the help desk"
+    assert lines[3].startswith("[#103](") and "(added) (event soon) · " in lines[3]
     out = capsys.readouterr().out
     assert (
         "Teams (desk): delta posted (1 new, 0 cleared, 2 open). "
@@ -1842,7 +1842,7 @@ def test_an_urgent_event_at_the_first_slot_is_marked_in_the_full_summary(
 
     (full,) = desk_cards(poster)
     (row,) = [line for line in lines_of(full) if line.startswith("[#103](") and "follow" in line]
-    assert "(new) (event soon)" in row
+    assert "(added) (event soon)" in row
     (other,) = [line for line in lines_of(full) if line.startswith("[#101](")]
     assert "(event soon)" not in other
 

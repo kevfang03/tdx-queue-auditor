@@ -433,7 +433,7 @@ def test_demo_summary_shows_events_duplicates_and_ready_to_close(
     lines = [block["text"] for block in card["body"]]
     assert lines[0] == DEMO_CARD_TITLE
     assert lines[1].startswith("TDX queue at ") and lines[1].endswith(
-        ": 13 tickets for the help desk (12 new)"
+        ": 13 tickets for the help desk (12 added)"
     )
     sections = [line for line in lines if line.endswith(")") and " (" in line[-5:]]
     assert sections == [
@@ -442,7 +442,7 @@ def test_demo_summary_shows_events_duplicates_and_ready_to_close(
         "Someone else wrote last (1)",
         "Event: email the requester (1)",
         "Event: follow up with the requester (1)",
-        "Event soon: room still TBD (2)",
+        "Event soon: no room yet (2)",
         "Event over: resolve (1)",
         "Ready to close (1)",
     ]
@@ -455,9 +455,7 @@ def test_demo_summary_shows_events_duplicates_and_ready_to_close(
     assert week[1].endswith("6:00–7:00 PM · no form · location missing")
     assert week[2].endswith("3:00 PM · no form · location TBD")
     assert week[3].endswith("12:00–2:00 PM · Lobby · A/V on form: no · no email needed")
-    assert week[4].endswith(
-        "2:00–4:00 PM · Classroom · A/V on form: yes · in progress (requester answered)"
-    )
+    assert week[4].endswith("2:00–4:00 PM · Classroom · A/V on form: yes · in progress")
     assert " · Classroom · A/V on form: no · waiting on requester since " in week[5]
     assert week[6].endswith("3:00–5:00 PM · Lobby · A/V on form: yes · not emailed yet")
     assert week[7].endswith("6:00–8:00 PM · Other · A/V on form: no · marketing only")
@@ -498,12 +496,15 @@ def test_demo_summary_kind_delta_shows_new_cleared_and_open(
     card = json.loads(card_path.read_text(encoding="utf-8"))
     lines = [block["text"] for block in card["body"]]
     assert lines[0] == DEMO_CARD_TITLE
-    assert lines[1].startswith("Since ") and lines[1].endswith("M: 2 new tickets for the Commons")
-    assert lines[2].startswith("13 tickets need a look in all; 1 was handled. Checked at ")
+    assert lines[1].startswith("Since ") and lines[1].endswith("M: 2 more tickets for the Commons")
+    assert lines[2].startswith(
+        "13 tickets need attention in total: the 2 below, plus 11 posted earlier today. "
+        "1 no longer needs attention. Checked at "
+    )
     assert lines[2].endswith((" AM.", " PM."))
     assert lines[3] == "Requester waiting (2)"
     assert "Events this week" not in json.dumps(card) and "Ready to close" not in json.dumps(card)
-    assert all("(new)" in line for line in lines[4:] if line.startswith("[#"))
+    assert all("(added)" in line for line in lines[4:] if line.startswith("[#"))
     for path, content in real_files.items():
         assert path.read_bytes() == content
 

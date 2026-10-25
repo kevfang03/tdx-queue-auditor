@@ -483,3 +483,36 @@ def test_tbd_wins_over_location_missing() -> None:
     info = parse("EVENT [10/21 6pm] Resume Review, room TBD")
 
     assert info.location_tbd and not info.location_missing
+
+
+# --- location named ----------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "title",
+    [
+        "EVENT [10/28/26 10:30 AM - 11:30 AM 912] Talk",
+        "EVENT [10/30/2026 12:30 PM - 2:00 PM Location 1103] Talk",
+        "EVENT [10/21 6pm Zoom] Resume Review",
+        "EVENT [10/21 Room 101] Resume Review",  # no time, but a room
+    ],
+)
+def test_text_left_in_the_leading_bracket_is_a_named_location(title: str) -> None:
+    info = parse(title)
+
+    assert info.location_named and not info.location_missing and not info.location_tbd
+
+
+@pytest.mark.parametrize(
+    "title",
+    [
+        "EVENT [10/14] Talk",  # a date only
+        "EVENT [10/21/26 6PM-7PM] Resume Review",  # a date and a time only
+        "EVENT 10/30 6PM Talk",  # no bracket: where a room would be is unknown
+        "EVENT [10/21 6pm TBD] Resume Review",
+        "EVENT [10/21 6pm Room 101] Resume Review, room TBD",
+        "EVENT [someday Room 101] Talk",  # no date in the bracket
+    ],
+)
+def test_without_a_clear_location_in_the_bracket_none_is_named(title: str) -> None:
+    assert not parse(title).location_named

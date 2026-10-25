@@ -1399,6 +1399,10 @@ TOMORROW = "EVENT [10/9 2pm Room 101] Zoom recording"  # 26 h away
 IN_17_DAYS = "EVENT [10/25 2pm Room 101] Zoom recording"
 NO_ROOM_TOMORROW = "EVENT [10/9/26 6PM-7PM] Zoom recording"  # 30 h away
 NO_ROOM_IN_5_DAYS = "EVENT [10/13/26 6PM-7PM] Zoom recording"
+# Location TBD: the desk still waits on the requester for the room.
+TBD_TOMORROW = "EVENT [10/9 2pm TBD] Zoom recording"  # 26 h away
+TBD_IN_5_DAYS = "EVENT [10/13 2pm TBD] Zoom recording"  # 122 h away
+TBD_IN_10_DAYS = "EVENT [10/18 2pm TBD] Zoom recording"  # 242 h away
 
 
 def renamed_run(
@@ -1451,9 +1455,9 @@ def test_a_renamed_av_event_with_no_desk_reply_is_outreach_due() -> None:
 
 
 def test_the_desk_asked_an_hour_ago_and_the_event_is_tomorrow_is_high_at_once() -> None:
-    result = renamed_run(TOMORROW, entry(DESK, 1), entry(REQUESTOR, 200), form=event_form(1))
+    result = renamed_run(TBD_TOMORROW, entry(DESK, 1), entry(REQUESTOR, 200), form=event_form(1))
 
-    finding = only(result)
+    finding = next(f for f in result.findings if f.kind == "event_details_pending")
     assert (finding.kind, finding.reason, finding.priority) == (
         "event_details_pending",
         "details_pending_near",
@@ -1463,14 +1467,14 @@ def test_the_desk_asked_an_hour_ago_and_the_event_is_tomorrow_is_high_at_once() 
 
 
 def test_the_desk_asked_3_days_ago_and_the_event_is_in_5_days_is_normal() -> None:
-    result = renamed_run(IN_5_DAYS, entry(DESK, 72), entry(REQUESTOR, 200), form=event_form(5))
+    result = renamed_run(TBD_IN_5_DAYS, entry(DESK, 72), entry(REQUESTOR, 200), form=event_form(5))
 
     assert kinds(result) == [("event_details_pending", "details_pending", "normal")]
     assert result.event_states[1] == EventStatus("waiting_on_requester", ago(72))
 
 
 def test_waiting_on_the_requester_before_the_window_is_counted_only() -> None:
-    result = renamed_run(IN_10_DAYS, entry(DESK, 72), form=event_form(10))
+    result = renamed_run(TBD_IN_10_DAYS, entry(DESK, 72), form=event_form(10))
 
     assert result.findings == () and result.counts["event_outreach_done"] == 1
     assert result.event_states[1].state == "waiting_on_requester"
@@ -1584,10 +1588,13 @@ def test_show_ids_lists_every_upcoming_event_read_with_its_state_av_and_space() 
 
 
 def test_a_renamed_ticket_without_a_form_still_gets_the_feed_state_findings() -> None:
-    waiting = renamed_run(TOMORROW, entry(DESK, 1))
+    waiting = renamed_run(TBD_TOMORROW, entry(DESK, 1))
     replied = renamed_run(IN_5_DAYS, entry(REQUESTOR, 60), entry(DESK, 100))
 
-    assert kinds(waiting) == [("event_details_pending", "details_pending_near", "high")]
+    assert kinds(waiting) == [
+        ("event_details_pending", "details_pending_near", "high"),
+        ("location_tbd_soon", "tbd_soon", "normal"),
+    ]
     assert kinds(replied) == [("client_waiting", "event_requester_replied", "normal")]
     assert waiting.counts["event_form_missing"] == replied.counts["event_form_missing"] == 1
 
@@ -1808,3 +1815,156 @@ def test_no_personal_data_in_the_event_state_output() -> None:
     for text in texts:
         for invented in INVENTED:
             assert invented not in text
+
+
+# --- the desk acted after the requester's message ----------------------------------------
+
+
+def handled_feed(*newer: FeedEntry) -> tuple[FeedEntry, ...]:
+    """The desk asked, the requester answered 60 hours ago, then ``newer`` (newest first)."""
+    return (*newer, entry(REQUESTOR, 60), entry(DESK, 100))
+
+
+@pytest.mark.parametrize("kind", ["private", "system"])
+def test_a_desk_entry_after_the_requester_keeps_an_event_8_days_out_quiet(
+    kind: EntryKind,
+) -> None:
+    result = form_run(event_form(8), *handled_feed(entry(DESK, 40, kind)))
+
+    assert result.findings == ()
+    assert result.event_states[1] == EventStatus("in_progress")
+    assert [read.state for read in result.event_reads] == ["in_progress"]
+    assert result.counts["event_in_progress"] == 1 and result.counts["client_recent"] == 0
+
+
+@pytest.mark.parametrize(
+    ("days", "priority"), [(3, "normal"), (1, "high")], ids=["3-days", "1-day"]
+)
+def test_within_urgent_days_a_handled_reply_returns_as_today(days: float, priority: str) -> None:
+    result = form_run(event_form(days), *handled_feed(entry(DESK, 40, "private")))
+
+    assert kinds(result) == [("client_waiting", "event_requester_replied", priority)]
+    assert result.event_states[1] == EventStatus("requester_replied", ago(60))
+
+
+def test_a_requester_entry_after_the_desk_action_brings_the_row_back() -> None:
+    result = form_run(
+        event_form(8), entry(REQUESTOR, 50), *handled_feed(entry(DESK, 55, "private"))
+    )
+
+    finding = only(result)
+    assert (finding.kind, finding.reason, finding.priority, finding.age_hours) == (
+        "client_waiting",
+        "event_requester_replied",
+        "normal",
+        50,
+    )
+    assert result.event_states[1].state == "requester_replied"
+
+
+def test_a_private_entry_by_the_requester_themself_does_not_count() -> None:
+    rules = RuleSettings(extra_staff_names=(DESK,), skip_desk_requestors=False)
+    entries = handled_feed(entry(REQUESTOR, 40, "private"))
+
+    result = form_run(event_form(8), *entries, rules=rules)
+
+    assert kinds(result) == [("client_waiting", "event_requester_replied", "normal")]
+
+
+def test_an_undated_desk_entry_counts_by_its_place_in_the_feed() -> None:
+    result = form_run(event_form(8), *handled_feed(entry(DESK, None, "private")))
+
+    assert result.findings == () and result.event_states[1].state == "in_progress"
+
+
+def test_a_desk_entry_older_than_the_requester_reply_does_not_count() -> None:
+    entries = (entry(REQUESTOR, 60), entry(DESK, 80, "private"), entry(DESK, 100))
+
+    result = form_run(event_form(8), *entries)
+
+    assert kinds(result) == [("client_waiting", "event_requester_replied", "normal")]
+
+
+def test_outreach_still_fires_when_the_desk_acted_only_privately() -> None:
+    """No visible desk reply yet: the email is still owed; only the folded "the requester
+    wrote" part goes quiet."""
+    result = form_run(event_form(10), entry(DESK, 40, "private"), entry(REQUESTOR, 60))
+
+    assert kinds(result) == [("event_outreach_due", "outreach_due", "normal")]
+    assert only(result).requester_hours is None
+    assert result.event_states[1] == EventStatus("no_outreach_yet")
+
+
+def test_a_renamed_event_with_a_desk_entry_after_the_requester_is_quiet() -> None:
+    result = renamed_run(IN_10_DAYS, *handled_feed(entry(DESK, 40, "private")))
+
+    assert result.findings == () and result.event_states[1].state == "in_progress"
+
+
+# --- a room in the title -----------------------------------------------------------------
+
+ROOM_IN_6_DAYS = "EVENT [10/14 2pm Room 101] Zoom recording"  # 146 h away
+ROOM_IN_3_DAYS = "EVENT [10/11 10am Room 101] Zoom recording"  # 70 h away
+ZOOM_IN_3_DAYS = "EVENT [10/11 10am Zoom] Zoom recording"
+
+
+def test_a_room_in_the_title_keeps_waiting_on_the_requester_quiet_6_days_out() -> None:
+    result = renamed_run(ROOM_IN_6_DAYS, entry(DESK, 96), entry(REQUESTOR, 200))
+
+    assert result.findings == () and result.counts["event_outreach_done"] == 1
+    assert result.event_states[1] == EventStatus("in_progress")
+    assert [read.state for read in result.event_reads] == ["in_progress"]
+
+
+@pytest.mark.parametrize("title", [ROOM_IN_3_DAYS, ZOOM_IN_3_DAYS], ids=["room", "zoom"])
+def test_a_room_in_the_title_gets_the_last_check_3_days_out(title: str) -> None:
+    result = renamed_run(title, entry(DESK, 96), entry(REQUESTOR, 200))
+
+    finding = only(result)
+    assert (finding.kind, finding.reason, finding.priority) == (
+        "event_details_pending",
+        "details_room_set",
+        "high",
+    )
+    assert (finding.age_hours, finding.event_in_hours) == (96, 70)
+    assert result.event_states[1] == EventStatus("waiting_on_requester", ago(96))
+
+
+def test_the_room_set_check_waits_stale_hours_after_the_ask_outside_near_days() -> None:
+    result = renamed_run(ROOM_IN_3_DAYS, entry(DESK, 10))
+
+    assert result.findings == () and result.counts["event_outreach_done"] == 1
+
+
+def test_the_room_set_check_is_at_once_within_near_days() -> None:
+    result = renamed_run(TOMORROW, entry(DESK, 1), form=event_form(1))
+
+    assert kinds(result) == [("event_details_pending", "details_room_set", "high")]
+
+
+@pytest.mark.parametrize("title", [TBD_IN_5_DAYS, NO_ROOM_IN_5_DAYS], ids=["tbd", "missing"])
+def test_without_a_room_in_the_title_details_pending_is_unchanged(title: str) -> None:
+    result = renamed_run(title, entry(DESK, 96), entry(REQUESTOR, 200))
+
+    assert kinds(result) == [("event_details_pending", "details_pending", "normal")]
+    assert result.event_states[1].state == "waiting_on_requester"
+
+
+def test_a_form_ticket_waiting_on_the_requester_is_unchanged() -> None:
+    result = form_run(event_form(5), entry(DESK, 96))
+
+    assert kinds(result) == [("event_details_pending", "details_pending", "normal")]
+    assert result.event_states[1].state == "waiting_on_requester"
+
+
+@pytest.mark.parametrize(
+    "title",
+    ["EVENT [10/13] Example Talk", "EVENT 10/13 2pm Example Talk"],
+    ids=["date-only", "no-bracket"],
+)
+def test_a_title_that_names_no_location_keeps_details_pending(title: str) -> None:
+    """Only a location clearly named in the leading bracket quiets the follow-up row."""
+    result = renamed_run(title, entry(DESK, 96), entry(REQUESTOR, 200))
+
+    assert kinds(result) == [("event_details_pending", "details_pending", "normal")]
+    assert result.event_states[1].state == "waiting_on_requester"

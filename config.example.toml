@@ -157,6 +157,10 @@ interval_minutes = 30
 failures_before_stop = 3
 # Minutes between quiet checks while the TDX sign-in has expired (5-30).
 signed_out_retry_minutes = 10
+# At each desk day's close, one notice to your personal chat with the day's comparison
+# (counts only) and the API token's state, saying when to refresh it. Only while tdx.source is
+# "shadow" or "api"; never the desk chat. See docs/USAGE.md, "Day-end notice".
+# day_end_notice = true
 
 [tdx.summary]
 # Queue summaries at shift starts, posted by "tdx watch" to this chat only (the desk runner,

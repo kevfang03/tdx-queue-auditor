@@ -108,6 +108,11 @@ class EventInfo:
     # A leading [...] or (...) group with a date and a time but nothing else:
     # "EVENT [10/21/26 6PM-7PM] Resume Review" names no room. Never True with location_tbd.
     location_missing: bool = False
+    # A leading [...] or (...) group with a date and some other text left after the dates,
+    # times, weekdays and joining words: "EVENT [10/28 10:30 AM Room 912] Talk" names a
+    # location. False without such a group, for a date-only group and with TBD, so a
+    # location is only taken as named where the title clearly names one. A yes/no only.
+    location_named: bool = False
 
     @property
     def when(self) -> datetime | None:
@@ -150,8 +155,10 @@ def parse_event_title(title: str, tz: ZoneInfo, now: datetime) -> EventInfo:
     prefix = _EVENT_PREFIX.match(title)
     text = title[prefix.end() :] if prefix else title
     info = read_event_times(text, tz, now)
-    missing = not location_tbd and _location_missing(text)
-    return replace(info, location_tbd=location_tbd, location_missing=missing)
+    leftover = _group_leftover(text)
+    missing = not location_tbd and leftover is not None and leftover == (True, False)
+    named = not location_tbd and leftover is not None and leftover[1]
+    return replace(info, location_tbd=location_tbd, location_missing=missing, location_named=named)
 
 
 def read_dates(text: str, tz: ZoneInfo, now: datetime) -> tuple[datetime, ...]:
@@ -190,28 +197,29 @@ def _read(
     return tuple(sorted(dates)), has_time
 
 
-def _location_missing(text: str) -> bool:
-    """The leading [...] or (...) group holds a date and a time and nothing else that could
-    be a location (only weekdays, joining words and punctuation). A title without such a
-    group gives False: where its location would be cannot be told."""
+def _group_leftover(text: str) -> tuple[bool, bool] | None:
+    """For a leading [...] or (...) group holding a date: (it has a time, text is left after
+    the dates, times, weekdays and joining words). None without such a group: where its
+    location would be cannot be told. Only flags come out, never the text.
+
+    ``(True, False)``, a date and a time and nothing else, is a missing location; any text
+    left over names one."""
     group = _LEADING_GROUP.match(text)
     if group is None:
-        return False
+        return None
     name = "square" if group["square"] is not None else "round"
     inside = text[group.start(name) : group.end(name)]
     found = _dates_in(inside)
     if not found:
-        return False
+        return None
     for item in reversed(found):
         inside = inside[: item.start] + " " + inside[item.end :]
     times = [match for match in _TIME.finditer(inside) if _time_from(match) is not None]
     times += list(_NOON.finditer(inside))
-    if not times:
-        return False
     for match in sorted(times, key=lambda m: m.start(), reverse=True):
         inside = inside[: match.start()] + " " + inside[match.end() :]
     rest = _FILLER.sub(" ", _WEEKDAY.sub(" ", inside))
-    return _WORD.search(rest) is None
+    return bool(times), _WORD.search(rest) is not None
 
 
 # --- dates -------------------------------------------------------------------------------

@@ -1730,9 +1730,18 @@ def test_tdx_watch_runs_a_cycle_and_prints_counts_only(
         raise KeyboardInterrupt
 
     def fixed_watch(
-        settings, *, clock, sleep, run_cycle, notify, destination="personal", shadow=None
+        settings,
+        *,
+        clock,
+        sleep,
+        run_cycle,
+        notify,
+        destination="personal",
+        shadow=None,
+        day_end=None,
     ):
         assert shadow is None  # the default source runs no shadow step
+        assert day_end is cli.load_token  # the stored token, read without a refresh
         assert clock().tzinfo is not None
         return real_watch(
             settings,
@@ -1980,7 +1989,15 @@ def test_tdx_watch_uses_the_same_llm_path_and_takes_no_llm(
         raise KeyboardInterrupt
 
     def fixed_watch(
-        settings, *, clock, sleep, run_cycle, notify, destination="personal", shadow=None
+        settings,
+        *,
+        clock,
+        sleep,
+        run_cycle,
+        notify,
+        destination="personal",
+        shadow=None,
+        day_end=None,
     ):
         assert shadow is None  # the default source runs no shadow step
         return real_watch(
@@ -2257,7 +2274,15 @@ def test_tdx_watch_to_approved_desk_posts_to_desk_and_warns_without_personal(
         raise KeyboardInterrupt
 
     def fixed_watch(
-        settings, *, clock, sleep, run_cycle, notify, destination="personal", shadow=None
+        settings,
+        *,
+        clock,
+        sleep,
+        run_cycle,
+        notify,
+        destination="personal",
+        shadow=None,
+        day_end=None,
     ):
         assert shadow is None  # the default source runs no shadow step
         return real_watch(
@@ -2571,7 +2596,15 @@ def test_tdx_watch_posts_a_due_summary_instead_of_the_alert_card(
         raise KeyboardInterrupt
 
     def fixed_watch(
-        settings, *, clock, sleep, run_cycle, notify, destination="personal", shadow=None
+        settings,
+        *,
+        clock,
+        sleep,
+        run_cycle,
+        notify,
+        destination="personal",
+        shadow=None,
+        day_end=None,
     ):
         assert shadow is None  # the default source runs no shadow step
         return real_watch(
@@ -2593,7 +2626,7 @@ def test_tdx_watch_posts_a_due_summary_instead_of_the_alert_card(
     )
     assert len(post.cards) == 1
     card = post.cards[0]
-    assert card["body"][0]["text"] == "TDX queue at 2:00 PM: 1 ticket for you (1 new)"
+    assert card["body"][0]["text"] == "TDX queue at 2:00 PM: 1 ticket for you (1 added)"
     assert card["msteams"]["entities"][0]["mentioned"]["id"] == MENTION_ADDRESS
     records = [json.loads(line) for line in _log_text(tmp_path).splitlines()]
     summary = next(r for r in records if r["message"] == "tdx summary")

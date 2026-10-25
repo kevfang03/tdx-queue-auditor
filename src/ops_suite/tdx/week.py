@@ -8,9 +8,12 @@ date in that window, with its state:
 - a renamed title with TBD, or with a date and time but no location: ``location TBD`` or
   ``location missing``;
 - a form needing no outreach: ``marketing only`` or ``no email needed``;
-- otherwise the feed state from the rules (``rules.event_status``): ``not emailed yet``,
-  ``waiting on requester since Tue 8:26 AM``, ``requester replied`` or ``in progress
-  (requester answered)``; ``not checked yet`` when this run could not read the ticket's page.
+- otherwise the feed state from the rules (``AuditResult.event_states``): ``not emailed
+  yet``, ``waiting on requester since Tue 8:26 AM``, ``requester replied`` or ``in
+  progress``; ``not checked yet`` when this run could not read the ticket's page. "In
+  progress" covers a requester who has answered and also the events the rules keep quiet
+  until close to the date: a desk entry newer than the requester's message, or a room in
+  the title while the desk waits on the requester.
 
 The labels are in the desk's own words ("emailed", not "outreach"), and the times are
 12-hour like the ticket titles (``card_time``).
@@ -56,7 +59,7 @@ STATE_LABELS: dict[EventState, str] = {
     "no_outreach_yet": "not emailed yet",
     "waiting_on_requester": "waiting on requester",
     "requester_replied": "requester replied",
-    "in_progress": "in progress (requester answered)",
+    "in_progress": "in progress",
     "location_missing": "location missing",
     "location_tbd": "location TBD",
     "marketing_only": "marketing only",

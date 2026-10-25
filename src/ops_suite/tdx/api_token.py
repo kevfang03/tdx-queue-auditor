@@ -58,6 +58,8 @@ KEYRING_TOKEN_USER = "tdx-api-token"
 TOKEN_PATH = "/auth/loginsso"
 # A token with less than this left is replaced before it is used.
 REFRESH_BEFORE = timedelta(minutes=30)
+# The Web API's tokens expire this long after they are issued.
+TOKEN_LIFETIME = timedelta(hours=24)
 # Characters per keychain entry: under Windows' limit of 2,560 bytes (UTF-16) per credential.
 PART_CHARS = 1000
 _PARTS_PREFIX = "parts:"

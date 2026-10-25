@@ -199,7 +199,7 @@ def test_the_row_text_has_date_times_space_av_and_state_only() -> None:
         "Wed 10/21 3:00–5:00 PM · Lobby · A/V on form: yes · not emailed yet"
     )
     assert event_details(start_only, TZ) == (
-        "Thu 10/22 9:30 AM · Classroom · A/V on form: no · in progress (requester answered)"
+        "Thu 10/22 9:30 AM · Classroom · A/V on form: no · in progress"
     )
     assert event_details(untimed, TZ) == "Fri 10/23 · no form · location missing"
     assert event_details(waiting, TZ) == (
@@ -231,7 +231,7 @@ def test_event_times_are_shown_in_the_display_time_zone() -> None:
         ("no_outreach_yet", "not emailed yet"),
         ("waiting_on_requester", "waiting on requester"),
         ("requester_replied", "requester replied"),
-        ("in_progress", "in progress (requester answered)"),
+        ("in_progress", "in progress"),
         ("location_missing", "location missing"),
         ("location_tbd", "location TBD"),
         ("marketing_only", "marketing only"),
