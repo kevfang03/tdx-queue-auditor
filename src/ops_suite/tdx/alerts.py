@@ -37,7 +37,7 @@ import logging
 import os
 import re
 import unicodedata
-from collections.abc import Mapping, Sequence, Set
+from collections.abc import Iterable, Mapping, Sequence, Set
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -543,9 +543,17 @@ def counts_phrase(new: int, reminders: int) -> str:
 
 def fallback_text(count: int, reader: Reader = PERSONAL) -> str:
     """A card's counts-only preview line (see ``Reader.preview``): ``3 tickets for the help
-    desk`` on a desk card, ``3 tickets need attention`` on a personal one. No ids and no
-    titles, so banners and chat previews stay minimal."""
+    desk`` on a desk card, ``3 tickets need attention`` on a personal one. ``count`` is a
+    number of tickets, not findings, since one ticket can carry two findings (see
+    ``ticket_count``). No ids and no titles, so banners and chat previews stay minimal."""
     return reader.preview(count)
+
+
+def ticket_count(findings: Iterable[Finding]) -> int:
+    """How many distinct tickets ``findings`` are about: the number a heading or preview line
+    states, since one ticket can carry two findings (say an event's follow-up and its missing
+    room) and would otherwise be counted twice."""
+    return len({finding.ticket_id for finding in findings})
 
 
 def checked_line(now: datetime, tz: ZoneInfo, summary_counts: Mapping[str, int]) -> str:
@@ -638,7 +646,7 @@ def _card(
         "type": "AdaptiveCard",
         "$schema": CARD_SCHEMA,
         "version": CARD_VERSION,
-        "fallbackText": fallback_text(plan.new + plan.reminders, reader),
+        "fallbackText": fallback_text(ticket_count(due.finding for due in plan.on_card), reader),
         "msteams": {"width": "Full"},
         "body": body,
     }
@@ -902,7 +910,9 @@ def summary_heading(
     """``TDX queue at 7:30 AM: 6 tickets for the help desk (2 added since yesterday)`` (just
     ``(2 added)`` without ``since``; nothing when none was added) or ``Queue clear at 7:30
     AM: nothing needs attention.``, with ``(late, due 7:30 AM)`` after the time for a late
-    summary. ``who`` is the card's reader as ``reader_name`` gives it. "Tickets for" the
+    summary. ``total`` and ``new`` count tickets, not findings, because one ticket can carry
+    two findings (see ``ticket_count``); ``new`` is the tickets with at least one added
+    finding. ``who`` is the card's reader as ``reader_name`` gives it. "Tickets for" the
     reader rather than "open", which reads as open tickets in the queue; "added" rather than
     "new", because these are older tickets newly on the list, not tickets that just came in."""
     when = at if late_due is None else f"{at} (late, due {late_due})"
@@ -1037,7 +1047,7 @@ def _summary_card(
         urgent_keys,
         reader,
     )
-    return shown, _summary_shell(fallback_text(len(findings), reader), body)
+    return shown, _summary_shell(fallback_text(ticket_count(findings), reader), body)
 
 
 def _summary_shell(fallback: str, body: list[dict[str, object]]) -> dict[str, object]:
@@ -1148,18 +1158,22 @@ def fit_summary_card(
     ``duplicates`` maps a ticket id to the older ticket it may duplicate; ``since`` is the
     last summary posted, which the heading's "added since" names; ``urgent_keys`` are the
     findings marked ``(event soon)`` instead of getting a card of their own; ``reader``,
-    who the card speaks to (the team on a desk card, "you" on a personal one)."""
+    who the card speaks to (the team on a desk card, "you" on a personal one).
+
+    The heading and preview line count tickets, not rows, because one ticket can carry two
+    findings: every open finding's ticket for the total (rows trimmed to fit still count),
+    and the tickets with at least one added finding for "added". Events this week are not
+    counted; an event with no finding is not a ticket to act on."""
     ordered = open_findings(findings)
-    new = sum((f.ticket_id, f.kind) in new_keys for f in ordered)
+    total = ticket_count(ordered)
+    new = ticket_count(f for f in ordered if (f.ticket_id, f.kind) in new_keys)
     slot_text = card_time(slot, tz)
     since_label = since_text(since, slot, tz) if since is not None else None
     who = reader_name(reader)
     if late:
-        heading = summary_heading(
-            len(ordered), new, card_time(now, tz), slot_text, since_label, who=who
-        )
+        heading = summary_heading(total, new, card_time(now, tz), slot_text, since_label, who=who)
     else:
-        heading = summary_heading(len(ordered), new, slot_text, since=since_label, who=who)
+        heading = summary_heading(total, new, slot_text, since=since_label, who=who)
     rows = max_rows
     while True:
         shown, card = _summary_card(
@@ -1303,7 +1317,9 @@ def fit_delta_card(
 
 
 def urgent_heading(count: int) -> str:
-    """``Event soon: 2 need follow-up`` (``1 needs follow-up`` for one)."""
+    """``Event soon: 2 need follow-up`` (``1 needs follow-up`` for one). ``count`` is the
+    number of tickets, not findings: one event can carry two urgent findings (a follow-up
+    and a missing room) and is still one event to follow up."""
     return f"Event soon: {count} {'needs' if count == 1 else 'need'} follow-up"
 
 
@@ -1326,7 +1342,8 @@ def fit_urgent_card(
     the counts-only preview line. Rows are dropped from the end
     until the card is under ``CARD_MAX_BYTES``; record only the returned findings."""
     ordered = open_findings(findings)
-    heading = urgent_heading(len(ordered))
+    tickets = ticket_count(ordered)
+    heading = urgent_heading(tickets)
     ask = "please follow up on these before the event."
     if reader.audience == "desk":
         ask = f"{capitalised(escape_markdown(reader.team))}, {ask}"
@@ -1350,7 +1367,7 @@ def fit_urgent_card(
             {},
             reader=reader,
         )
-        card = _summary_shell(fallback_text(len(ordered), reader), body)
+        card = _summary_shell(fallback_text(tickets, reader), body)
         if card_size(card) < CARD_MAX_BYTES or not shown:
             return shown, card
         rows = len(shown) - 1

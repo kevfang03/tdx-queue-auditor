@@ -856,6 +856,74 @@ def test_the_full_heading_names_the_tickets_added_only_when_there_are_some(
     assert summary_heading(3, added, "7:30 AM", late_due, since) == heading
 
 
+# One event ticket can carry two findings: a follow-up and a missing room.
+FOLLOW_UP_102 = Finding(102, "event_details_pending", "high", "details_pending_near", 20, 30)
+NO_ROOM_102 = Finding(102, "location_tbd_soon", "normal", "tbd_soon", 30)
+
+
+def test_the_full_heading_and_preview_count_tickets_not_rows() -> None:
+    findings = [FOLLOW_UP_102, NO_ROOM_102, waiting(101)]
+
+    shown, card = summary(findings, reader=DESK)
+
+    assert texts(card)[0] == "TDX queue at 7:30 AM: 2 tickets for the help desk"
+    assert card["fallbackText"] == "2 tickets for the help desk"
+    assert len(shown) == 3  # both of 102's rows are still listed
+
+
+@pytest.mark.parametrize(
+    ("new", "marked"),
+    [
+        ({(102, "location_tbd_soon")}, 1),  # one added finding, one older one
+        ({(102, "event_details_pending"), (102, "location_tbd_soon")}, 2),  # both added
+    ],
+    ids=["one-of-two", "both"],
+)
+def test_added_counts_tickets_with_an_added_finding(new: set, marked: int) -> None:
+    findings = [FOLLOW_UP_102, NO_ROOM_102, waiting(101)]
+
+    _, card = summary(findings, new, since=SLOT - timedelta(days=1))
+
+    lines = texts(card)
+    assert lines[0] == "TDX queue at 7:30 AM: 2 tickets for you (1 added since yesterday)"
+    assert sum("(added)" in line for line in lines) == marked  # row markers stay per finding
+
+
+def test_the_late_heading_counts_tickets_too() -> None:
+    late_run = datetime(2026, 10, 19, 8, 12, tzinfo=TZ)
+    findings = [FOLLOW_UP_102, NO_ROOM_102, waiting(101)]
+
+    _, card = summary(findings, {(102, "event_details_pending")}, late=True, now=late_run)
+
+    assert texts(card)[0] == "TDX queue at 8:12 AM (late, due 7:30 AM): 2 tickets for you (1 added)"
+    assert card["fallbackText"] == "2 tickets need attention"
+
+
+def test_the_urgent_card_counts_one_event_with_two_findings_once() -> None:
+    _, card = fit_urgent_card(
+        [FOLLOW_UP_102, NO_ROOM_102], {102: row(102)}, {}, SLOT_RUN, TZ,
+        title_chars=60, show_titles=False, max_rows=10, reader=DESK,
+    )  # fmt: skip
+
+    lines = texts(card)
+    assert lines[0] == "Event soon: 1 needs follow-up"
+    assert card["fallbackText"] == "1 ticket for the help desk"
+    assert "Event: follow up with the requester (1)" in lines
+    assert "Event soon: no room yet (1)" in lines
+
+
+def test_the_alert_card_preview_counts_the_tickets_it_lists(state: AlertState) -> None:
+    rows = {ticket_id: row(ticket_id) for ticket_id in (101, 102)}
+
+    card = build_card(
+        plan(state, [FOLLOW_UP_102, NO_ROOM_102, waiting(101)]),
+        rows, {}, NOW, TZ, SUMMARY, title_chars=80,
+    )  # fmt: skip
+
+    assert texts(card)[0] == "TDX queue: 3 new"  # the heading still counts rows
+    assert card["fallbackText"] == "2 tickets need attention"
+
+
 def test_rows_past_the_cap_are_counted_as_more() -> None:
     findings = [waiting(i) for i in range(101, 106)] + [event_over(201), event_over(202)]
     shown, card = summary(findings, max_rows=4)

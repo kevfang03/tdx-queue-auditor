@@ -655,7 +655,7 @@ Queue clear at 7:30 AM: nothing needs attention.
 TDX queue at 8:12 AM (late, due 7:30 AM): 6 tickets for the help desk (2 added since yesterday)
 ```
 
-Headings count the tickets that need attention and say for whom ("you" on a personal card), never "open", which reads as open tickets in the queue. Under the title, a full summary says `Tickets for the help desk to look at. Checked 26 unclaimed tickets at 7:30 AM.`, or `Nothing for the help desk to look at right now. ...` when the queue is clear, with the team's name from `teams.desk.team_name`.
+Headings count the tickets that need attention and say for whom ("you" on a personal card), never "open", which reads as open tickets in the queue. Like the update's lead, the heading and its "added" count tickets, not findings (one ticket can carry two rows, say an event's follow-up and its missing room), so it can say 5 tickets above 7 rows; "Events this week" is not counted. Under the title, a full summary says `Tickets for the help desk to look at. Checked 26 unclaimed tickets at 7:30 AM.`, or `Nothing for the help desk to look at right now. ...` when the queue is clear, with the team's name from `teams.desk.team_name`.
 
 "Added" means not open at the last summary posted ("since yesterday", or `since Fri 5:00 PM` after a gap; just `(2 added)` before the first post). With none added, the part in brackets is left out.
 
