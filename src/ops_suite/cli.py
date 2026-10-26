@@ -8,11 +8,12 @@ import sys
 import tempfile
 import time
 import tomllib
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import TextIO
+from urllib.parse import urlsplit
 from zoneinfo import ZoneInfo
 
 import keyring.errors
@@ -163,6 +164,9 @@ LOGIN_PROMPT = (
     "Sign in to TeamDynamix in the browser window (MFA included). "
     "When you see the TDX start page, press Enter here."
 )
+TDX_SETTLE_SECONDS = 20  # how long to wait for a page on TDX after Enter
+TDX_SETTLE_POLL_MS = 500
+WAITING_FOR_TDX = "Waiting for the TDX page to finish loading…"
 CAPTURE_PROMPT = (
     "Sign in if asked, then open the page to capture (dashboard, report or ticket). "
     "Press Enter here when it has fully loaded."
@@ -685,21 +689,64 @@ def _tdx_settings(config_path: Path | None) -> tuple[Settings, str]:
 
 
 def _wait_for_tdx(browser: TdxBrowser, base_url: str, prompt: str) -> int:
-    """Open the start page, wait for Enter, and return how many open pages are on TDX."""
+    """Open the start page, wait for Enter, then give the browser up to TDX_SETTLE_SECONDS
+    to reach TDX. Returns how many open pages are on TDX.
+
+    The identity provider's sign-in ends with a form post and redirects back to TDX, which
+    can still be running when the person presses Enter on what looks like a finished page.
+    The log record tells a slow redirect (several polls) from a page whose reported address
+    was only lagging (one poll).
+    """
     browser.open_start_page()
     print(prompt, flush=True)
     try:
         input()
     except EOFError:
         pass  # no terminal input; check what is open now
-    urls = browser.current_urls()
-    log.info("pages open", extra={"pages": [describe_url(url) for url in urls]})
+    at_enter = browser.current_urls()
+    urls = at_enter
+    polls = 0
+    if urls and not any(on_tdx(url, base_url) for url in urls):
+        print(WAITING_FOR_TDX, flush=True)
+        # Counting polls rather than reading a clock keeps the limit exact in tests.
+        while polls < TDX_SETTLE_SECONDS * 1000 // TDX_SETTLE_POLL_MS:
+            browser.wait(TDX_SETTLE_POLL_MS)
+            polls += 1
+            urls = browser.current_urls()
+            if not urls or any(on_tdx(url, base_url) for url in urls):
+                break  # on TDX, or the person closed the window
+    log.info(
+        "pages open",
+        extra={
+            "pages_at_enter": [describe_url(url) for url in at_enter],
+            "pages": [describe_url(url) for url in urls],
+            "waited_ms": polls * TDX_SETTLE_POLL_MS,
+        },
+    )
     return sum(on_tdx(url, base_url) for url in urls)
 
 
-def _not_signed_in(command: str, base_url: str) -> int:
+def _still_on(urls: Sequence[str]) -> str | None:
+    """The host of the last open web page, or None. The host only: a sign-in page's path and
+    query can carry a request token."""
+    for url in reversed(urls):
+        try:
+            parts = urlsplit(url.strip())
+        except ValueError:
+            continue
+        if parts.scheme.lower() in ("http", "https") and parts.hostname:
+            return parts.hostname
+    return None
+
+
+def _not_signed_in(command: str, base_url: str, urls: Sequence[str] = ()) -> int:
+    origin = tdx_origin(base_url)
+    host = _still_on(urls)
+    where = f"no open page is on {origin}"
+    if host is not None and host != urlsplit(origin).hostname:
+        where += f"; the browser is still on {host}"
     print(
-        f"ops-suite: sign-in is not finished (no open page is on {tdx_origin(base_url)}). "
+        f"ops-suite: sign-in is not finished ({where}). "
         f'Run "{RUN} tdx {command}" again and finish signing in first. If the sign-in page '
         "refused the automated browser, stop here: this tool does not work around that.",
         file=sys.stderr,
@@ -738,7 +785,9 @@ def _tdx_login(args: argparse.Namespace) -> int:
     try:
         with TdxBrowser(profile, base_url) as browser:
             if not _wait_for_tdx(browser, base_url, LOGIN_PROMPT):
-                return _finished("tdx login", _not_signed_in("login", base_url))
+                return _finished(
+                    "tdx login", _not_signed_in("login", base_url, browser.current_urls())
+                )
             record_sign_in(settings, datetime.now(UTC))
             print(f"Signed in. The session is saved in {profile}.")
             if settings.tdx.api.enabled:
@@ -760,7 +809,9 @@ def _tdx_capture(args: argparse.Namespace) -> int:
     try:
         with TdxBrowser(paths.tdx_profile_dir(settings), base_url) as browser:
             if not _wait_for_tdx(browser, base_url, CAPTURE_PROMPT):
-                return _finished("tdx capture", _not_signed_in("capture", base_url))
+                return _finished(
+                    "tdx capture", _not_signed_in("capture", base_url, browser.current_urls())
+                )
             pages = len(browser.current_urls())
             frames = browser.collect_frames()
             requests = browser.requests_seen()
@@ -936,7 +987,10 @@ def _tdx_set_dashboard(args: argparse.Namespace) -> int:
     try:
         with TdxBrowser(profile, tdx.base_url) as browser:
             if not _wait_for_tdx(browser, tdx.base_url, _set_dashboard_prompt(tdx)):
-                return _finished(command, _not_signed_in("set-dashboard", tdx.base_url))
+                return _finished(
+                    command,
+                    _not_signed_in("set-dashboard", tdx.base_url, browser.current_urls()),
+                )
             try:
                 url = find_dashboard_frame(browser, tdx)
             except DashboardStructureError as error:

@@ -106,6 +106,8 @@ The queue auditor is a general program: each desk member who uses it runs it on 
    uv run ops-suite tdx login
    ```
 
+   If the browser is still finishing the sign-in when you press Enter, the tool waits up to 20 seconds for the TDX page before giving up.
+
 4. Choose your dashboard once. TDX opens your own homepage dashboard, which may not show both ticket widgets, and switching dashboards does not change the page address. So:
 
    ```bash

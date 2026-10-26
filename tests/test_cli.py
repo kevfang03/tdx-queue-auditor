@@ -230,8 +230,11 @@ class FakeTdxBrowser:
         frames: list[FrameHtml] | None = None,
         requests: list[RequestRecord] | None = None,
         start_error: str | None = None,
+        later_urls: list[list[str]] | None = None,
     ) -> None:
         self.urls = urls
+        self.later_urls = list(later_urls or [])
+        self.waits: list[int] = []
         self.frames = frames or []
         self.requests = requests or []
         self.start_error = start_error
@@ -261,6 +264,12 @@ class FakeTdxBrowser:
 
     def current_urls(self) -> list[str]:
         return list(self.urls)
+
+    def wait(self, milliseconds: int) -> None:
+        """Each wait moves to the next of ``later_urls``; the last one stays."""
+        self.waits.append(milliseconds)
+        if self.later_urls:
+            self.urls = self.later_urls.pop(0)
 
     def collect_frames(self) -> list[FrameHtml]:
         self.skipped_frames = 1
@@ -318,6 +327,7 @@ def test_tdx_login_signed_in(
     assert code == 0
     assert browser.opened and browser.closed
     assert browser.profile_dir == profile
+    assert browser.waits == []  # already on TDX at Enter: no waiting
     assert capsys.readouterr().out.splitlines() == [
         cli.LOGIN_PROMPT,
         f"Signed in. The session is saved in {profile}.",
@@ -351,6 +361,104 @@ def test_tdx_not_signed_in_exits_3(
     assert browser.closed
     assert "sign-in is not finished" in capsys.readouterr().err
     assert not (tmp_path / "appdata" / "tdx" / "captures").exists()
+
+
+IDP_URL = "https://login.idp.example.com/tenant-1/saml2?SAMLRequest=abc"
+POLLS = cli.TDX_SETTLE_SECONDS * 1000 // cli.TDX_SETTLE_POLL_MS
+
+
+def _pages_open_record(tmp_path: Path) -> dict[str, object]:
+    log_text = (tmp_path / "applogs" / "ops-suite.log").read_text(encoding="utf-8")
+    assert "abc" not in log_text and "SAMLRequest" not in log_text
+    records = [json.loads(line) for line in log_text.splitlines()]
+    return next(record for record in records if record.get("message") == "pages open")
+
+
+def test_tdx_login_waits_for_the_redirect_back_to_tdx(
+    tmp_path: Path, tdx_env: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    browser = FakeTdxBrowser([IDP_URL], later_urls=[[IDP_URL], [TDX_BASE]])
+    tdx_env.setattr(cli, "TdxBrowser", browser)
+
+    code = main(["tdx", "login"])
+
+    profile = tmp_path / "appdata" / "tdx" / "browser-profile"
+    assert code == 0
+    assert browser.waits == [cli.TDX_SETTLE_POLL_MS] * 2
+    assert capsys.readouterr().out.splitlines() == [
+        cli.LOGIN_PROMPT,
+        cli.WAITING_FOR_TDX,
+        f"Signed in. The session is saved in {profile}.",
+    ]
+    session = json.loads(
+        (tmp_path / "appdata" / "tdx" / "session-log.json").read_text(encoding="utf-8")
+    )
+    assert session["sessions"][-1]["signed_in_at"]
+    record = _pages_open_record(tmp_path)
+    assert record["pages_at_enter"] == ["login.idp.example.com/tenant-1/saml2"]
+    assert record["pages"] == ["tdx.example.edu/TDNext/"]
+    assert record["waited_ms"] == 2 * cli.TDX_SETTLE_POLL_MS
+
+
+def test_tdx_login_that_never_reaches_tdx_names_the_host_only(
+    tmp_path: Path, tdx_env: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    browser = FakeTdxBrowser([IDP_URL])
+    tdx_env.setattr(cli, "TdxBrowser", browser)
+
+    code = main(["tdx", "login"])
+
+    captured = capsys.readouterr()
+    assert code == 3
+    assert len(browser.waits) == POLLS
+    assert captured.out.count(cli.WAITING_FOR_TDX) == 1
+    assert "the browser is still on login.idp.example.com)" in captured.err
+    for private in ["tenant-1", "saml2", "SAMLRequest", "abc"]:
+        assert private not in captured.err
+    record = _pages_open_record(tmp_path)
+    assert record["pages_at_enter"] == record["pages"] == ["login.idp.example.com/tenant-1/saml2"]
+    assert record["waited_ms"] == POLLS * cli.TDX_SETTLE_POLL_MS
+
+
+def test_tdx_login_with_every_window_closed_does_not_wait(
+    tdx_env: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    browser = FakeTdxBrowser([])
+    tdx_env.setattr(cli, "TdxBrowser", browser)
+
+    assert main(["tdx", "login"]) == 3
+
+    captured = capsys.readouterr()
+    assert browser.waits == []
+    assert cli.WAITING_FOR_TDX not in captured.out
+    assert "still on" not in captured.err
+
+
+def test_tdx_login_stops_waiting_when_the_window_is_closed(
+    tdx_env: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    browser = FakeTdxBrowser([IDP_URL], later_urls=[[]])
+    tdx_env.setattr(cli, "TdxBrowser", browser)
+
+    assert main(["tdx", "login"]) == 3
+
+    assert browser.waits == [cli.TDX_SETTLE_POLL_MS]
+    assert "still on" not in capsys.readouterr().err
+
+
+def test_tdx_capture_waits_for_the_redirect_back_to_tdx(
+    tdx_env: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    browser = FakeTdxBrowser([IDP_URL], later_urls=[[TDX_BASE]])
+    tdx_env.setattr(cli, "TdxBrowser", browser)
+
+    code = main(["tdx", "capture", "--name", "dashboard"])
+
+    out = capsys.readouterr().out.splitlines()
+    assert code == 0
+    assert browser.waits == [cli.TDX_SETTLE_POLL_MS]
+    assert out[:2] == [cli.CAPTURE_PROMPT, cli.WAITING_FOR_TDX]
+    assert out[2].startswith("Captured ")
 
 
 @pytest.mark.parametrize("command", [["login"], ["capture", "--name", "dashboard"]])
@@ -963,8 +1071,28 @@ def test_tdx_set_dashboard_not_signed_in_exits_3(
     _set_dashboard_env(rows_env, find, FakeCheck(), urls=["https://login.example.edu/idp/SSO"])
 
     assert main(["tdx", "set-dashboard"]) == 3
-    assert "sign-in is not finished" in capsys.readouterr().err
+    err = capsys.readouterr().err
+    assert "sign-in is not finished" in err
+    assert "the browser is still on login.example.edu)" in err
     assert not _saved_file(tmp_path).exists()
+
+
+def test_tdx_set_dashboard_waits_for_the_redirect_back_to_tdx(
+    tmp_path: Path, rows_env: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    check = FakeCheck(saved_file=_saved_file(tmp_path))
+    browser = _set_dashboard_env(rows_env, FakeFind(SAVED_URL), check, urls=[IDP_URL])
+    browser.later_urls = [[IDP_URL], [ROWS_BASE]]
+
+    code = main(["tdx", "set-dashboard"])
+
+    out = capsys.readouterr().out.splitlines()
+    assert code == 0
+    assert browser.waits == [cli.TDX_SETTLE_POLL_MS] * 2
+    assert out[1] == cli.WAITING_FOR_TDX
+    assert out[2].startswith("Saved. ")
+    saved = load_saved_dashboard(_saved_file(tmp_path))
+    assert saved is not None and saved.url == SAVED_URL
 
 
 # --- tdx audit -----------------------------------------------------------------------------
