@@ -1,6 +1,6 @@
 """Times as the Teams cards show them: 12-hour, like the ticket titles (``7:30 AM``,
-``1:30–2:30 PM``, ``Tue 1:37 PM``). Display only: settings, state files, logs and the
-terminal keep 24-hour times.
+``1:30–2:30 PM``, ``Tue 1:37 PM``, ``Tue 10/20 1:37 PM`` a week or more away). Display only:
+settings, state files, logs and the terminal keep 24-hour times.
 
 Built from the hour and minute rather than strftime, because the flags that drop the
 leading zero (``%-I``, ``%#I``) differ between platforms.
@@ -33,9 +33,24 @@ def clock_range(start: datetime | time, end: datetime | time) -> str:
     return f"{start_text} {start_half}–{end_text} {end_half}"
 
 
-def card_time(when: datetime, tz: ZoneInfo, *, weekday: bool = False) -> str:
+# From this many days apart, a weekday alone could be read as the wrong week: on a
+# Wednesday card, "since Tue" eight days back reads as yesterday.
+DATED_AFTER_DAYS = 6
+
+
+def card_time(
+    when: datetime, tz: ZoneInfo, *, weekday: bool = False, now: datetime | None = None
+) -> str:
     """``when`` in the display time zone ``tz``: ``7:30 AM``, or ``Tue 1:37 PM`` with
-    ``weekday``."""
+    ``weekday``. With ``weekday`` and the card's own time ``now``, a ``when`` whose local
+    date is ``DATED_AFTER_DAYS`` or more days from ``now``'s, either way, also shows the date
+    (``Tue 10/20 1:37 PM``), because the weekday alone would read as the nearest one."""
     local = when.astimezone(tz)
     text = clock_text(local)
-    return f"{local:%a} {text}" if weekday else text
+    if not weekday:
+        return text
+    # Calendar dates, not elapsed time, so a DST change in between does not shift the count.
+    days_apart = abs((local.date() - now.astimezone(tz).date()).days) if now is not None else 0
+    if days_apart >= DATED_AFTER_DAYS:
+        return f"{local:%a} {local.month}/{local.day} {text}"
+    return f"{local:%a} {text}"

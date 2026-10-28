@@ -207,6 +207,20 @@ def test_the_row_text_has_date_times_space_av_and_state_only() -> None:
     )
 
 
+def test_a_wait_a_week_or_more_before_the_summary_shows_its_date() -> None:
+    # NOW is Mon 10/19: "since Fri" eight days back would read as last Friday.
+    long_ago = NOW - timedelta(days=8)
+    recent = NOW - timedelta(days=3)
+    old = WeekEvent(1, NOW + timedelta(days=2), True, None, None, True,
+                    "waiting_on_requester", long_ago)  # fmt: skip
+    fresh = WeekEvent(2, NOW + timedelta(days=2), True, None, None, True,
+                      "waiting_on_requester", recent)  # fmt: skip
+
+    assert event_details(old, TZ, NOW).endswith(" · waiting on requester since Sun 10/11 7:30 AM")
+    assert event_details(fresh, TZ, NOW).endswith(" · waiting on requester since Fri 7:30 AM")
+    assert event_details(old, TZ).endswith(" · waiting on requester since Sun 7:30 AM")
+
+
 def test_an_event_across_noon_names_both_halves_of_the_day() -> None:
     event = WeekEvent(1, datetime(2026, 10, 21, 11, 30, tzinfo=TZ), True, time(12, 30),
                       "classroom", True, "requester_replied")  # fmt: skip

@@ -10,6 +10,7 @@ import pytest
 from ops_suite.common.config import TdxAlertSettings, TdxSettings
 from ops_suite.tdx.alerts import (
     CARD_MAX_BYTES,
+    NO_ROOM_WORDING,
     AlertPlan,
     AlertPolicy,
     AlertState,
@@ -38,7 +39,9 @@ from ops_suite.tdx.alerts import (
     since_text,
     summary_change,
     summary_heading,
+    urgent_event,
 )
+from ops_suite.tdx.feed_types import FeedEntry, TicketFeed
 from ops_suite.tdx.rows import TicketRow
 from ops_suite.tdx.rules import Finding, RuleSettings, evaluate
 from ops_suite.tdx.week import WeekEvent
@@ -920,8 +923,31 @@ def test_the_alert_card_preview_counts_the_tickets_it_lists(state: AlertState) -
         rows, {}, NOW, TZ, SUMMARY, title_chars=80,
     )  # fmt: skip
 
-    assert texts(card)[0] == "TDX queue: 3 new"  # the heading still counts rows
+    assert texts(card)[0] == "TDX queue: 2 new"  # tickets, like the preview line
     assert card["fallbackText"] == "2 tickets need attention"
+
+
+def test_two_findings_on_one_ticket_are_one_new_in_the_alert_heading(state: AlertState) -> None:
+    card = build_card(
+        plan(state, [FOLLOW_UP_102, NO_ROOM_102]), {102: row(102)}, {}, NOW, TZ, SUMMARY,
+        title_chars=80,
+    )  # fmt: skip
+
+    lines = texts(card)
+    assert lines[0] == "TDX queue: 1 new"
+    assert "Event: follow up with the requester (1)" in lines  # row markers stay per finding
+    assert "Event soon: no room yet (1)" in lines
+
+
+def test_a_ticket_with_a_new_row_and_a_reminder_counts_once_as_new(state: AlertState) -> None:
+    sent(state, [FOLLOW_UP_102, waiting(101)], NOW - timedelta(days=4))
+
+    card = build_card(
+        plan(state, [FOLLOW_UP_102, NO_ROOM_102, waiting(101)]),
+        {i: row(i) for i in (101, 102)}, {}, NOW, TZ, SUMMARY, title_chars=80,
+    )  # fmt: skip
+
+    assert texts(card)[0] == "TDX queue: 1 new, 1 reminder"  # 102 new, 101 a reminder
 
 
 def test_rows_past_the_cap_are_counted_as_more() -> None:
@@ -1106,6 +1132,68 @@ def test_a_title_without_a_room_says_no_room_yet_and_tbd_keeps_its_row(reader: R
     assert "room still TBD" not in text
 
 
+# --- a renamed event with no room and a feed finding: one row --------------------------------
+
+
+def merged_event(title: str) -> Finding:
+    """The rules' one finding for a renamed event on 10/20 3 PM, 31 hours after the run, whose
+    desk asked the requester an hour ago and has no room yet."""
+    rows = [row(110, title)]
+    asked = TicketFeed(110, (FeedEntry(PRIM_RESP, SLOT_RUN - timedelta(hours=1), "reply"),))
+    rules = RuleSettings(extra_staff_names=(PRIM_RESP,))
+
+    (finding,) = evaluate(rows, {110: asked}, SLOT_RUN, rules, TZ).findings
+    return finding
+
+
+TBD_EVENT = "EVENT [10/20 3pm TBD] Club"
+NO_ROOM_EVENT = "EVENT [10/20/26 3PM-4PM] Club"
+
+
+@pytest.mark.parametrize(
+    ("title", "room"),
+    [(TBD_EVENT, "Location still TBD on the ticket"), (NO_ROOM_EVENT, "No room on the ticket yet")],
+    ids=["tbd", "missing"],
+)
+def test_a_merged_event_row_is_one_row_ending_in_the_room_check(title: str, room: str) -> None:
+    finding = merged_event(title)
+
+    shown, card = summary([finding], reader=DESK)
+
+    lines = texts(card)
+    assert (finding.kind, finding.reason) == ("event_details_pending", "details_pending_near")
+    assert lines[0] == "TDX queue at 7:30 AM: 1 ticket for the help desk"
+    assert "Event soon: no room yet (1)" not in lines
+    (row_line,) = [line for line in lines if line.startswith("[#110](")]
+    assert row_line.endswith(
+        ") · Event in 31 hours. Still waiting on the requester (asked 1 hour ago): follow up "
+        f"now. {room}: check the events spreadsheet, and if a room is listed, update the ticket."
+    )
+    assert len(shown) == 1
+
+
+def test_the_room_check_follows_a_full_stop_once() -> None:
+    outreach = Finding(110, "event_outreach_due", "high", "outreach_due", 30, 30, no_room="tbd")
+
+    wording = finding_wording(outreach)
+
+    assert wording.endswith("Then update the events spreadsheet. " + NO_ROOM_WORDING["tbd"])
+    assert ".." not in wording
+
+
+def test_the_urgent_card_still_fires_for_a_merged_event_row() -> None:
+    finding = merged_event(TBD_EVENT)
+
+    _, card = fit_urgent_card(
+        [finding], {110: row(110)}, {}, SLOT_RUN, TZ,
+        title_chars=60, show_titles=False, max_rows=10, reader=DESK,
+    )  # fmt: skip
+
+    assert urgent_event(finding, RuleSettings().near_event_days)
+    assert texts(card)[0] == "Event soon: 1 needs follow-up"
+    assert texts(card)[2] == "Event: follow up with the requester (1)"
+
+
 def test_an_unreadable_summary_state_is_moved_aside(tmp_path: Path) -> None:
     path = tmp_path / "summary-state-desk.json"
     path.write_text("{not json", encoding="utf-8")
@@ -1195,6 +1283,17 @@ def test_events_this_week_rows_are_linked_with_details_and_counted_apart() -> No
     assert lines[4].endswith(") · Fri 10/23 3:00–5:00 PM · Lobby · A/V on form: yes · in progress")
     assert lines[5] == "Requester waiting (1)"
     assert [f.ticket_id for f in shown] == [101]
+
+
+def test_events_this_week_dates_a_wait_from_eight_days_before_the_slot() -> None:
+    # SLOT is Mon 10/19 7:30 AM: a wait since Sun 10/11 would read "since Sun", yesterday.
+    asked = SLOT - timedelta(days=8)
+    event = WeekEvent(102, datetime(2026, 10, 21, 15, 0, tzinfo=TZ), True, None, "lobby", True,
+                      "waiting_on_requester", asked)  # fmt: skip
+
+    _, card = extras_summary([], [event])
+
+    assert texts(card)[3].endswith(" · waiting on requester since Sun 10/11 7:30 AM")
 
 
 def test_an_event_keeps_its_finding_row_too() -> None:
@@ -1441,6 +1540,25 @@ def test_an_urgent_finding_open_at_the_last_post_counts_as_a_reminder() -> None:
     ]
 
 
+def test_two_reminder_rows_on_one_ticket_are_one_reminder() -> None:
+    keys = {(102, "event_details_pending"), (102, "location_tbd_soon")}
+
+    _, card = delta([FOLLOW_UP_102, NO_ROOM_102], set(), keys, total=1)
+
+    assert texts(card)[0] == "Since 7:30 AM: 1 reminder for you"
+
+
+def test_an_added_row_and_a_reminder_on_one_ticket_count_once_as_added() -> None:
+    _, card = delta(
+        [FOLLOW_UP_102, NO_ROOM_102],
+        {(102, "location_tbd_soon")},
+        {(102, "event_details_pending")},
+        total=1,
+    )
+
+    assert texts(card)[0] == "Since 7:30 AM: 1 more ticket for you"  # no reminder part
+
+
 def test_delta_titles_follow_show_titles() -> None:
     _, card = delta([waiting(101)], {(101, "client_waiting")})
     text = json.dumps(card)
@@ -1462,6 +1580,8 @@ def test_the_full_heading_says_added_since_the_last_post() -> None:
     assert texts(card)[0] == "TDX queue at 7:30 AM: 1 ticket for you (1 added since yesterday)"
     assert since_text(datetime(2026, 10, 16, 17, 0, tzinfo=TZ), SLOT, TZ) == "Fri 5:00 PM"
     assert since_text(SLOT, NOON, TZ) == "7:30 AM"
+    # A week or more before the slot, the weekday alone would read as the past few days.
+    assert since_text(datetime(2026, 10, 9, 17, 0, tzinfo=TZ), SLOT, TZ) == "Fri 10/9 5:00 PM"
 
 
 # --- plain wording, per reader ----------------------------------------------------------

@@ -45,6 +45,7 @@ FindingKind = Literal[
     "ready_to_close",
 ]
 Priority = Literal["high", "normal", "low"]
+NoRoom = Literal["tbd", "missing"]
 # The follow-up classifier's answer about a requestor's latest reply.
 Verdict = Literal["expects_reply", "client_will_follow_up", "no_reply_needed", "unsure"]
 VERDICTS: tuple[Verdict, ...] = get_args(Verdict)
@@ -142,6 +143,10 @@ class Finding:
     # Outreach due when the requester also wrote last: whole hours since
     # the requester's latest entry, shown on the one outreach row.
     requester_hours: int | None = None
+    # A renamed event with no room whose feed finding also stands for the room: "tbd" (TBD in
+    # the title) or "missing" (a date and time but no location). The row then asks for the
+    # room too, so one ticket is one row. Not part of the shadow compare's key.
+    no_room: NoRoom | None = None
 
 
 # Who wrote last on an upcoming event ticket, from the visible entries only.
@@ -519,6 +524,19 @@ def evaluate(
         findings.append(Finding(row.ticket_id, kind, priority, reason, whole, until))
         counts[kind] += 1
 
+    def fold_no_room(at: int) -> None:
+        """One row per ticket: a renamed event with no room (``findings[at]``) that also has
+        feed findings (everything after it) keeps only the feed findings, the first in sort
+        order marked to ask for the room too, as the outreach row folds in a reply owed. Both
+        count down to the same next date, so the feed finding is urgent whenever the room row
+        would have been."""
+        no_room = findings.pop(at)
+        counts["location_tbd_soon"] -= 1
+        feed_findings = findings[at:]
+        first = min(range(len(feed_findings)), key=lambda i: _finding_order(feed_findings[i]))
+        kind: NoRoom = "tbd" if no_room.reason == "tbd_soon" else "missing"
+        findings[at + first] = replace(feed_findings[first], no_room=kind)
+
     def judge_event(
         row: TicketRow,
         feed: TicketFeed,
@@ -693,11 +711,13 @@ def evaluate(
             upcoming = [when for when in info.dates if when >= now]
             if info.location_missing and upcoming:
                 counts["event_location_missing"] += 1
+            no_room_at: int | None = None  # where this ticket's location_tbd_soon is, if any
             if (info.location_tbd or info.location_missing) and upcoming:
                 until = _hours(now, upcoming[0])
                 if until <= rules.event_tbd_days * 24:
                     reason = "tbd_soon" if info.location_tbd else "location_missing"
                     add(row, "location_tbd_soon", "normal", reason, until)
+                    no_room_at = len(findings) - 1
             next_date = _next_title_date(row, now, rules, tz)
             if next_date is None:
                 continue  # further out, past or under way: the title is enough
@@ -715,6 +735,8 @@ def evaluate(
                 counts["event_renamed_with_form"] += 1
             room_set = info.location_named
             judge_event(row, feed, form, next_date, room_set)
+            if no_room_at is not None and len(findings) > no_room_at + 1:
+                fold_no_room(no_room_at)
             continue
 
         if row.created is None:

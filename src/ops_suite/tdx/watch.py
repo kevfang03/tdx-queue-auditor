@@ -1303,14 +1303,36 @@ def _utc(when: datetime) -> datetime:
 
 DAY_END_STATE_FILE = "day-end-state.json"
 TOKEN_COMMAND = f'"{RUN} tdx api token --headed"'
+# The day-end notice's two tiers of advice while the API makes the cards. Rows or findings
+# that differ mean a card could have differed, so the browser takes the cards back. Any other
+# difference (a feed read by one side only, a field value) is a timing gap between the two
+# reads of one cycle, usually a ticket that changed in between: worth acting on only if it
+# shows again the next day.
 DAY_END_MISMATCH_ADVICE = (
-    "The browser and the API disagreed. To let the browser make the cards again, set "
-    'tdx.source = "shadow" and restart tdx watch; "tdx api compare --days 1 --show-ids" lists '
-    "the tickets on this computer."
+    "The browser and the API disagreed on rows or findings. To let the browser make the cards "
+    'again, set tdx.source = "shadow" and restart tdx watch; "tdx api compare --days 1 '
+    '--show-ids" lists the tickets on this computer.'
 )
+DAY_END_READS_ONLY_NOTE = (
+    "Rows and findings matched in every compared cycle, so no card differed. The difference is "
+    "in what each side read, usually a ticket that changed between the two reads. Nothing to "
+    'do today; if it shows again tomorrow, set tdx.source = "shadow" and restart tdx watch.'
+)
+# The mismatch categories that can change a card: a row one side lacks, or a finding.
+CARD_MISMATCH_PREFIXES = ("row_only_", "finding_only_")
+MismatchKind = Literal["none", "reads_only", "rows_or_findings"]
 # The day-end notice's line when no run recorded a comparison during the day.
 DAY_END_NO_RECORDS = "No runs were recorded for comparison today."
 TokenCode = Literal["ok", "refresh_now", "refresh_later", "missing", "off"]
+
+
+def mismatch_kind(categories: Set[str]) -> MismatchKind:
+    """Which tier of advice the day's mismatch ``categories`` call for: ``rows_or_findings``
+    when any could have changed a card, ``reads_only`` for any other difference, else
+    ``none``."""
+    if any(code.startswith(CARD_MISMATCH_PREFIXES) for code in categories):
+        return "rows_or_findings"
+    return "reads_only" if categories else "none"
 
 
 def day_end_state_path(settings: Settings) -> Path:
@@ -1353,31 +1375,31 @@ def token_line(token: ApiToken | None, now: datetime, hours: DeskHours) -> tuple
     A token lasts ``TOKEN_LIFETIME`` from its refresh, so one refreshed after
     ``next_close - TOKEN_LIFETIME`` covers the whole next desk day. The arithmetic is on aware
     datetimes in UTC, so a DST change in between is counted right; the times shown are in the
-    desk's time zone, 12-hour like the cards.
+    desk's time zone, 12-hour like the cards, dated a week or more from ``now`` as on the cards.
     """
     tz = hours.tz
     next_start, next_close = hours.next_window(now)
     if token is None or _utc(token.expires) <= _utc(now):
         return (
             "API token missing or expired. Refresh it before the desk opens "
-            f"{card_time(next_start, tz, weekday=True)}: {TOKEN_COMMAND}.",
+            f"{card_time(next_start, tz, weekday=True, now=now)}: {TOKEN_COMMAND}.",
             "missing",
         )
-    expires = card_time(token.expires, tz, weekday=True)
+    expires = card_time(token.expires, tz, weekday=True, now=now)
     if _utc(token.expires) >= _utc(next_close):
         tomorrow = now.astimezone(tz).date() + timedelta(days=1)
         covers = "tomorrow" if next_start.date() == tomorrow else f"{next_start:%a}"
         return f"API token valid until {expires}; it covers {covers}.", "ok"
     before = (
         f"API token expires {expires}, before the desk closes "
-        f"{card_time(next_close, tz, weekday=True)}."
+        f"{card_time(next_close, tz, weekday=True, now=now)}."
     )
     refresh_after = max(_utc(now), _utc(next_close) - TOKEN_LIFETIME)
     if refresh_after <= _utc(now):
         return f"{before} Refresh it now: {TOKEN_COMMAND}.", "refresh_now"
+    refresh_text = card_time(refresh_after, tz, weekday=True, now=now)
     return (
-        f"{before} Refresh it after {card_time(refresh_after, tz, weekday=True)} so it lasts "
-        f"the whole day: {TOKEN_COMMAND}.",
+        f"{before} Refresh it after {refresh_text} so it lasts the whole day: {TOKEN_COMMAND}.",
         "refresh_later",
     )
 
@@ -1396,10 +1418,12 @@ def day_end_notice(
 
     The first line names the day and the token's state, so a phone's preview shows what to
     do; then the day's comparison, counts only (``compare_report`` never shows ticket ids
-    here); then, while the API makes the cards, what to do about a mismatch.
+    here); then, while the API makes the cards, what to do about a mismatch: switch the cards
+    back to the browser when rows or findings differed, or wait a day when only the reads did
+    (``mismatch_kind``).
     """
     # The comparison report lives beside the shadow runner, which imports this module.
-    from ops_suite.tdx.shadow import compare_report
+    from ops_suite.tdx.shadow import compare_report, mismatch_categories
 
     if settings.tdx.api.enabled:
         token_text, code = token_line(token, now, hours)
@@ -1412,16 +1436,18 @@ def day_end_notice(
     else:
         report = [DAY_END_NO_RECORDS]
     lines += report
-    mismatches = any(
-        line.startswith("Mismatches:") and line != "Mismatches: none." for line in report
-    )
-    if mismatches and settings.tdx.source == "api":
-        lines.append(DAY_END_MISMATCH_ADVICE)
+    kind = mismatch_kind(mismatch_categories(records))
+    if settings.tdx.source == "api":
+        if kind == "rows_or_findings":
+            lines.append(DAY_END_MISMATCH_ADVICE)
+        elif kind == "reads_only":
+            lines.append(DAY_END_READS_ONLY_NOTE)
     compared = sum(1 for record in records if record.get("result") == "compared")
     extras: dict[str, object] = {
         "day": day.date().isoformat(),
         "compared": compared,
-        "mismatches": mismatches,
+        "mismatches": kind != "none",
+        "mismatch_kind": kind,
         "token": code,
     }
     # Blank lines between them: card text is Markdown, where a single line break may be joined.

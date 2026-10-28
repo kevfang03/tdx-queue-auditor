@@ -68,3 +68,47 @@ def test_midnight_and_noon_in_the_display_time_zone() -> None:
     assert card_time(midnight, NEW_YORK, weekday=True) == "Tue 12:00 AM"
     assert card_time(noon, NEW_YORK) == "12:00 PM"
     assert card_time(midnight, LOS_ANGELES, weekday=True) == "Mon 9:00 PM"
+
+
+# --- a weekday a week or more away shows its date -------------------------------------------
+
+WED_10_28 = datetime(2026, 10, 28, 7, 30, tzinfo=NEW_YORK)
+TUE_10_27 = datetime(2026, 10, 27, 7, 30, tzinfo=NEW_YORK)
+TUE_10_20 = datetime(2026, 10, 20, 13, 37, tzinfo=NEW_YORK)
+
+
+def test_eight_days_back_shows_the_date() -> None:
+    # On a Wednesday card, "Tue" alone would read as yesterday.
+    assert card_time(TUE_10_20, NEW_YORK, weekday=True, now=WED_10_28) == "Tue 10/20 1:37 PM"
+
+
+def test_five_days_back_keeps_the_weekday_alone() -> None:
+    thursday = datetime(2026, 10, 22, 13, 37, tzinfo=NEW_YORK)
+
+    assert card_time(thursday, NEW_YORK, weekday=True, now=TUE_10_27) == "Thu 1:37 PM"
+
+
+def test_six_days_ahead_shows_the_date_too() -> None:
+    monday = datetime(2026, 10, 26, 13, 37, tzinfo=NEW_YORK)
+
+    assert card_time(monday, NEW_YORK, weekday=True, now=TUE_10_20) == "Mon 10/26 1:37 PM"
+
+
+def test_without_now_or_weekday_the_text_is_unchanged() -> None:
+    assert card_time(TUE_10_20, NEW_YORK, weekday=True) == "Tue 1:37 PM"
+    assert card_time(TUE_10_20, NEW_YORK, now=WED_10_28) == "1:37 PM"
+
+
+@pytest.mark.parametrize(
+    ("when", "text"),
+    [
+        # Mon 10/26 21:00 EDT is already Tue 10/27 in UTC: local dates count, so 6 days.
+        (datetime(2026, 10, 26, 21, 0, tzinfo=NEW_YORK), "Mon 10/26 9:00 PM"),
+        (datetime(2026, 10, 27, 21, 0, tzinfo=NEW_YORK), "Tue 9:00 PM"),
+    ],
+    ids=["six-days", "five-days"],
+)
+def test_the_day_count_crosses_the_dst_change_on_2026_11_01(when: datetime, text: str) -> None:
+    sunday_noon = datetime(2026, 11, 1, 12, 0, tzinfo=NEW_YORK)  # EST since 02:00
+
+    assert card_time(when, NEW_YORK, weekday=True, now=sunday_noon) == text

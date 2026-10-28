@@ -1591,12 +1591,58 @@ def test_a_renamed_ticket_without_a_form_still_gets_the_feed_state_findings() ->
     waiting = renamed_run(TBD_TOMORROW, entry(DESK, 1))
     replied = renamed_run(IN_5_DAYS, entry(REQUESTOR, 60), entry(DESK, 100))
 
-    assert kinds(waiting) == [
-        ("event_details_pending", "details_pending_near", "high"),
-        ("location_tbd_soon", "tbd_soon", "normal"),
-    ]
+    # The TBD room folds into the follow-up: one row for the ticket.
+    assert kinds(waiting) == [("event_details_pending", "details_pending_near", "high")]
+    assert only(waiting).no_room == "tbd"
     assert kinds(replied) == [("client_waiting", "event_requester_replied", "normal")]
     assert waiting.counts["event_form_missing"] == replied.counts["event_form_missing"] == 1
+
+
+@pytest.mark.parametrize(
+    ("title", "no_room"), [(TBD_TOMORROW, "tbd"), (NO_ROOM_TOMORROW, "missing")]
+)
+def test_a_renamed_event_with_no_room_and_a_feed_finding_is_one_finding(
+    title: str, no_room: str
+) -> None:
+    """A ticket waiting on the requester with no room yet is one row, not two: the follow-up
+    stands for the room too, and the counts drop the room row with it."""
+    result = renamed_run(title, entry(DESK, 1))
+
+    assert kinds(result) == [("event_details_pending", "details_pending_near", "high")]
+    assert only(result).no_room == no_room
+    assert result.counts["location_tbd_soon"] == 0
+    assert result.counts["event_details_pending"] == 1
+
+
+def test_any_feed_finding_takes_the_room_row() -> None:
+    outreach = renamed_run(TBD_TOMORROW, form=event_form(1))  # nobody has emailed yet
+    replied = renamed_run(TBD_TOMORROW, entry(REQUESTOR, 2), entry(DESK, 30))
+
+    assert kinds(outreach) == [("event_outreach_due", "outreach_due", "high")]
+    assert kinds(replied) == [("client_waiting", "event_requester_replied", "high")]
+    assert only(outreach).no_room == only(replied).no_room == "tbd"
+
+
+def test_a_tbd_event_without_a_feed_finding_keeps_its_room_row() -> None:
+    # The requester has answered and the desk wrote last: in progress, no feed finding.
+    in_progress = renamed_run(TBD_TOMORROW, entry(DESK, 2), entry(REQUESTOR, 20), entry(DESK, 50))
+
+    assert in_progress.findings == (Finding(1, "location_tbd_soon", "normal", "tbd_soon", 26),)
+    assert in_progress.counts["location_tbd_soon"] == 1
+
+
+def test_only_the_ticket_with_both_findings_is_merged() -> None:
+    rows = [unclaimed(1, ago(200), TBD_TOMORROW), unclaimed(2, ago(200), TBD_IN_5_DAYS),
+            unclaimed(3, ago(200), NO_ROOM_TOMORROW)]  # fmt: skip
+    feeds = {1: feed(1, entry(DESK, 1)), 2: feed(2, entry(DESK, 1))}  # 3's page not read
+
+    result = evaluate(rows, feeds, NOW, STAFF, TZ)
+
+    assert [(f.ticket_id, f.kind, f.no_room) for f in result.findings] == [
+        (1, "event_details_pending", "tbd"),
+        (3, "location_tbd_soon", None),
+    ]
+    assert result.counts["location_tbd_soon"] == 1
 
 
 @pytest.mark.parametrize(

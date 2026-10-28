@@ -168,21 +168,24 @@ def event_when(event: WeekEvent, tz: ZoneInfo) -> str:
     return f"{text} {clock_text(local)}"
 
 
-def event_state_label(event: WeekEvent, tz: ZoneInfo) -> str:
-    """``waiting on requester since Tue 8:26 AM`` when that time is known, else the label."""
+def event_state_label(event: WeekEvent, tz: ZoneInfo, now: datetime | None = None) -> str:
+    """``waiting on requester since Tue 8:26 AM`` when that time is known, else the label.
+    A time a week or more from ``now``, the summary's own time, shows its date too (``since
+    Tue 10/20 1:37 PM``), so it does not read as the past few days."""
     label = STATE_LABELS[event.state]
     if event.since is not None:
-        label += f" since {card_time(event.since, tz, weekday=True)}"
+        label += f" since {card_time(event.since, tz, weekday=True, now=now)}"
     return label
 
 
-def event_details(event: WeekEvent, tz: ZoneInfo) -> str:
+def event_details(event: WeekEvent, tz: ZoneInfo, now: datetime | None = None) -> str:
     """``Tue 10/21 3:00–5:00 PM · Lobby · A/V on form: yes · not emailed yet``: no names, no
     free text. "A/V on form" because only the form's checklist is read: A/V asked for later
     is not seen, so "no" does not mean "no A/V needed". Without a form the line says ``no
-    form`` once; a form whose space was not read keeps ``—`` for the space alone."""
+    form`` once; a form whose space was not read keeps ``—`` for the space alone. ``now`` is
+    the summary's time, which dates a waiting time a week or more away (``event_state_label``)."""
     when = event_when(event, tz)
-    state = event_state_label(event, tz)
+    state = event_state_label(event, tz, now)
     if event.space is None and event.av is None:
         return f"{when} · no form · {state}"
     space = SPACE_LABELS[event.space] if event.space is not None else "—"

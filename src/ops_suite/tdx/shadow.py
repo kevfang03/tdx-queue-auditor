@@ -875,14 +875,30 @@ def _tally(records: Iterable[Mapping]) -> _Tally:
     return tally
 
 
+def mismatch_categories(records: Sequence[Mapping]) -> set[str]:
+    """The ``CATEGORIES`` codes found in the compared ``records``, of either primary. Records
+    the report cannot read are skipped, as ``_tally`` skips them, so this matches the
+    report's "Mismatches" line."""
+    known = [
+        record
+        for record in records
+        if isinstance(record, Mapping) and record.get("primary", "browser") in ("browser", "api")
+    ]
+    return {code for code, n in _tally(known).mismatches.items() if n}
+
+
 def _reasons(counts: Counter[str]) -> str:
     """`` (needs_sign_in 2, timeout 1)``, or nothing when there are none."""
     joined = ", ".join(f"{reason} {n}" for reason, n in sorted(counts.items()))
     return f" ({joined})" if joined else ""
 
 
-def _comparison_lines(tally: _Tally, verdict: str) -> list[str]:
-    """Matches, mismatches, medians and the verdict over a period's compared cycles."""
+def _comparison_lines(tally: _Tally, verdict: str, failure: str) -> list[str]:
+    """Matches, mismatches, medians and the verdict over a period's compared cycles. The
+    verdict counts compared cycles only and names the compared source's failures apart
+    (``failure``: ``browser failure`` or ``API failure``), because a failed read compared
+    nothing: counting it as "not matched" made four identical cycles out of five read as a
+    mismatch."""
     lines = [
         f"Rows matched: {_percent(tally.rows_matched, tally.rows_total)} "
         f"({tally.rows_matched} of {tally.rows_total}). "
@@ -907,7 +923,9 @@ def _comparison_lines(tally: _Tally, verdict: str) -> list[str]:
             f"API requests {_median(tally.requests):g}; "
             f"browser allowed non-GET requests {_median(tally.non_get):g}."
         )
-    line = f"Verdict: {verdict} in {tally.identical} of {tally.compared + tally.failed} cycles"
+    line = f"Verdict: {verdict} in {tally.identical} of {tally.compared} compared cycles"
+    if tally.failed:
+        line += f"; {_plural(tally.failed, failure)}"
     if browser is not None and api is not None:
         faster = browser - api
         line += f"; API reads were {abs(faster):.1f}s {'faster' if faster >= 0 else 'slower'}"
@@ -925,7 +943,7 @@ def _shadow_period(tally: _Tally, days: int, period: str | None = None) -> list[
         f"API shadow, {_period_words(days, period)}: {_plural(tally.cycles, 'cycle')}; "
         f"{tally.compared} compared, {_plural(tally.failed, 'API failure')}"
         f"{_reasons(tally.failures)}.",
-        *_comparison_lines(tally, "API matched the browser"),
+        *_comparison_lines(tally, "API matched the browser", "API failure"),
     ]
 
 
@@ -945,7 +963,7 @@ def _api_period(tally: _Tally, days: int, period: str | None = None) -> list[str
         shadow + ".",
     ]
     if tally.compared + tally.failed:
-        lines += _comparison_lines(tally, "the browser matched the API")
+        lines += _comparison_lines(tally, "the browser matched the API", "browser failure")
     return lines
 
 

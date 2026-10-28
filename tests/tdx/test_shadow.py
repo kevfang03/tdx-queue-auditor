@@ -555,7 +555,8 @@ def test_tdx_api_compare_prints_percentages_and_the_verdict(
         "findings only from the browser: 1 (1 ticket), findings only from the API: 1 (1 ticket).",
         "Median per compared cycle: browser 84.5s, API 34.5s; API requests 12; "
         "browser allowed non-GET requests 10.",
-        "Verdict: API matched the browser in 3 of 5 cycles; API reads were 50.0s faster.",
+        "Verdict: API matched the browser in 3 of 4 compared cycles; 1 API failure; "
+        "API reads were 50.0s faster.",
     ]
     assert REQUESTOR not in "\n".join(out)
 
@@ -615,9 +616,8 @@ def test_a_slower_api_and_unreadable_records_are_reported() -> None:
 
     lines = compare_report([record, {"result": "compared"}], days=1)
 
-    assert (
-        lines[-2]
-        == "Verdict: API matched the browser in 1 of 1 cycles; API reads were 15.5s slower."
+    assert lines[-2] == (
+        "Verdict: API matched the browser in 1 of 1 compared cycles; API reads were 15.5s slower."
     )
     assert lines[-1] == "Unreadable records skipped: 1."
 

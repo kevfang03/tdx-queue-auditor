@@ -666,7 +666,7 @@ def test_compare_reports_the_shadow_and_the_api_primary_periods(
         "Mismatches: none.",
         "Median per compared cycle: browser 90.0s, API 40.0s; API requests 12; "
         "browser allowed non-GET requests 10.",
-        "Verdict: API matched the browser in 2 of 2 cycles; API reads were 50.0s faster.",
+        "Verdict: API matched the browser in 2 of 2 compared cycles; API reads were 50.0s faster.",
         "API primary, last 1 day: 5 cycles; 3 read through the API, 2 browser fallbacks "
         "(needs_sign_in 2).",
         "Browser shadow: 2 compared, 1 skipped (browser_signed_out 1).",
@@ -675,7 +675,8 @@ def test_compare_reports_the_shadow_and_the_api_primary_periods(
         "Mismatches: none.",
         "Median per compared cycle: browser 80.0s, API 30.0s; API requests 14; "
         "browser allowed non-GET requests 10.",
-        "Verdict: the browser matched the API in 2 of 2 cycles; API reads were 50.0s faster.",
+        "Verdict: the browser matched the API in 2 of 2 compared cycles; "
+        "API reads were 50.0s faster.",
     ]
 
 

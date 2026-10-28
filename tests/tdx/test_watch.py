@@ -1434,6 +1434,32 @@ def test_the_summary_draft_adds_events_and_duplicates_from_the_run(
         assert secret not in text
 
 
+def test_a_room_row_folded_into_a_follow_up_is_not_counted_as_handled(
+    settings: Settings, tmp_path: Path
+) -> None:
+    """The morning listed 103's room row; by noon the desk's follow-up came due and took it
+    over. 103 still has an open finding, so the update does not say it no longer needs
+    attention."""
+    merged = Finding(103, "event_details_pending", "high", "details_pending_near", 20, 30,
+                     no_room="tbd")  # fmt: skip
+    run = make_run([merged], now=at(10, 19, 12))
+    request = watch_module.SummaryRequest(
+        at(10, 19, 12),
+        kind="delta",
+        since=at(10, 19, 7, 30),
+        previous=frozenset({(103, "location_tbd_soon")}),
+    )
+
+    draft = watch_module.draft_summary(
+        run, settings, AlertState(tmp_path / "s.json"), "desk", request
+    )
+
+    lines = [block["text"] for block in draft.card["body"]]
+    assert lines[0] == "Since 7:30 AM: 1 more ticket for the help desk"
+    assert lines[1] == "1 ticket needs attention: the one below. Checked at 12:00 PM."
+    assert draft.cleared == 1  # the finding count; the lead counts tickets with none left
+
+
 # --- the desk gets summaries only: full, then deltas ---------------------------------------
 
 EVENT_TITLE = "EVENT [10/21 2:00 PM - 4:00 PM Room 210] Alumni panel"

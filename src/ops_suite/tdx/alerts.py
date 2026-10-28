@@ -147,6 +147,18 @@ WORDING: dict[tuple[str, str | None], str] = {
     ("event_over", None): "Event ended {age} ago: ready to resolve?",
     ("ready_to_close", None): "{Team} replied {age} ago, no reply since: close if nothing new",
 }
+# A renamed event's feed finding that also stands for its missing room (``Finding.no_room``)
+# ends with the room check, so one ticket is one row.
+NO_ROOM_WORDING: dict[str, str] = {
+    "tbd": (
+        "Location still TBD on the ticket: check the events spreadsheet, and if a room is "
+        "listed, update the ticket."
+    ),
+    "missing": (
+        "No room on the ticket yet: check the events spreadsheet, and if a room is listed, "
+        "update the ticket."
+    ),
+}
 # Summary keys build_card reads from summary_counts.
 SUMMARY_KEYS = ("unclaimed", "feeds_read", "feeds_failed")
 
@@ -505,7 +517,16 @@ def section_label(kind: str) -> str:
 
 def finding_wording(finding: Finding, reader: Reader = PERSONAL) -> str:
     """The card wording for a finding, naming the team as ``reader`` does; never fails on an
-    unknown kind, reason or age."""
+    unknown kind, reason or age. A finding that also stands for its event's missing room
+    (``no_room``) ends with the room check (``NO_ROOM_WORDING``), after a full stop."""
+    text = _base_wording(finding, reader)
+    room = NO_ROOM_WORDING.get(finding.no_room) if finding.no_room is not None else None
+    if room is None:
+        return text
+    return f"{text if text.endswith('.') else text + '.'} {room}"
+
+
+def _base_wording(finding: Finding, reader: Reader) -> str:
     template = WORDING.get((finding.kind, finding.reason)) or WORDING.get((finding.kind, None))
     if template is not None and finding.age_hours is not None:
         team = escape_markdown(reader.team)
@@ -551,9 +572,18 @@ def fallback_text(count: int, reader: Reader = PERSONAL) -> str:
 
 def ticket_count(findings: Iterable[Finding]) -> int:
     """How many distinct tickets ``findings`` are about: the number a heading or preview line
-    states, since one ticket can carry two findings (say an event's follow-up and its missing
-    room) and would otherwise be counted twice."""
+    states, since one ticket can carry two findings (one per kind) and would otherwise be
+    counted twice."""
     return len({finding.ticket_id for finding in findings})
+
+
+def plan_ticket_counts(plan: AlertPlan) -> tuple[int, int]:
+    """(new, reminders) for the alert card's heading, counting tickets like every other
+    heading, since one ticket can carry two findings: the tickets with a new row, then the
+    other tickets with a reminder row. Row markers stay per finding."""
+    new = {due.finding.ticket_id for due in plan.on_card if due.why == "new"}
+    reminders = {due.finding.ticket_id for due in plan.on_card if due.why == "reminder"} - new
+    return len(new), len(reminders)
 
 
 def checked_line(now: datetime, tz: ZoneInfo, summary_counts: Mapping[str, int]) -> str:
@@ -562,7 +592,7 @@ def checked_line(now: datetime, tz: ZoneInfo, summary_counts: Mapping[str, int])
     failed = summary_counts.get("feeds_failed", 0)
     unread = f", {failed} could not be read" if failed else ""
     return (
-        f"Checked {card_time(now, tz, weekday=True)}: "
+        f"Checked {card_time(now, tz, weekday=True, now=now)}: "
         f"{summary_counts.get('unclaimed', 0)} unclaimed tickets, "
         f"{summary_counts.get('feeds_read', 0)} ticket histories read{unread}."
     )
@@ -605,12 +635,9 @@ def _card(
     if reader.audience == "desk":
         team = capitalised(escape_markdown(reader.team))
         checked = f"{team}, please follow up on these. {checked}"
+    new, reminders = plan_ticket_counts(plan)
     body: list[dict[str, object]] = [
-        _text(
-            f"TDX queue: {counts_phrase(plan.new, plan.reminders)}",
-            weight="Bolder",
-            size="Medium",
-        ),
+        _text(f"TDX queue: {counts_phrase(new, reminders)}", weight="Bolder", size="Medium"),
         _text(checked, isSubtle=True, size="Small", spacing="None"),
     ]
     kinds = sorted({due.finding.kind for due in plan.on_card}, key=_kind_order)
@@ -933,20 +960,23 @@ def reader_name(reader: Reader) -> str:
 
 def since_text(since: datetime, slot: datetime, tz: ZoneInfo) -> str:
     """When the last summary was posted, as the full heading says it: ``yesterday`` for the day
-    before ``slot``, ``7:30 AM`` for the same day, else ``Fri 5:00 PM``."""
+    before ``slot``, ``7:30 AM`` for the same day, else ``Fri 5:00 PM`` (``Fri 10/16 5:00 PM`` a
+    week or more before ``slot``)."""
     posted = since.astimezone(tz)
     day = slot.astimezone(tz).date()
     if posted.date() == day - timedelta(days=1):
         return "yesterday"
-    return card_time(posted, tz, weekday=posted.date() != day)
+    return card_time(posted, tz, weekday=posted.date() != day, now=slot)
 
 
 def delta_heading(new: int, reminders: int, since: str, *, who: str = "you") -> str:
     """``Since 7:30 AM: 1 more ticket and 2 reminders for the help desk``: the heading of a
-    later slot's update, naming only the parts it has. ``new`` counts the tickets added to
-    the list since the last post (their rows are marked "(added)"), ``reminders`` every other
-    row (due reminders, and urgent findings open at the last post); ``who`` as
-    ``reader_name`` gives it. "More", because the earlier posts already listed the rest."""
+    later slot's update, naming only the parts it has. Both count tickets, so together they
+    are the tickets in the rows below, since one ticket can carry two rows: ``new`` the
+    tickets with a row added since the last post (marked "(added)"), ``reminders`` the other
+    tickets in the rows (due reminders, and urgent findings open at the last post); ``who``
+    as ``reader_name`` gives it. "More", because the earlier posts already listed the
+    rest."""
     parts = [
         _plural(count, word)
         for count, word in ((new, "more ticket"), (reminders, "reminder"))
@@ -1024,7 +1054,7 @@ def _summary_card(
         )
         for event in events[: max(max_rows, 0)]:
             line = _id_link(event.ticket_id, links)
-            details = event_details(event, tz)
+            details = event_details(event, tz, now)
             title = _shown_title(rows_by_id.get(event.ticket_id), title_chars, show_titles)
             if title is None:
                 body.append(_text(f"{line} · {details}", spacing="Small"))
@@ -1281,9 +1311,10 @@ def fit_delta_card(
     from the end until the card is under ``CARD_MAX_BYTES``. The caller posts it only when
     ``findings`` has a row."""
     ordered = open_findings(findings)
-    added = [f for f in ordered if (f.ticket_id, f.kind) in new_keys]
-    added_tickets = len({f.ticket_id for f in added})
-    reminders = len(ordered) - len(added)
+    added_ids = {f.ticket_id for f in ordered if (f.ticket_id, f.kind) in new_keys}
+    added_tickets = len(added_ids)
+    # Tickets too: a ticket with an added row counts once, as added, whatever else it has.
+    reminders = len({f.ticket_id for f in ordered} - added_ids)
     heading = delta_heading(added_tickets, reminders, card_time(since, tz), who=reader_name(reader))
     shown_tickets = len({f.ticket_id for f in ordered})
     lead = delta_lead(total, shown_tickets, cleared, card_time(now, tz))
@@ -1318,8 +1349,8 @@ def fit_delta_card(
 
 def urgent_heading(count: int) -> str:
     """``Event soon: 2 need follow-up`` (``1 needs follow-up`` for one). ``count`` is the
-    number of tickets, not findings: one event can carry two urgent findings (a follow-up
-    and a missing room) and is still one event to follow up."""
+    number of tickets, not findings: an event with two urgent findings is still one event
+    to follow up."""
     return f"Event soon: {count} {'needs' if count == 1 else 'need'} follow-up"
 
 
@@ -1347,7 +1378,7 @@ def fit_urgent_card(
     ask = "please follow up on these before the event."
     if reader.audience == "desk":
         ask = f"{capitalised(escape_markdown(reader.team))}, {ask}"
-    lead = f"{capitalised(ask)} Checked {card_time(now, tz, weekday=True)}."
+    lead = f"{capitalised(ask)} Checked {card_time(now, tz, weekday=True, now=now)}."
     rows = max_rows
     while True:
         body: list[dict[str, object]] = [
