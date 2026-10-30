@@ -7,7 +7,9 @@ For a side-by-side trial of the two sources. With ``tdx.source = "shadow"``, eac
   at the browser run's time;
 - the rules over each source's data, with the same settings and the desk-member memory read
   only (never taught or saved), so the two sets of findings differ only where the data does;
-- ``compare``: a pure diff in counts and ticket ids, for rows, feeds and findings;
+- ``compare``: a pure diff in counts and ticket ids, for rows, feeds and findings. Both sides
+  read the feeds of the same plan, so a feed one side planned and failed to read (or deferred)
+  is counted as that side's read failure, not as a mismatch;
 - one line per cycle in ``api-shadow.jsonl`` (``ShadowLog``), kept 30 days.
 
 The API part never posts, never writes the alert, summary or verdict state or the desk memory,
@@ -57,6 +59,7 @@ from ops_suite.tdx.feed_types import FeedEntry, TicketFeed
 from ops_suite.tdx.names import same_person
 from ops_suite.tdx.rows import TicketRow, WidgetKind
 from ops_suite.tdx.rules import Finding, evaluate, plan_feeds
+from ops_suite.tdx.tickets import FeedRead
 from ops_suite.tdx.watch import (
     ApiSignInNotices,
     AuditRun,
@@ -131,9 +134,19 @@ class SourceRead:
     rows: Sequence[TicketRow]
     feeds: Mapping[int, TicketFeed]
     findings: Sequence[Finding]
+    # Feeds this source's plan picked but did not read: FeedRead.failed | FeedRead.deferred.
+    not_read: frozenset[int] = frozenset()
 
     def __repr__(self) -> str:
-        return f"SourceRead(rows={len(self.rows)}, feeds={len(self.feeds)})"
+        return (
+            f"SourceRead(rows={len(self.rows)}, feeds={len(self.feeds)}, "
+            f"not_read={len(self.not_read)})"
+        )
+
+
+def _not_read(feeds: FeedRead) -> frozenset[int]:
+    """The feeds a read planned and did not get: failed or deferred."""
+    return frozenset(feeds.failed) | frozenset(feeds.deferred)
 
 
 @dataclass(frozen=True, slots=True)
@@ -157,14 +170,17 @@ class RowsDiff:
 class FeedsDiff:
     compared: int  # feeds both sources read
     matched: int  # of those, with every check the same
-    only_browser: tuple[int, ...]
-    only_api: tuple[int, ...]
+    only_browser: tuple[int, ...]  # read by the browser only, with no API failure recorded
+    only_api: tuple[int, ...]  # read through the API only, with no browser failure recorded
+    not_read_api: tuple[int, ...]  # the browser read it; the API recorded it as not read
+    not_read_browser: tuple[int, ...]  # the API read it; the browser recorded it as not read
     entries_browser: Mapping[str, int]  # entry counts by kind over the compared feeds
     entries_api: Mapping[str, int]
     differs: Mapping[str, tuple[int, ...]]  # check -> ticket ids
 
     @property
     def total(self) -> int:
+        """Feeds compared or read by one side only; read failures are not in it."""
         return self.compared + len(self.only_browser) + len(self.only_api)
 
 
@@ -273,22 +289,30 @@ def _entry_counts(feeds: Iterable[TicketFeed]) -> dict[str, int]:
     return {kind: counts[kind] for kind in ENTRY_KINDS}
 
 
-def _feeds_diff(browser: Mapping[int, TicketFeed], api: Mapping[int, TicketFeed]) -> FeedsDiff:
-    both = sorted(browser.keys() & api.keys())
+def _feeds_diff(browser: SourceRead, api: SourceRead) -> FeedsDiff:
+    """The two sides' feeds compared. Both read the feeds of the same plan at the same time, so
+    a feed one side lacks while that side recorded it as not read is that side's read failure;
+    only a one-sided feed with nothing recorded is a mismatch."""
+    by_browser, by_api = browser.feeds, api.feeds
+    both = sorted(by_browser.keys() & by_api.keys())
     differs: dict[str, list[int]] = {}
     matched = 0
     for ticket_id in both:
-        checks = feed_differences(browser[ticket_id], api[ticket_id])
+        checks = feed_differences(by_browser[ticket_id], by_api[ticket_id])
         matched += not checks
         for check in checks:
             differs.setdefault(check, []).append(ticket_id)
+    browser_only = by_browser.keys() - by_api.keys()
+    api_only = by_api.keys() - by_browser.keys()
     return FeedsDiff(
         compared=len(both),
         matched=matched,
-        only_browser=tuple(sorted(browser.keys() - api.keys())),
-        only_api=tuple(sorted(api.keys() - browser.keys())),
-        entries_browser=_entry_counts(browser[i] for i in both),
-        entries_api=_entry_counts(api[i] for i in both),
+        only_browser=tuple(sorted(browser_only - api.not_read)),
+        only_api=tuple(sorted(api_only - browser.not_read)),
+        not_read_api=tuple(sorted(browser_only & api.not_read)),
+        not_read_browser=tuple(sorted(api_only & browser.not_read)),
+        entries_browser=_entry_counts(by_browser[i] for i in both),
+        entries_api=_entry_counts(by_api[i] for i in both),
         differs={check: tuple(ids) for check, ids in differs.items()},
     )
 
@@ -308,7 +332,7 @@ def compare(browser: SourceRead, api: SourceRead) -> ShadowDiff:
             )
             for kind in KINDS
         },
-        feeds=_feeds_diff(browser.feeds, api.feeds),
+        feeds=_feeds_diff(browser, api),
         findings=FindingsDiff(
             browser=len(found[0]),
             api=len(found[1]),
@@ -386,6 +410,7 @@ def shadow_record(
         "matched": feeds.matched,
         "only_browser": list(feeds.only_browser),
         "only_api": list(feeds.only_api),
+        "not_read": {"browser": list(feeds.not_read_browser), "api": list(feeds.not_read_api)},
         "entries": {"browser": dict(feeds.entries_browser), "api": dict(feeds.entries_api)},
         "differs": {check: list(ids) for check, ids in feeds.differs.items()},
     }
@@ -557,7 +582,7 @@ def read_api(settings: Settings, client: TdxApiClient, run: AuditRun) -> SourceR
     )
     memory = read_only_memory(settings)
     findings = judge_read(settings, run, rows, feeds.feeds, feeds.forms, memory)
-    return SourceRead(rows, feeds.feeds, findings)
+    return SourceRead(rows, feeds.feeds, findings, _not_read(feeds))
 
 
 ClientFactory = Callable[[Settings, float], TdxApiClient]
@@ -642,7 +667,7 @@ def from_run(settings: Settings, run: AuditRun) -> SourceRead:
     """A cycle's own run, judged again the way the compared read is (no LLM step)."""
     memory = read_only_memory(settings)
     findings = judge_read(settings, run, run.rows, run.feeds.feeds, run.feeds.forms, memory)
-    return SourceRead(run.rows, run.feeds.feeds, findings)
+    return SourceRead(run.rows, run.feeds.feeds, findings, _not_read(run.feeds))
 
 
 def read_browser_beside(
@@ -657,7 +682,7 @@ def read_browser_beside(
     memory = read_only_memory(settings)
     findings = judge_read(settings, run, rows, feeds.feeds, feeds.forms, memory)
     non_get = len(dashboard.allowed_non_get) + len(feeds.allowed_non_get)
-    return SourceRead(rows, feeds.feeds, findings), non_get
+    return SourceRead(rows, feeds.feeds, findings, _not_read(feeds)), non_get
 
 
 BrowserReader = Callable[[Settings, AuditRun], tuple[SourceRead, int]]
@@ -773,6 +798,9 @@ class _Tally:
     mismatches: Counter[str] = field(default_factory=Counter)
     tickets: dict[str, set[tuple]] = field(default_factory=dict)
     by_key: Counter[tuple[str, tuple]] = field(default_factory=Counter)
+    # Feed reads that failed, by the side that failed ("browser", "api"); not in feeds_total.
+    not_read: Counter[str] = field(default_factory=Counter)
+    not_read_by_key: Counter[tuple[str, int]] = field(default_factory=Counter)
     browser_seconds: list[float] = field(default_factory=list)
     api_seconds: list[float] = field(default_factory=list)
     requests: list[int] = field(default_factory=list)
@@ -788,6 +816,18 @@ def _ids(value: object) -> list[int]:
     if not isinstance(value, list) or not all(isinstance(i, int) for i in value):
         raise ValueError("not a list of ticket ids")
     return value
+
+
+NOT_READ_SIDES = ("api", "browser")  # the report's order
+
+
+def _record_not_read(feeds: Mapping) -> dict[str, list[int]]:
+    """A compared record's feed reads that failed, by side. A record written before they were
+    recorded has none; a malformed entry raises, so the record is skipped."""
+    value = feeds.get("not_read")
+    if value is None:
+        return {side: [] for side in NOT_READ_SIDES}
+    return {side: _ids(value[side]) for side in NOT_READ_SIDES}
 
 
 def _record_mismatches(record: Mapping) -> list[tuple[str, tuple]]:
@@ -852,6 +892,7 @@ def _tally(records: Iterable[Mapping]) -> _Tally:
                 + len(_ids(feeds["only_browser"]))
                 + len(_ids(feeds["only_api"]))
             )
+            not_read = _record_not_read(feeds)
             seconds = record["seconds"]
         except (KeyError, TypeError, ValueError, AttributeError, IndexError):
             tally.unreadable += 1
@@ -866,6 +907,10 @@ def _tally(records: Iterable[Mapping]) -> _Tally:
             tally.mismatches[category] += 1
             tally.tickets.setdefault(category, set()).add(key[:1])
             tally.by_key[(category, key)] += 1
+        for side, ids in not_read.items():
+            tally.not_read[side] += len(ids)
+            for ticket_id in ids:
+                tally.not_read_by_key[(f"not_read_{side}", ticket_id)] += 1
         if isinstance(seconds.get("browser"), int | float):
             tally.browser_seconds.append(float(seconds["browser"]))
         if isinstance(seconds.get("api"), int | float):
@@ -879,12 +924,22 @@ def mismatch_categories(records: Sequence[Mapping]) -> set[str]:
     """The ``CATEGORIES`` codes found in the compared ``records``, of either primary. Records
     the report cannot read are skipped, as ``_tally`` skips them, so this matches the
     report's "Mismatches" line."""
-    known = [
+    return {code for code, n in _tally(_known(records)).mismatches.items() if n}
+
+
+def feeds_not_read(records: Sequence[Mapping]) -> dict[str, int]:
+    """The feed reads that failed in the compared ``records``, of either primary, counted by
+    the side that failed: ``{"browser": n, "api": m}``. Unreadable records are skipped."""
+    tally = _tally(_known(records))
+    return {"browser": tally.not_read["browser"], "api": tally.not_read["api"]}
+
+
+def _known(records: Sequence[Mapping]) -> list[Mapping]:
+    return [
         record
         for record in records
         if isinstance(record, Mapping) and record.get("primary", "browser") in ("browser", "api")
     ]
-    return {code for code, n in _tally(known).mismatches.items() if n}
 
 
 def _reasons(counts: Counter[str]) -> str:
@@ -907,6 +962,17 @@ def _comparison_lines(tally: _Tally, verdict: str, failure: str) -> list[str]:
         f"Cycles with identical findings: {_percent(tally.identical, tally.compared)} "
         f"({tally.identical} of {tally.compared}).",
     ]
+    failed_reads = [
+        f"{'API' if side == 'api' else side} {tally.not_read[side]}"
+        for side in NOT_READ_SIDES
+        if tally.not_read[side]
+    ]
+    if failed_reads:
+        # A failed read is retried next cycle and changes no card; its reason is in the log.
+        lines.append(
+            "Feed reads that failed (the other side read them; not a mismatch): "
+            f"{', '.join(failed_reads)}."
+        )
     if tally.mismatches:
         parts = [
             f"{label}: {tally.mismatches[code]} ({_plural(len(tally.tickets[code]), 'ticket')})"
@@ -1000,7 +1066,8 @@ def compare_report(
     if unreadable:
         lines.append(f"Unreadable records skipped: {unreadable}.")
     by_key = shadow.by_key + api.by_key
-    if show_ids and by_key and (shadow.cycles or api.cycles):
+    not_read = shadow.not_read_by_key + api.not_read_by_key
+    if show_ids and (by_key or not_read) and (shadow.cycles or api.cycles):
         lines.append(SHOW_IDS_WARNING)
         order = list(CATEGORIES)
         for (category, key), n in sorted(
@@ -1008,6 +1075,9 @@ def compare_report(
         ):
             what = "  ".join(str(part) for part in key)
             lines.append(f"  {category}  {what}  {_plural(n, 'cycle')}")
+        # The failed reads after the mismatches: API first, as in the report's line.
+        for (category, ticket_id), n in sorted(not_read.items()):
+            lines.append(f"  {category}  {ticket_id}  {_plural(n, 'cycle')}")
     return lines
 
 

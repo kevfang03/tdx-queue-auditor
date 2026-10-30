@@ -86,9 +86,10 @@ _PRIORITY_ORDER = {"high": 0, "normal": 1, "low": 2}
 # (kind, reason) -> wording; a reason of None matches any reason of that kind. ``{age}`` is
 # the finding's age, ``{days}`` the time until the event (event outreach) and
 # ``{when}`` the same as "in 5 days" and ``{wrote}`` the time since the requester's latest
-# entry. ``{team}`` is the team that answers tickets as the card's reader names it
-# (``{Team}`` at the start of a sentence). Cards call the person who opened the ticket "the
-# requester", whatever the code or TDX calls them. The event outreach rows are a fixed
+# entry, ``{note_age}`` the time since a desk note that held a ticket. ``{team}`` is the team
+# that answers tickets as the card's reader names it (``{Team}`` at the start of a sentence).
+# Cards call the person who opened the ticket "the requester", whatever the code or TDX calls
+# them. The event outreach rows are a fixed
 # checklist, never a drafted reply: the requester books the room and creates any Zoom
 # meeting; the desk asks for the room number to prepare A/V and, for a hybrid or remote
 # event, for the link, asks the requester to add ``{mailbox}`` (the desk's mailbox as the
@@ -145,6 +146,11 @@ WORDING: dict[tuple[str, str | None], str] = {
         "room is listed, update the ticket."
     ),
     ("event_over", None): "Event ended {age} ago: ready to resolve?",
+    # A desk note after the reply held the ticket open on purpose; the hold is over.
+    ("ready_to_close", "desk_note_last"): (
+        "{Team} replied {age} ago and added a note {note_age} ago, no reply since: follow up or "
+        "close"
+    ),
     ("ready_to_close", None): "{Team} replied {age} ago, no reply since: close if nothing new",
 }
 # A renamed event's feed finding that also stands for its missing room (``Finding.no_room``)
@@ -541,6 +547,8 @@ def _base_wording(finding: Finding, reader: Reader) -> str:
             values["when"] = f"in {values['days']}"
         if finding.requester_hours is not None:
             values["wrote"] = format_age(finding.requester_hours)
+        if finding.note_hours is not None:
+            values["note_age"] = format_age(finding.note_hours)
         try:
             return template.format(**values)
         except KeyError:

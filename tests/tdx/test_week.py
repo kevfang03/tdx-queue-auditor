@@ -151,6 +151,7 @@ def test_renamed_event_states_come_from_the_title_then_the_form_and_feed() -> No
         row(4, "EVENT [10/23 2pm Room 210] Panel"),
         row(5, "EVENT [10/23 3pm Room 210] Panel"),
         row(6, "EVENT [10/24 3pm Room 210] Panel"),
+        row(7, "EVENT [10/24 4pm Room 210] Panel"),
     ]
     forms = {1: form(2, space="classroom", room=True, av=False), 5: form(4, marketing=True)}
     event_states = {
@@ -158,6 +159,7 @@ def test_renamed_event_states_come_from_the_title_then_the_form_and_feed() -> No
         2: EventStatus("requester_replied", NOW - timedelta(hours=1)),
         3: EventStatus("in_progress"),
         4: EventStatus("no_outreach_yet"),  # a renamed ticket without a form
+        7: EventStatus("details_confirmed"),
     }
 
     events = week(rows, forms, event_states)
@@ -169,12 +171,14 @@ def test_renamed_event_states_come_from_the_title_then_the_form_and_feed() -> No
         4: "no_outreach_yet",
         5: "marketing_only",
         6: "not_read",
+        7: "details_confirmed",
     }
     by_id = {event.ticket_id: event for event in events}
     assert (by_id[1].space, by_id[1].av) == ("classroom", False)  # from the form
     assert (by_id[4].space, by_id[4].av) == (None, None)  # no form: unknown
     assert by_id[1].since == NOW - timedelta(hours=3)
     assert by_id[2].since is None  # a time is shown for waiting on the requester only
+    assert by_id[7].since is None
 
 
 def test_sorted_by_date_then_id() -> None:
@@ -246,6 +250,7 @@ def test_event_times_are_shown_in_the_display_time_zone() -> None:
         ("waiting_on_requester", "waiting on requester"),
         ("requester_replied", "requester replied"),
         ("in_progress", "in progress"),
+        ("details_confirmed", "details confirmed"),
         ("location_missing", "location missing"),
         ("location_tbd", "location TBD"),
         ("marketing_only", "marketing only"),

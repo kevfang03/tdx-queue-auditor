@@ -1239,6 +1239,29 @@ def test_ready_to_close_wording() -> None:
     )
 
 
+def test_ready_to_close_after_a_desk_note_names_the_note() -> None:
+    held = Finding(101, "ready_to_close", "low", "desk_note_last", 250, note_hours=192)
+
+    assert finding_wording(held) == (
+        "The help desk replied 10 days ago and added a note 8 days ago, no reply since: "
+        "follow up or close"
+    )
+    assert finding_wording(held, COMMONS) == (
+        "The Commons replied 10 days ago and added a note 8 days ago, no reply since: "
+        "follow up or close"
+    )
+
+
+def test_a_details_confirmed_event_is_listed_without_a_time() -> None:
+    _, card = extras_summary([waiting(101)], [week_event(102, 21, "details_confirmed")])
+
+    lines = texts(card)
+    assert lines[2] == "Events this week (1)"
+    assert lines[3].endswith(
+        ") · Wed 10/21 3:00–5:00 PM · Lobby · A/V on form: yes · details confirmed"
+    )
+
+
 def test_the_summary_sections_are_in_the_check_in_order() -> None:
     kinds = [
         "ready_to_close",

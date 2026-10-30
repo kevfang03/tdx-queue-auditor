@@ -407,6 +407,7 @@ def rule_settings(tdx: TdxSettings) -> RuleSettings:
         urgent_days=events.urgent_days,
         near_event_days=events.near_event_days,
         close_after_days=rules.close_after_days,
+        close_hold_days=rules.close_hold_days,
     )
 
 
@@ -1303,36 +1304,52 @@ def _utc(when: datetime) -> datetime:
 
 DAY_END_STATE_FILE = "day-end-state.json"
 TOKEN_COMMAND = f'"{RUN} tdx api token --headed"'
-# The day-end notice's two tiers of advice while the API makes the cards. Rows or findings
-# that differ mean a card could have differed, so the browser takes the cards back. Any other
-# difference (a feed read by one side only, a field value) is a timing gap between the two
-# reads of one cycle, usually a ticket that changed in between: worth acting on only if it
-# shows again the next day.
+# What the day-end notice says about the day's differences while the API makes the cards.
+# Both sides read the same plan seconds apart, so there are four cases:
+# - rows or findings differed: a card could have differed, so the browser takes the cards
+#   back. This is the only case that calls for switching;
+# - a feed read by one side only with no read failure recorded: the comparison cannot explain
+#   it, but no card differed, so it is worth a look and not a switch;
+# - a field or feed detail differed: usually a busy ticket that changed between the two reads,
+#   which is expected on any day, so nothing to do;
+# - a feed read failed on one side only: no line here. The report's "Feed reads that failed"
+#   line says so and the feed is read again next cycle. Switching for a routine API timeout
+#   would hand the cards to the browser, which fails more often (a signed-out session).
 DAY_END_MISMATCH_ADVICE = (
     "The browser and the API disagreed on rows or findings. To let the browser make the cards "
     'again, set tdx.source = "shadow" and restart tdx watch; "tdx api compare --days 1 '
     '--show-ids" lists the tickets on this computer.'
 )
-DAY_END_READS_ONLY_NOTE = (
-    "Rows and findings matched in every compared cycle, so no card differed. The difference is "
-    "in what each side read, usually a ticket that changed between the two reads. Nothing to "
-    'do today; if it shows again tomorrow, set tdx.source = "shadow" and restart tdx watch.'
+DAY_END_FEEDS_UNEXPLAINED_NOTE = (
+    "A feed was read by one side only with no read failure recorded, which the comparison "
+    "cannot explain. Rows and findings matched, so no card differed. Nothing to switch; "
+    '"tdx api compare --days 1 --show-ids" lists the tickets on this computer.'
+)
+DAY_END_DETAILS_ONLY_NOTE = (
+    "Rows and findings matched in every compared cycle, so no card differed. Some ticket "
+    "details differed between the two reads, usually a reply or an update that landed in "
+    "between. Nothing to do."
 )
 # The mismatch categories that can change a card: a row one side lacks, or a finding.
 CARD_MISMATCH_PREFIXES = ("row_only_", "finding_only_")
-MismatchKind = Literal["none", "reads_only", "rows_or_findings"]
+# A feed read by one side only, with no read failure recorded on the other.
+ONE_SIDED_FEED = ("feed_only_browser", "feed_only_api")
+MismatchKind = Literal["none", "details_only", "feeds_unexplained", "rows_or_findings"]
 # The day-end notice's line when no run recorded a comparison during the day.
 DAY_END_NO_RECORDS = "No runs were recorded for comparison today."
 TokenCode = Literal["ok", "refresh_now", "refresh_later", "missing", "off"]
 
 
 def mismatch_kind(categories: Set[str]) -> MismatchKind:
-    """Which tier of advice the day's mismatch ``categories`` call for: ``rows_or_findings``
-    when any could have changed a card, ``reads_only`` for any other difference, else
-    ``none``."""
+    """Which case of advice the day's mismatch ``categories`` call for, the first that fits:
+    ``rows_or_findings`` when any could have changed a card, ``feeds_unexplained`` for a feed
+    read by one side only, ``details_only`` for any other difference, else ``none``. Feed
+    reads that failed are not mismatches, so they are not in ``categories``."""
     if any(code.startswith(CARD_MISMATCH_PREFIXES) for code in categories):
         return "rows_or_findings"
-    return "reads_only" if categories else "none"
+    if any(code in ONE_SIDED_FEED for code in categories):
+        return "feeds_unexplained"
+    return "details_only" if categories else "none"
 
 
 def day_end_state_path(settings: Settings) -> Path:
@@ -1418,12 +1435,13 @@ def day_end_notice(
 
     The first line names the day and the token's state, so a phone's preview shows what to
     do; then the day's comparison, counts only (``compare_report`` never shows ticket ids
-    here); then, while the API makes the cards, what to do about a mismatch: switch the cards
-    back to the browser when rows or findings differed, or wait a day when only the reads did
-    (``mismatch_kind``).
+    here); then, while the API makes the cards, what to do about a mismatch
+    (``mismatch_kind``): switch the cards back to the browser when rows or findings differed,
+    look without switching at a feed read by one side only, and nothing for detail
+    differences. Feed reads that failed get the report's own line and no advice.
     """
     # The comparison report lives beside the shadow runner, which imports this module.
-    from ops_suite.tdx.shadow import compare_report, mismatch_categories
+    from ops_suite.tdx.shadow import compare_report, feeds_not_read, mismatch_categories
 
     if settings.tdx.api.enabled:
         token_text, code = token_line(token, now, hours)
@@ -1437,17 +1455,20 @@ def day_end_notice(
         report = [DAY_END_NO_RECORDS]
     lines += report
     kind = mismatch_kind(mismatch_categories(records))
-    if settings.tdx.source == "api":
-        if kind == "rows_or_findings":
-            lines.append(DAY_END_MISMATCH_ADVICE)
-        elif kind == "reads_only":
-            lines.append(DAY_END_READS_ONLY_NOTE)
+    advice = {
+        "rows_or_findings": DAY_END_MISMATCH_ADVICE,
+        "feeds_unexplained": DAY_END_FEEDS_UNEXPLAINED_NOTE,
+        "details_only": DAY_END_DETAILS_ONLY_NOTE,
+    }.get(kind)
+    if settings.tdx.source == "api" and advice is not None:
+        lines.append(advice)
     compared = sum(1 for record in records if record.get("result") == "compared")
     extras: dict[str, object] = {
         "day": day.date().isoformat(),
         "compared": compared,
         "mismatches": kind != "none",
         "mismatch_kind": kind,
+        "feeds_not_read": feeds_not_read(records),
         "token": code,
     }
     # Blank lines between them: card text is Markdown, where a single line break may be joined.

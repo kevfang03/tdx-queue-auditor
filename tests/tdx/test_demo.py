@@ -470,6 +470,12 @@ def test_demo_summary_shows_events_duplicates_and_ready_to_close(
         "requester still needs a reply" in line
         for line in lines
     )
+    # The ready-to-close ticket's desk note held it; the hold is over, so the row names it.
+    held = (
+        "The help desk replied 10 days ago and added a note 9 days ago, no reply since: "
+        "follow up or close"
+    )
+    assert any("[#1000022](" in line and held in line for line in lines)
     text = json.dumps(card)
     for ticket in demo_tickets(datetime.now(TZ)):
         assert ticket.requestor not in text and ticket.title not in text  # desk: no titles

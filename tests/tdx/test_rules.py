@@ -21,6 +21,7 @@ from ops_suite.tdx.rules import (
     evaluate,
     event_status,
     format_audit_summary,
+    in_hand_note,
     is_follow_up_candidate,
     plan_feeds,
     strong_desk_names,
@@ -507,6 +508,7 @@ def test_every_count_key_is_present() -> None:
         "feed_missing",
         "client_recent",
         "desk_replied_last",
+        "desk_note_hold",
         "internal_requestor",
         "other_recent",
         "event_tickets",
@@ -523,6 +525,7 @@ def test_every_count_key_is_present() -> None:
         "event_form_missing",
         "event_renamed_with_form",
         "event_in_progress",
+        "event_details_confirmed",
         "event_location_missing",
         "desk_members_known",
         "client_waiting",
@@ -602,7 +605,7 @@ def test_summary_default_lines() -> None:
         "Checked: 10 unclaimed (6 feeds needed, 3 missing), 2 claimed (counted only). "
         "Events: 5, 1 recurring, 1 multi-date, 1 with an unreadable date, 0 without a location. "
         "Form-titled tickets: 0 (0 recurring, 0 unreadable); renamed: 0 with a form, 0 without. "
-        "Event states (no finding): 0 waiting on requester, 0 in progress, "
+        "Event states (no finding): 0 waiting on requester, 0 in progress, 0 details confirmed, "
         "0 outreach not due yet, 0 marketing only, 0 no outreach. "
         "Desk members known: 1.",
     ]
@@ -958,7 +961,7 @@ def test_the_checked_line_shows_internal_tickets_only_when_there_are_some() -> N
         "Internal (desk requester): 1. "
         "Events: 0, 0 recurring, 0 multi-date, 0 with an unreadable date, 0 without a location. "
         "Form-titled tickets: 0 (0 recurring, 0 unreadable); renamed: 0 with a form, 0 without. "
-        "Event states (no finding): 0 waiting on requester, 0 in progress, "
+        "Event states (no finding): 0 waiting on requester, 0 in progress, 0 details confirmed, "
         "0 outreach not due yet, 0 marketing only, 0 no outreach. "
         "Desk members known: 1."
     )
@@ -1315,7 +1318,7 @@ def test_the_checked_line_counts_the_forms() -> None:
         "Checked: 6 unclaimed (6 feeds needed, 0 missing), 0 claimed (counted only). "
         "Events: 0, 0 recurring, 0 multi-date, 0 with an unreadable date, 0 without a location. "
         "Form-titled tickets: 6 (1 recurring, 1 unreadable); renamed: 0 with a form, 0 without. "
-        "Event states (no finding): 1 waiting on requester, 0 in progress, "
+        "Event states (no finding): 1 waiting on requester, 0 in progress, 0 details confirmed, "
         "1 outreach not due yet, 1 marketing only, 1 no outreach. Desk members known: 1."
     )
 
@@ -1356,11 +1359,80 @@ def test_ready_to_close_needs_the_desk_to_have_written_last() -> None:
     assert {finding.kind for finding in result.findings} == {"client_waiting", "needs_review"}
 
 
-def test_a_private_note_after_the_desk_reply_does_not_stop_ready_to_close() -> None:
-    rows = [unclaimed(1, ago(200))]
-    feeds = {1: feed(1, entry(DESK, 2, "private"), entry(DESK, 90), entry(REQUESTOR, 150))}
+def _noted(reply_hours: float, note_hours: float, *, rules: RuleSettings = STAFF):
+    """The desk replied last ``reply_hours`` ago and added a private note ``note_hours`` ago."""
+    rows = [unclaimed(1, ago(reply_hours + 60))]
+    entries = (
+        entry(DESK, note_hours, "private"),
+        entry(DESK, reply_hours),
+        entry(REQUESTOR, reply_hours + 20),
+    )
+    return run(rows, {1: feed(1, *entries)}, rules=rules)
 
-    assert only(run(rows, feeds, rules=STAFF)).age_hours == 90
+
+def test_a_desk_note_after_the_desk_reply_holds_ready_to_close() -> None:
+    result = _noted(90, 48)
+
+    assert result.findings == ()
+    assert result.counts["desk_note_hold"] == 1
+    assert (result.counts["ready_to_close"], result.counts["desk_replied_last"]) == (0, 0)
+
+
+def test_ready_to_close_comes_back_after_the_hold_naming_the_note() -> None:
+    result = _noted(250, 192)  # the note 8 days ago
+
+    assert only(result) == Finding(
+        1, "ready_to_close", "low", "desk_note_last", 250, note_hours=192
+    )
+    assert result.counts["desk_note_hold"] == 0 and result.counts["ready_to_close"] == 1
+
+
+def test_the_hold_ends_close_hold_days_after_the_note() -> None:
+    assert _noted(250, 167.9).findings == ()
+    assert only(_noted(250, 168)).reason == "desk_note_last"
+    shorter = RuleSettings(extra_staff_names=(DESK,), close_hold_days=2)
+    assert only(_noted(250, 48, rules=shorter)).note_hours == 48
+
+
+def test_a_note_logged_with_the_reply_does_not_hold_ready_to_close() -> None:
+    finding = only(_noted(90, 89.5))  # within NOTE_AFTER of the reply
+
+    assert (finding.reason, finding.age_hours, finding.note_hours) == (
+        "desk_replied_last",
+        90,
+        None,
+    )
+
+
+def test_a_desk_note_before_close_after_days_changes_nothing_yet() -> None:
+    result = _noted(50, 20)
+
+    assert result.findings == () and result.counts["desk_replied_last"] == 1
+    assert result.counts["desk_note_hold"] == 0
+
+
+def test_an_internal_ticket_with_a_desk_note_is_still_only_counted() -> None:
+    rows = [unclaimed(1, ago(300), requestor=MANAGER)]
+    entries = (entry(DESK, 192, "private"), entry(DESK, 250), entry(MANAGER, 270))
+    rules = RuleSettings(extra_staff_names=(DESK, MANAGER))
+
+    result = run(rows, {1: feed(1, *entries)}, rules=rules)
+
+    assert result.findings == () and result.counts["desk_replied_last"] == 1
+    assert result.counts["desk_note_hold"] == 0
+
+
+def test_the_summary_shows_the_held_tickets_and_the_note_age() -> None:
+    held, back = _noted(90, 48), _noted(250, 192)
+
+    assert (
+        "Ready to close held by a desk note: 1. Desk members known"
+        in (format_audit_summary(held, show_ids=False)[1])
+    )
+    assert "held by a desk note" not in format_audit_summary(back, show_ids=False)[1]
+    assert "  ready_to_close  1  desk_note_last  250h  note 192h" in (
+        format_audit_summary(back, show_ids=True)
+    )
 
 
 def test_ready_to_close_is_not_for_internal_claimed_event_or_form_tickets() -> None:
@@ -2014,3 +2086,98 @@ def test_a_title_that_names_no_location_keeps_details_pending(title: str) -> Non
 
     assert kinds(result) == [("event_details_pending", "details_pending", "normal")]
     assert result.event_states[1].state == "waiting_on_requester"
+
+
+# --- a desk private note means "in hand" -------------------------------------------------
+
+
+def test_a_note_two_hours_after_the_reply_is_in_hand() -> None:
+    note = entry(DESK, 8, "private")
+
+    assert in_hand_note(feed(1, note, entry(DESK, 10))) == note
+
+
+def test_a_note_half_an_hour_after_the_reply_is_not_in_hand() -> None:
+    assert in_hand_note(feed(1, entry(DESK, 9.5, "private"), entry(DESK, 10))) is None
+
+
+@pytest.mark.parametrize(
+    ("note_hours", "reply_hours"), [(None, 10), (8, None)], ids=["undated-note", "undated-reply"]
+)
+def test_an_undated_note_or_reply_is_not_in_hand(
+    note_hours: float | None, reply_hours: float | None
+) -> None:
+    entries = (entry(DESK, note_hours, "private"), entry(DESK, reply_hours))
+
+    assert in_hand_note(feed(1, *entries)) is None
+
+
+def test_a_note_before_the_reply_is_not_in_hand() -> None:
+    assert in_hand_note(feed(1, entry(DESK, 10), entry(DESK, 20, "private"))) is None
+
+
+@pytest.mark.parametrize("author", [REQUESTOR, DESK], ids=["requester", "desk"])
+def test_a_newer_visible_reply_after_the_note_undoes_it(author: str) -> None:
+    entries = (entry(author, 2), entry(DESK, 8, "private"), entry(DESK, 10))
+
+    assert in_hand_note(feed(1, *entries)) is None
+
+
+def test_the_newest_of_two_notes_is_in_hand() -> None:
+    newest = entry(DESK, 4, "private")
+    entries = (newest, entry(DESK, 6, "system"), entry(DESK, 8, "private"), entry(DESK, 10))
+
+    assert in_hand_note(feed(1, *entries)) == newest
+
+
+def test_a_feed_without_a_visible_reply_has_no_note_in_hand() -> None:
+    assert in_hand_note(feed(1, entry(DESK, 8, "private"))) is None
+
+
+ROOM_28_HOURS_OUT = "EVENT [10/9 4pm Room 101] Zoom recording"
+NO_ROOM_28_HOURS_OUT = "EVENT [10/9/26 4PM-5PM] Zoom recording"
+ASKED = (entry(DESK, 230), entry(REQUESTOR, 250))  # the desk asked 230 h ago, newest first
+
+
+def test_a_desk_note_confirms_a_room_set_event_28_hours_out() -> None:
+    result = renamed_run(ROOM_28_HOURS_OUT, entry(DESK, 26, "private"), *ASKED)
+
+    assert result.findings == ()
+    assert result.event_states[1] == EventStatus("details_confirmed")
+    assert [read.state for read in result.event_reads] == ["details_confirmed"]
+    assert result.counts["event_details_confirmed"] == 1
+    assert result.counts["event_outreach_done"] == 0
+    assert "0 in progress, 1 details confirmed, " in format_audit_summary(result, show_ids=False)[1]
+
+
+def test_without_a_note_the_room_set_event_28_hours_out_gets_the_last_check() -> None:
+    result = renamed_run(ROOM_28_HOURS_OUT, *ASKED)
+
+    assert kinds(result) == [("event_details_pending", "details_room_set", "high")]
+    assert result.event_states[1] == EventStatus("waiting_on_requester", ago(230))
+    assert result.counts["event_details_confirmed"] == 0
+
+
+def test_a_desk_note_confirms_a_room_set_event_further_out_too() -> None:
+    result = renamed_run(ROOM_IN_6_DAYS, entry(DESK, 26, "private"), *ASKED)
+
+    assert result.findings == () and result.event_states[1] == EventStatus("details_confirmed")
+    assert result.counts["event_details_confirmed"] == 1
+
+
+def test_a_note_logged_with_the_ask_does_not_confirm_the_details() -> None:
+    result = renamed_run(ROOM_28_HOURS_OUT, entry(DESK, 229.5, "private"), *ASKED)
+
+    assert kinds(result) == [("event_details_pending", "details_room_set", "high")]
+
+
+def test_a_desk_note_does_not_settle_a_missing_room() -> None:
+    near = renamed_run(NO_ROOM_28_HOURS_OUT, entry(DESK, 26, "private"), *ASKED)
+    tbd = renamed_run(TBD_IN_5_DAYS, entry(DESK, 26, "private"), *ASKED)
+
+    assert kinds(near) == [("event_details_pending", "details_pending_near", "high")]
+    assert near.findings[0].no_room == "missing"
+    assert kinds(tbd) == [("event_details_pending", "details_pending", "normal")]
+    for result in (near, tbd):
+        assert result.event_states[1].state == "waiting_on_requester"
+        assert result.counts["event_details_confirmed"] == 0

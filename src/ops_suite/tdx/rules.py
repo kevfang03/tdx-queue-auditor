@@ -23,7 +23,7 @@ Personal data rule: titles and names are student data. Findings, counts, summary
 from collections import Counter
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from types import MappingProxyType
 from typing import Literal, get_args
 from zoneinfo import ZoneInfo
@@ -76,6 +76,7 @@ COUNT_KEYS: tuple[str, ...] = (
     "feed_missing",
     "client_recent",
     "desk_replied_last",
+    "desk_note_hold",
     "internal_requestor",
     "other_recent",
     "event_tickets",
@@ -92,6 +93,7 @@ COUNT_KEYS: tuple[str, ...] = (
     "event_form_missing",
     "event_renamed_with_form",
     "event_in_progress",
+    "event_details_confirmed",
     "event_location_missing",
     "desk_members_known",
     *FINDING_KINDS,
@@ -114,6 +116,9 @@ class RuleSettings:
     near_event_days: int = 2
     # Desk replied last this many days ago or more, client silent since: ready to close.
     close_after_days: int = 3
+    # A desk private note after that reply holds "ready to close" back this many days from
+    # the note (``in_hand_note``).
+    close_hold_days: int = 7
 
     def __repr__(self) -> str:
         return (
@@ -127,7 +132,8 @@ class RuleSettings:
             f"details_pending_days={self.details_pending_days}, "
             f"urgent_days={self.urgent_days}, "
             f"near_event_days={self.near_event_days}, "
-            f"close_after_days={self.close_after_days})"
+            f"close_after_days={self.close_after_days}, "
+            f"close_hold_days={self.close_hold_days})"
         )
 
 
@@ -147,11 +153,19 @@ class Finding:
     # the title) or "missing" (a date and time but no location). The row then asks for the
     # room too, so one ticket is one row. Not part of the shadow compare's key.
     no_room: NoRoom | None = None
+    # Ready to close after a desk note's hold: whole hours since that note (``in_hand_note``).
+    note_hours: int | None = None
 
 
-# Who wrote last on an upcoming event ticket, from the visible entries only.
+# Who wrote last on an upcoming event ticket, from the visible entries only; and
+# ``details_confirmed``, which ``event_status`` never returns: a room in the title and a desk
+# note after the desk's last reply (``in_hand_note``), as the rules show such an event.
 EventFeedState = Literal[
-    "no_outreach_yet", "waiting_on_requester", "requester_replied", "in_progress"
+    "no_outreach_yet",
+    "waiting_on_requester",
+    "requester_replied",
+    "in_progress",
+    "details_confirmed",
 ]
 
 
@@ -370,6 +384,40 @@ def _desk_acted_after(feed: TicketFeed, requestor: str, is_desk: Callable[[str],
     return False
 
 
+# A note this soon after the reply is the desk logging the email it just sent ("emailed the
+# requester for the room"), which says nothing about the answer.
+NOTE_AFTER = timedelta(hours=1)
+
+
+def in_hand_note(feed: TicketFeed) -> FeedEntry | None:
+    """The newest private note that comes after the newest visible reply in the feed's order
+    and is dated at least ``NOTE_AFTER`` after it; None when there is none, when the feed has
+    no visible reply, or when either entry is undated. The callers use it only where that
+    reply is the desk's: the desk's one habit for "we have this in hand" (docs/tdx-rules.md,
+    "A desk private note means in hand"). Only staff can write private notes.
+
+    - The feed's order decides "after", as in ``_desk_acted_after``.
+    - ``NOTE_AFTER`` skips the note logged together with the reply.
+    - Undated entries never count: unsure means the reminder stays, because a missed
+      follow-up costs more than an extra row.
+    - A newer visible reply, from either side, undoes the note: the note no longer comes after
+      the newest visible reply, and the usual rules take over.
+
+    Any note counts; its text is never read."""
+    reply_at = next((i for i, entry in enumerate(feed.entries) if entry.kind == "reply"), None)
+    if reply_at is None:
+        return None
+    reply = feed.entries[reply_at].created
+    if reply is None:
+        return None
+    for entry in feed.entries[:reply_at]:  # newest first
+        if entry.kind != "private" or entry.created is None:
+            continue
+        if _hours(reply, entry.created) >= NOTE_AFTER.total_seconds() / 3600:
+            return entry
+    return None
+
+
 # --- desk members ------------------------------------------------------------------------
 
 
@@ -518,10 +566,14 @@ def evaluate(
         reason: str,
         age: float | None,
         event_in: float | None = None,
+        note: float | None = None,
     ) -> None:
         whole = _whole(age) if age is not None else None
         until = _whole(event_in) if event_in is not None else None
-        findings.append(Finding(row.ticket_id, kind, priority, reason, whole, until))
+        note_hours = _whole(note) if note is not None else None
+        findings.append(
+            Finding(row.ticket_id, kind, priority, reason, whole, until, note_hours=note_hours)
+        )
         counts[kind] += 1
 
     def fold_no_room(at: int) -> None:
@@ -551,7 +603,9 @@ def evaluate(
         More than ``urgent_days`` before the event, two signs that the desk has the open
         question in hand keep the ticket quiet: a desk member's entry of any kind newer than
         the requester's latest message, and a room in the title while the desk waits on the
-        requester. Within ``urgent_days`` the usual rows come back as a last check."""
+        requester. Within ``urgent_days`` the usual rows come back as a last check. With a room
+        in the title, a desk private note after the desk's last reply (``in_hand_note``) turns
+        that last check off too, at any distance: the details are confirmed."""
         until = _hours(now, upcoming)
         near = until <= rules.near_event_days * 24
         quiet_window = until > rules.urgent_days * 24
@@ -569,8 +623,16 @@ def evaluate(
         # A room in the title means the main detail is in; the last check before the event
         # covers the Zoom link and recording.
         room_quiet = room_set and quiet_window and status.state == "waiting_on_requester"
+        # A room in the title and a desk note after the desk's last reply: the desk has the
+        # rest (the Zoom link, the recording) in hand, often from the events spreadsheet. A
+        # missing room never qualifies; the desk renames the ticket once the room is known.
+        confirmed = (
+            room_set and status.state == "waiting_on_requester" and in_hand_note(feed) is not None
+        )
         shown = status
-        if (handled and status.state == "requester_replied") or room_quiet:
+        if confirmed:
+            shown = EventStatus("details_confirmed")
+        elif (handled and status.state == "requester_replied") or room_quiet:
             shown = EventStatus("in_progress")
         states[row.ticket_id] = shown
         reads.append(
@@ -637,7 +699,9 @@ def evaluate(
             if form is not None:
                 counts["event_outreach_not_due"] += 1
         elif status.state == "waiting_on_requester":
-            if room_set:
+            if confirmed:
+                counts["event_details_confirmed"] += 1
+            elif room_set:
                 # The room is in; only a last check within urgent_days, at high priority.
                 due = near or (since is not None and since >= rules.stale_hours)
                 if until <= rules.urgent_days * 24 and due:
@@ -777,10 +841,20 @@ def evaluate(
             # The desk replied last and the requester has been silent since: once that is
             # close_after_days old, the ticket can be closed if nothing new comes in.
             quiet = _hours(latest.created, now) if latest.created is not None else None
-            if quiet is not None and quiet >= rules.close_after_days * 24 and not internal(row):
-                add(row, "ready_to_close", "low", "desk_replied_last", quiet)
-            else:
+            if quiet is None or quiet < rules.close_after_days * 24 or internal(row):
                 counts["desk_replied_last"] += 1
+                continue
+            # A desk note after that reply keeps the ticket open on purpose (a laptop waiting
+            # for pickup, say): held close_hold_days from the note, then back, naming the note.
+            note = in_hand_note(feed)
+            noted = note.created if note is not None else None  # always dated when found
+            held = _hours(noted, now) if noted is not None else None
+            if held is None:
+                add(row, "ready_to_close", "low", "desk_replied_last", quiet)
+            elif held < rules.close_hold_days * 24:
+                counts["desk_note_hold"] += 1
+            else:
+                add(row, "ready_to_close", "low", "desk_note_last", quiet, note=held)
         elif latest.created is None:
             add(row, "needs_review", "normal", "other_last", None)
         elif _is_stale(latest.created, now, rules):
@@ -862,6 +936,11 @@ def format_audit_summary(result: AuditResult, *, show_ids: bool) -> list[str]:
         if counts["internal_requestor"]
         else ""
     )
+    held = (
+        f"Ready to close held by a desk note: {counts['desk_note_hold']}. "
+        if counts["desk_note_hold"]
+        else ""
+    )
     lines = [
         f"Findings: {findings}.",
         f"Checked: {counts['rows_unclaimed']} unclaimed ({counts['feeds_needed']} feeds needed, "
@@ -877,16 +956,19 @@ def format_audit_summary(result: AuditResult, *, show_ids: bool) -> list[str]:
         f"{counts['event_form_missing']} without. "
         f"Event states (no finding): {counts['event_outreach_done']} waiting on requester, "
         f"{counts['event_in_progress']} in progress, "
+        f"{counts['event_details_confirmed']} details confirmed, "
         f"{counts['event_outreach_not_due']} outreach not due yet, "
         f"{counts['event_marketing_only']} marketing only, "
         f"{counts['event_no_outreach']} no outreach. "
-        f"Desk members known: {counts['desk_members_known']}.",
+        f"{held}Desk members known: {counts['desk_members_known']}.",
     ]
     if show_ids:
         for finding in result.findings:
             line = f"  {finding.kind}  {finding.ticket_id}  {finding.reason}"
             if finding.age_hours is not None:
                 line += f"  {finding.age_hours}h"
+            if finding.note_hours is not None:
+                line += f"  note {finding.note_hours}h"
             lines.append(line)
         lines.extend(
             f"  event_date_unreadable  {ticket_id}"

@@ -31,6 +31,8 @@ Student assistants never claim tickets: a ticket stays **unclaimed** while the d
 | Unclaimed, feed needed | Latest visible entry by the requestor, under 48 hours | none (counted `client_recent`) | | |
 | Unclaimed, feed needed | Latest visible entry by the requestor, no date | needs review | normal | `requestor_last_undated` |
 | Unclaimed, feed needed | Latest visible entry by a desk member (known in this run, or remembered), under 3 days old (`close_after_days`), or undated | none (counted `desk_replied_last`) | | |
+| Unclaimed, feed needed | Latest visible entry by a desk member, 3+ days old (`close_after_days`), the requester is not a desk member (below), and a desk private note after it, under 7 days old (`close_hold_days`; see "Ready to close" below) | none (counted `desk_note_hold`) | | |
+| Unclaimed, feed needed | The same, with that note 7+ days old | ready to close, naming the note | low | `desk_note_last` |
 | Unclaimed, feed needed | Latest visible entry by a desk member, 3+ days old (`close_after_days`), and the requester is not a desk member (below) | ready to close: summaries only by default (see "Ready to close" below) | low | `desk_replied_last` |
 | Unclaimed, feed needed | Latest visible entry by anyone else, 48+ hours old | needs review | normal | `other_last` |
 | Unclaimed, feed needed | Latest visible entry by anyone else, under 48 hours | none (counted `other_recent`) | | |
@@ -152,6 +154,7 @@ Then the rules below, which may add an event finding of their own. **One row per
 | A/V or classroom | **not emailed yet**: no visible desk reply | the next date 14 days away or less (`outreach_days`) | event outreach due | normal; high at 3 days or less (`urgent_days`) | `outreach_due` |
 | A/V or classroom | not emailed yet | further out | none (counted `event_outreach_not_due`) | | |
 | Unknown (no form) | not emailed yet | | none (counted `event_form_missing`) | | |
+| A/V, classroom or unknown | **waiting on the requester**, a location in a renamed ticket's title (below), and a desk private note after the desk's last reply ([A desk private note means in hand](#a-desk-private-note-means-in-hand)) | any distance to the event | none (state `details confirmed`, counted `event_details_confirmed`) | | |
 | A/V, classroom or unknown | **waiting on the requester**, and a renamed ticket's title names a location in its leading `[...]` or `(...)` group (a room, "Zoom" or "Online"; not TBD) | the next date 3 days away or less (`urgent_days`), and either the desk's last entry 48+ hours old or the next date 2 days away or less | event details pending | **high** | `details_room_set` |
 | A/V, classroom or unknown | waiting on the requester, a location in the title | otherwise | none (counted `event_outreach_done`; state `in progress` while the date is more than 3 days away) | | |
 | A/V, classroom or unknown | **waiting on the requester**: the desk wrote last, and nothing from the requester since the first outreach | the next date 2 days away or less (`near_event_days`): the **near-event override**, at once whatever the quiet time | event details pending | **high** | `details_pending_near` |
@@ -167,7 +170,7 @@ The rows are tried in this order. The requester writing last is the one case whe
 - **A desk entry newer than the requester's message.** The requester wrote the latest visible entry, and a desk member (never the requester themself) has written any entry since: a private note, a status or title change. "Newer" is the feed's order, not the timestamps, so an undated entry counts by its place. It shows the desk has read the message and acted on it. A new message from the requester after that entry starts the rule over. When the desk has not emailed the requester yet, the outreach row still comes, as the plain "Email the requester" row: the email is still owed.
 - **A location in a renamed ticket's title** while the desk waits on the requester. The desk renames a ticket from TBD to a room once it has found the room, from the requester or another way (a resubmitted form, the events spreadsheet). A room in the title means the main detail is in; what may be left is the Zoom link and the recording, which the last check covers. Any location counts, "Zoom" or "Online" included, since those still need the link. It must be named in the leading `[...]` or `(...)` group, next to the date: text left there once the dates, times, weekdays and joining words are taken out, as in `EVENT [10/28 10:30 AM - 11:30 AM Room 912] Talk`. A group with only a date (`EVENT [10/14] Talk`), only a date and a time, TBD, or a title with no such group keeps the usual rule, because whether a room is set cannot be told from it and a missed follow-up costs more than an extra row. Form-titled tickets have no title location and keep the usual rule too.
 
-Within the last 3 days the usual rows come back as one last check: a reply owed to the requester as in the first table, and for a location in the title the `details_room_set` row, high, "The room is set; confirm the Zoom link and recording if they're still open". Until then "Events this week" lists such an event as `in progress`. Normal (non-event) tickets are unchanged: there, a private note still leaves the client waiting for a reply.
+Within the last 3 days the usual rows come back as one last check: a reply owed to the requester as in the first table, and for a location in the title the `details_room_set` row, high, "The room is set; confirm the Zoom link and recording if they're still open". Until then "Events this week" lists such an event as `in progress`. A desk private note turns that last check off too ([A desk private note means in hand](#a-desk-private-note-means-in-hand)). Normal (non-event) tickets are unchanged: there, a private note still leaves the client waiting for a reply.
 
 **Known limit: renamed tickets further out.** A renamed `EVENT [...]` ticket whose next date is more than 14 days away is not opened, so a requester's unanswered question on it is not seen until the event comes within 14 days. Form-titled tickets are opened at any age, so they have no such gap.
 
@@ -181,6 +184,25 @@ Within the last 3 days the usual rows come back as one last check: a reply owed 
 - Ticket 1026 was renamed `EVENT [10/14 2pm TBD] Example Workshop`; Pat asked for the room 4 days ago and the requester never answered. Pat then found the room in the events spreadsheet and renamed it `EVENT [10/14 2pm Room 210] Example Workshop`. The event is 6 days away: no finding (counted `event_outreach_done`, listed `in progress`). From 10/11 at 14:00, 3 days out: `event_details_pending`, high, `details_room_set`, "Event in 3 days. The room is set; confirm the Zoom link and recording if they're still open".
 - Ticket 1025 is `EVENT [10/9/26 6PM-7PM] Resume Review`: a date and a time and no room. The event is 30 hours away: `location_tbd_soon`, reason `location_missing`, "Event in 30 hours. No room on the ticket yet. Check the events spreadsheet; if a room is listed, update the ticket." The title never says TBD, so the row does not either.
 - Ticket 1022 is marketing only, for 10/12 with no time, so the event counts as ending at 23:59: no finding (counted `event_marketing_only`). From 10/14 00:00, more than 24 hours later, it gives `event_over`, like every event ticket.
+
+### A desk private note means in hand
+
+The desk has one habit that tells the tool a reminder is already handled: a **private note** on the ticket, written after the desk's last visible reply. Any note counts; its text is never read. Only staff can write private notes, so no other desk test is needed.
+
+A note counts (`in_hand_note`) when:
+
+- it comes after the newest visible reply in the feed's order (the same order the rule above uses);
+- it is dated at least 1 hour after that reply. A desk member often logs a note together with the email ("emailed the requester for the room"); that note says nothing about the answer, so it does not count;
+- both the note and the reply are dated. An undated entry never counts: unsure means the reminder stays, because a missed follow-up costs more than an extra row.
+
+With several such notes, the newest counts. A newer visible reply, from either side, undoes the note: the note no longer comes after the newest visible reply, and a requester's reply then goes through the usual rules.
+
+It is used in two places, both where the desk replied last:
+
+- **An event with a room in the title, waiting on the requester.** The `details_room_set` last check is not raised, at any distance to the event, and "Events this week" lists the event as `details confirmed` (counted `event_details_confirmed`). The desk often keeps the Zoom link on the events spreadsheet, which the tool cannot see. **A missing room does not qualify:** with TBD or no location in the title, `details_pending` and `details_pending_near` still fire with a note, because a note cannot tell the tool a room was found; the desk renames the ticket once the room is known.
+- **Ready to close.** The ticket is held for `close_hold_days` (7) from the note, then comes back naming the note ([Ready to close](#ready-to-close)).
+
+Example (run time Thursday 2026-10-08 12:00): ticket 1027 was renamed `EVENT [10/9 4pm Room 210] Example Seminar`, 28 hours away; Pat asked the requester for the Zoom link 10 days ago and got no answer. Yesterday Pat found the link on the events spreadsheet and added a private note. No finding (`details_room_set` would have fired), counted `event_details_confirmed`, listed `details confirmed`. Had Pat's only note been logged 20 minutes after the email, the last check would still come. Had the title said `EVENT [10/9 4pm TBD] Example Seminar`, the note would change nothing: the `details_pending_near` row, which also asks for the room, still comes.
 
 ## Worked examples
 
@@ -210,12 +232,12 @@ If the feed had no visible entry at all, the finding would be `client_waiting`, 
 
 ```
 Findings: client waiting 1, follow up with client 0, event outreach due 0, event details pending 0, event over 1, location TBD soon 1, needs review 1, ready to close 0.
-Checked: 10 unclaimed (6 feeds needed, 3 missing), 2 claimed (counted only). Events: 5, 1 recurring, 1 multi-date, 1 with an unreadable date, 0 without a location. Form-titled tickets: 0 (0 recurring, 0 unreadable); renamed: 0 with a form, 0 without. Event states (no finding): 0 waiting on requester, 0 in progress, 0 outreach not due yet, 0 marketing only, 0 no outreach. Desk members known: 1.
+Checked: 10 unclaimed (6 feeds needed, 3 missing), 2 claimed (counted only). Events: 5, 1 recurring, 1 multi-date, 1 with an unreadable date, 0 without a location. Form-titled tickets: 0 (0 recurring, 0 unreadable); renamed: 0 with a form, 0 without. Event states (no finding): 0 waiting on requester, 0 in progress, 0 details confirmed, 0 outreach not due yet, 0 marketing only, 0 no outreach. Desk members known: 1.
 ```
 
-When a desk member opened some tickets (above), the `Checked:` line adds `Internal (desk requester): N.` after the claimed count; with none, the line is as shown. `Event states (no finding)` counts the upcoming events whose page was read and that raised nothing, by state: waiting on the requester before the details-pending window, in progress, not emailed yet before the outreach window, marketing only and no email needed.
+When a desk member opened some tickets (above), the `Checked:` line adds `Internal (desk requester): N.` after the claimed count; with none, the line is as shown. `Event states (no finding)` counts the upcoming events whose page was read and that raised nothing, by state: waiting on the requester before the details-pending window, in progress, details confirmed by a desk note, not emailed yet before the outreach window, marketing only and no email needed. When a desk note holds some ready-to-close tickets ([Ready to close](#ready-to-close)), the line adds `Ready to close held by a desk note: N.` before `Desk members known`.
 
-With `show_ids`, one line per finding (most urgent first: priority, then longest waiting), one per event with an unreadable date, so the date reader can be improved, one per unreadable event request form, and one per renamed event without a form:
+With `show_ids`, one line per finding (most urgent first: priority, then longest waiting; a `desk_note_last` line ends with the note's age too, `  ready_to_close  1030  desk_note_last  250h  note 192h`), one per event with an unreadable date, so the date reader can be improved, one per unreadable event request form, and one per renamed event without a form:
 
 ```
   client_waiting  1001  requestor_last  73h
@@ -232,10 +254,14 @@ Only ticket ids, reason codes and hours appear. Titles, names and links are stud
 The manual weekly check-in had a "close these if nothing new" list. The `ready_to_close` finding is that list:
 
 - an unclaimed ticket that is not an event, not an event request form, and not opened by a desk member (the internal-ticket rule above);
-- its latest visible entry is a **desk** reply (so the requester has written nothing since; a private note after it changes nothing);
+- its latest visible entry is a **desk** reply (so the requester has written nothing since);
 - that reply is `tdx.rules.close_after_days` (3, 1 to 30) days old or more.
 
 The age shown is the time since the desk reply. A desk reply younger than that, or undated, is still only counted `desk_replied_last`. Wording: "{Team} replied {age} ago, no reply since: close if nothing new" ([Card wording](#card-wording)).
+
+**Held by a desk note.** The desk sometimes keeps such a ticket open on purpose, a laptop waiting for pickup, say. A private note after the desk reply that counts as [in hand](#a-desk-private-note-means-in-hand) holds the ticket back for `tdx.rules.close_hold_days` (7, 1 to 30) days from the note: no finding, counted `desk_note_hold`. Then it comes back, low, reason `desk_note_last`, still aged from the desk reply, with the note's age too: "{Team} replied {age} ago and added a note {note_age} ago, no reply since: follow up or close". A held ticket that has waited that long may need a nudge as much as closing. A ticket opened by a desk member stays only counted `desk_replied_last`, note or not.
+
+Example (run time Thursday 2026-10-08 12:00): ticket 1030 is a laptop repair. Pat replied that the laptop is ready, 250 hours ago, and the next day added a private note that the requester will pick it up, 192 hours ago. Two days after the note, the ticket raised nothing (counted `desk_note_hold`). Now that the note is more than 7 days old: `ready_to_close`, `desk_note_last`, "The help desk replied 10 days ago and added a note 8 days ago, no reply since: follow up or close". Without the note, it would have been listed since 3 days after the reply as "The help desk replied … ago, no reply since: close if nothing new".
 
 It is a **summary-only** finding by default: it is listed in the "Ready to close" section of every shift summary while it is open, never marked `(added)`, and kept out of the alert cards and `alerts-state.json`, so it never pings on its own. `tdx.alerts.alert_ready_to_close = true` treats it like any other finding (alert cards, re-alerts, `(new)`). The auditor never closes anything: TDX stays read-only.
 
@@ -265,7 +291,7 @@ The summary also has three things, all worked out in memory from the same run, w
   - the date and start time (date only when none was given), and the end time when the form or title gives a range, in 12-hour form like the ticket titles (`11:30 AM–12:30 PM` across noon);
   - the space type from the form, renamed tickets' included: `Lobby`, `Classroom`, `Other`, or `—` when the form's answer was not read;
   - `A/V on form: yes/no` from the form's services checklist. A/V asked for later, in a comment or elsewhere, is not seen, so `no` does not mean "no A/V needed";
-  - the state. A renamed title first: `location TBD` (TBD in the title) or `location missing` (a date and a time but no room). Then the form: `marketing only`, or `no email needed` (no A/V and no classroom). Otherwise the feed state above: `not emailed yet`, `waiting on requester since Tue 8:26 AM` (the desk's last entry; no time when it is undated), `requester replied` or `in progress` (the requester has answered, or the desk already has the question in hand, as above); `not checked yet` when the run could not read the ticket's page (a failed or deferred feed).
+  - the state. A renamed title first: `location TBD` (TBD in the title) or `location missing` (a date and a time but no room). Then the form: `marketing only`, or `no email needed` (no A/V and no classroom). Otherwise the feed state above: `not emailed yet`, `waiting on requester since Tue 8:26 AM` (the desk's last entry; no time when it is undated), `requester replied`, `in progress` (the requester has answered, or the desk already has the question in hand, as above) or `details confirmed` (a room in the title and a [desk private note](#a-desk-private-note-means-in-hand); no time, like `in progress`); `not checked yet` when the run could not read the ticket's page (a failed or deferred feed).
   - Recurring events and unreadable dates are left out, as the rules leave them out. An event that already started before the summary time is not listed.
   - Never shown: requester or handler names, the A/V free-text answer or any other form field. An event's finding row, if it has one, still appears in its own section: this section is the week's agenda.
 - **Possible duplicates:** among this run's unclaimed tickets, two are possible duplicates when the requester is the same person (matched as names are everywhere else) and the titles are similar: after lower-casing, dropping punctuation and a few stop words ("a", "the", "re", "fw", "please" and similar), their word sets overlap by at least `tdx.rules.duplicate_title_similarity` (0.6, Jaccard), or one title's words appear inside the other's. The newer ticket's row gets `(possible duplicate of #<older id>)`, pointing at the oldest such ticket. Event tickets and request forms are left out (all forms share one title, and two events by one requester look alike). It is never a finding, nothing about it is stored or logged, and names are compared in memory only.
@@ -312,7 +338,8 @@ Personal cards say "you" where desk cards name `{team}`.
 | `location_tbd_soon` / `location_missing` | Event in {age}. No room on the ticket yet. Check the events spreadsheet; if a room is listed, update the ticket. (a date and a time in the title but no room, so no TBD to quote) |
 | any event finding with `no_room` | its own wording, a full stop, then `Location still TBD on the ticket: check the events spreadsheet, and if a room is listed, update the ticket.` (`tbd`) or `No room on the ticket yet: check the events spreadsheet, and if a room is listed, update the ticket.` (`missing`) |
 | `event_over` | Event ended {age} ago: ready to resolve? |
-| `ready_to_close` | {Team} replied {age} ago, no reply since: close if nothing new |
+| `ready_to_close` / `desk_replied_last` | {Team} replied {age} ago, no reply since: close if nothing new |
+| `ready_to_close` / `desk_note_last` | {Team} replied {age} ago and added a note {note_age} ago, no reply since: follow up or close (`{note_age}`: the time since the desk note that held the ticket) |
 | unknown kind or reason, or age `None` | the kind label, and the age if known |
 
 Each row starts with the ticket id, linked to the ticket when its address is on the TDX host, then the title, cut to `title_chars` (80) with its Markdown escaped, so `EVENT [10/20 3pm Room 101] Club` shows its brackets. The card never carries a requestor name, an email address, Prim Resp or feed text, and it is never logged.

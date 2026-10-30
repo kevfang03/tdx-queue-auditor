@@ -54,7 +54,7 @@ def _rows(shape: CardShape) -> dict[int, TicketRow]:
 
 
 def _events(shape: CardShape) -> list[WeekEvent]:
-    return [
+    waiting = [
         WeekEvent(
             ticket_id,
             SLOT_RUN.replace(hour=15),
@@ -67,6 +67,13 @@ def _events(shape: CardShape) -> list[WeekEvent]:
         )  # fmt: skip
         for ticket_id, since in shape.waiting_since.items()
     ]
+    confirmed = [
+        WeekEvent(
+            ticket_id, SLOT_RUN.replace(hour=16), True, None, "classroom", True, "details_confirmed"
+        )
+        for ticket_id in shape.confirmed
+    ]
+    return waiting + confirmed
 
 
 # --- reading a card back -----------------------------------------------------------------
@@ -188,6 +195,21 @@ def test_a_last_post_the_day_before_says_since_yesterday(tmp_path: Path) -> None
     assert _texts(card)[0] == (
         "TDX queue at 7:30 AM: 2 tickets for the help desk (1 added since yesterday)"
     )
+
+
+def test_the_details_confirmed_event_is_an_agenda_row_only(tmp_path: Path) -> None:
+    card = full_summary(CARD_SHAPES["details_confirmed_event"], tmp_path)
+
+    (event_row,) = [t for t in _texts(card) if ROW_ID.match(t) and "352" in t.split()[0]]
+    assert event_row.endswith(" · details confirmed")
+    assert action_tickets(card) == ({351}, 0)
+
+
+def test_ready_to_close_after_a_desk_note_names_the_note(tmp_path: Path) -> None:
+    card = full_summary(CARD_SHAPES["ready_after_desk_note"], tmp_path)
+
+    (close_row,) = [t for t in _texts(card) if t.startswith("[#341](")]
+    assert "and added a note 8 days ago, no reply since: follow up or close" in close_row
 
 
 def test_the_merged_event_row_asks_for_the_room_once(tmp_path: Path) -> None:

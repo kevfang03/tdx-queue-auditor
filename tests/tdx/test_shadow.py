@@ -4,6 +4,7 @@
 
 import json
 from collections.abc import Callable
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -46,6 +47,7 @@ from ops_suite.tdx.shadow import (
     compare,
     compare_report,
     failure_record,
+    from_run,
     shadow_line,
     shadow_log_path,
     shadow_record,
@@ -240,6 +242,168 @@ def test_a_different_finding_set_is_counted_and_shown_on_the_cycle_line() -> Non
     assert shadow_line(diff) == "API shadow: 2 differences (see tdx api compare)."
 
 
+# --- feed reads that failed --------------------------------------------------------------
+
+
+def _without_feed(read: SourceRead, ticket_id: int, *, not_read: bool) -> SourceRead:
+    """``read`` lacking ``ticket_id``'s feed; recorded as not read when ``not_read``."""
+    feeds = {i: f for i, f in read.feeds.items() if i != ticket_id}
+    missed = frozenset({ticket_id}) if not_read else frozenset()
+    return SourceRead(read.rows, feeds, read.findings, missed)
+
+
+def test_a_feed_the_api_failed_or_deferred_is_its_read_failure_not_a_mismatch() -> None:
+    browser, api = same_both_sides()
+
+    diff = compare(browser, _without_feed(api, 2, not_read=True))
+
+    assert diff.feeds.not_read_api == (2,) and diff.feeds.not_read_browser == ()
+    assert diff.feeds.only_browser == () and diff.feeds.only_api == ()
+    assert (diff.feeds.compared, diff.feeds.matched, diff.feeds.total) == (1, 1, 1)
+
+
+def test_a_feed_the_browser_failed_to_read_is_the_browsers_read_failure() -> None:
+    browser, api = same_both_sides()
+
+    diff = compare(_without_feed(browser, 1, not_read=True), api)
+
+    assert diff.feeds.not_read_browser == (1,) and diff.feeds.not_read_api == ()
+    assert diff.feeds.only_browser == diff.feeds.only_api == ()
+    assert diff.feeds.total == 1
+
+
+def test_a_one_sided_feed_with_nothing_recorded_stays_a_mismatch() -> None:
+    browser, api = same_both_sides()
+
+    diff = compare(browser, _without_feed(api, 2, not_read=False))
+
+    assert diff.feeds.only_browser == (2,)
+    assert diff.feeds.not_read_api == diff.feeds.not_read_browser == ()
+    assert diff.feeds.total == 2
+
+
+def test_a_feed_both_sides_failed_to_read_is_in_neither_list() -> None:
+    browser, api = same_both_sides()
+
+    diff = compare(_without_feed(browser, 2, not_read=True), _without_feed(api, 2, not_read=True))
+
+    assert diff.feeds.not_read_api == diff.feeds.not_read_browser == ()
+    assert diff.feeds.only_browser == diff.feeds.only_api == ()
+    assert (diff.feeds.compared, diff.feeds.total) == (1, 1)
+
+
+def test_the_readers_fill_not_read_from_the_failed_and_deferred_feeds() -> None:
+    settings = shadow_settings()
+    run, _ = browser_run(settings)
+    first, second, *_ = sorted(run.feeds.feeds)
+    feeds = {i: f for i, f in run.feeds.feeds.items() if i not in (first, second)}
+    missed = replace(run.feeds, feeds=feeds, failed=(first,), deferred=(second,))
+
+    read = from_run(settings, replace(run, feeds=missed))
+
+    assert read.not_read == {first, second}
+    assert repr(read) == f"SourceRead(rows={len(run.rows)}, feeds={len(feeds)}, not_read=2)"
+
+
+def test_a_cycle_whose_api_feed_failed_records_it_as_the_apis_read_failure() -> None:
+    settings = shadow_settings()
+    run, tickets = browser_run(settings)
+    missing = min(run.feeds.feeds)
+    routes = demo_routes(tickets, NOW, TZ)
+    del routes[f"{API}/{APP}/tickets/{missing}/feed"]  # the API answers 404
+    runner, _, _ = runner_for(settings, FakeApi(routes))
+
+    runner(run)
+
+    (record,) = _records(settings)
+    assert record["feeds"]["not_read"] == {"browser": [], "api": [missing]}
+    assert record["feeds"]["only_browser"] == []
+    assert record["feeds"]["compared"] == len(run.feeds.feeds) - 1
+
+
+def test_the_record_carries_not_read_and_an_old_record_without_it_tallies_as_before() -> None:
+    browser, api = same_both_sides()
+    record = shadow_record(compare(browser, _without_feed(api, 2, not_read=True)), NOW, TIMING)
+    assert record["feeds"]["not_read"] == {"browser": [], "api": [2]}
+
+    plain = shadow_record(compare(browser, api), NOW, TIMING)
+    old = json.loads(json.dumps(plain))
+    del old["feeds"]["not_read"]
+    mismatched = shadow_record(compare(browser, _without_feed(api, 2, not_read=False)), NOW, TIMING)
+    old_mismatched = json.loads(json.dumps(mismatched))
+    del old_mismatched["feeds"]["not_read"]
+
+    assert compare_report([old], days=1) == compare_report([plain], days=1)
+    assert compare_report([old_mismatched], days=1) == compare_report([mismatched], days=1)
+    assert "Unreadable" not in "\n".join(compare_report([old, old_mismatched], days=1))
+
+
+@pytest.mark.parametrize("bad", [[], "2", {"browser": [], "api": ["2"]}, {"api": [2]}])
+def test_a_malformed_not_read_makes_the_record_unreadable(bad: object) -> None:
+    browser, api = same_both_sides()
+    record = shadow_record(compare(browser, api), NOW, TIMING)
+    record["feeds"]["not_read"] = bad
+
+    assert compare_report([record], days=1)[-1] == "Unreadable records skipped: 1."
+
+
+FAILED_LINE = "Feed reads that failed (the other side read them; not a mismatch): "
+
+
+def test_the_report_counts_failed_feed_reads_by_side_apart_from_the_matches() -> None:
+    browser, api = same_both_sides()
+    api_failed = shadow_record(compare(browser, _without_feed(api, 2, not_read=True)), NOW, TIMING)
+    browser_failed = shadow_record(
+        compare(_without_feed(browser, 1, not_read=True), api), NOW, TIMING
+    )
+
+    only_api = compare_report([api_failed], days=1)
+    both = compare_report([api_failed, browser_failed, browser_failed], days=1)
+    none = compare_report([shadow_record(compare(browser, api), NOW, TIMING)], days=1)
+
+    assert only_api[1:4] == [
+        "Rows matched: 100.0% (3 of 3). Feeds matched: 100.0% (1 of 1). "
+        "Cycles with identical findings: 100.0% (1 of 1).",
+        FAILED_LINE + "API 1.",
+        "Mismatches: none.",
+    ]
+    assert FAILED_LINE + "API 1, browser 2." in both
+    assert "Feeds matched: 100.0% (3 of 3)." in both[1]
+    assert not any(line.startswith(FAILED_LINE) for line in none)
+
+
+def test_show_ids_lists_failed_feed_reads_after_the_mismatches() -> None:
+    browser, api = same_both_sides()
+    other = [Finding(2, "needs_review", "normal", "other_last", 50)]
+    api_failed = SourceRead(api.rows, {1: api.feeds[1]}, other, frozenset({2}))
+    records = [
+        shadow_record(compare(browser, api_failed), NOW, TIMING),
+        shadow_record(compare(_without_feed(browser, 1, not_read=True), api), NOW, TIMING),
+    ]
+
+    lines = compare_report(records, days=1, show_ids=True)
+    plain = compare_report(records, days=1)
+
+    assert not any("not_read_" in line for line in plain)
+    assert FAILED_LINE + "API 1, browser 1." in plain
+    start = lines.index(SHOW_IDS_WARNING)
+    assert lines[start + 1 :] == [
+        "  finding_only_browser  1  client_waiting  requestor_last  1 cycle",
+        "  finding_only_api  2  needs_review  other_last  1 cycle",
+        "  not_read_api  2  1 cycle",
+        "  not_read_browser  1  1 cycle",
+    ]
+
+
+def test_show_ids_with_only_failed_feed_reads_still_lists_them() -> None:
+    browser, api = same_both_sides()
+    record = shadow_record(compare(browser, _without_feed(api, 2, not_read=True)), NOW, TIMING)
+
+    lines = compare_report([record], days=1, show_ids=True)
+
+    assert lines[-2:] == [SHOW_IDS_WARNING, "  not_read_api  2  1 cycle"]
+
+
 # --- the record --------------------------------------------------------------------------
 
 ALLOWED_TEXT = {
@@ -280,6 +444,7 @@ def test_the_record_holds_counts_ids_and_codes_only() -> None:
     keys |= {"rows"}
     keys |= {"feeds", "findings", "browser", "api", "matched", "only_browser", "only_api"}
     keys |= {"differs", "compared", "entries", "identical", "reply", "private", "system"}
+    keys |= {"not_read"}
     for found in _strings(record):
         if found == record["at"]:
             continue

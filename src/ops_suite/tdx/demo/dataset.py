@@ -81,7 +81,7 @@ Expect = Literal[
     "event_outreach_due/outreach_due",
     "event_details_pending/details_pending",
     "client_waiting/event_requester_replied",
-    "ready_to_close/desk_replied_last",
+    "ready_to_close/desk_note_last",
     "event_marketing_only",
     "event_no_outreach",
     "event_in_progress",
@@ -371,22 +371,25 @@ def demo_tickets(now: datetime) -> list[DemoTicket]:
             ),
             service="Storage",
         ),
-        # The desk replied four days ago and the client has been quiet since: ready to close.
+        # The desk replied ten days ago and added a private note the next day, keeping the
+        # ticket open on purpose. The note's hold (close_hold_days) is over and the client has
+        # been quiet since: ready to close, naming the note.
         DemoTicket(
             1000022,
             "unclaimed",
             "Wi-Fi password reset on a tablet",
             "Sydney Sample",
-            ago(150),
-            "ready_to_close/desk_replied_last",
+            ago(300),
+            "ready_to_close/desk_note_last",
             (
-                DemoEntry("Sydney Sample", ago(149), "My tablet will not join the Wi-Fi."),
+                DemoEntry("Sydney Sample", ago(299), "My tablet will not join the Wi-Fi."),
                 DemoEntry(
                     DESK,
-                    ago(100),
+                    ago(240),
                     "Hi Sydney,\n\nWe reset the device's Wi-Fi registration. Please forget the "
                     "network and join it again.\n\nDana",
                 ),
+                DemoEntry(DESK, ago(216), "Waiting for the tablet to be dropped off.", True),
             ),
             service="Network and VPN",
         ),

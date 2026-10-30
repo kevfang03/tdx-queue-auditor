@@ -1252,8 +1252,8 @@ AUDIT_SUMMARY = [
     "Checked: 5 unclaimed (3 feeds needed, 1 missing), 2 claimed (counted only). Events: 1, "
     "0 recurring, 0 multi-date, 1 with an unreadable date, 0 without a location. "
     "Form-titled tickets: 0 (0 recurring, 0 unreadable); renamed: 0 with a form, 0 without. "
-    "Event states (no finding): 0 waiting on requester, 0 in progress, 0 outreach not due yet, "
-    "0 marketing only, 0 no outreach. Desk members known: 2.",
+    "Event states (no finding): 0 waiting on requester, 0 in progress, 0 details confirmed, "
+    "0 outreach not due yet, 0 marketing only, 0 no outreach. Desk members known: 2.",
     "Unreadable dates: 0. Duplicates: 0. Blocked requests: 0. Live updates blocked: 6. "
     "Allowed non-GET: 6.",
 ]

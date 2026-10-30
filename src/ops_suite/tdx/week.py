@@ -13,7 +13,9 @@ date in that window, with its state:
   progress``; ``not checked yet`` when this run could not read the ticket's page. "In
   progress" covers a requester who has answered and also the events the rules keep quiet
   until close to the date: a desk entry newer than the requester's message, or a room in
-  the title while the desk waits on the requester.
+  the title while the desk waits on the requester. ``details confirmed``: a room in the title
+  and a desk private note after the desk's last reply, so the desk has the rest in hand;
+  like ``in progress``, it has no time.
 
 The labels are in the desk's own words ("emailed", not "outreach"), and the times are
 12-hour like the ticket titles (``card_time``).
@@ -49,6 +51,7 @@ EventState = Literal[
     "waiting_on_requester",
     "requester_replied",
     "in_progress",
+    "details_confirmed",
     "location_missing",
     "location_tbd",
     "marketing_only",
@@ -60,6 +63,7 @@ STATE_LABELS: dict[EventState, str] = {
     "waiting_on_requester": "waiting on requester",
     "requester_replied": "requester replied",
     "in_progress": "in progress",
+    "details_confirmed": "details confirmed",
     "location_missing": "location missing",
     "location_tbd": "location TBD",
     "marketing_only": "marketing only",

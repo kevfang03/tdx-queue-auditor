@@ -4,10 +4,11 @@ when the loop sends it. Synthetic records and tokens; no browser, network or rea
 import json
 import logging
 from datetime import date, datetime, timedelta
+from pathlib import Path
 
 import pytest
 from api_fakes import APP, BASE, CLAIMED_REPORT, TZ, UNCLAIMED_REPORT, make_token
-from edge_shapes import COMPARE_SHAPES
+from edge_shapes import COMPARE_SHAPES, api_cycle
 
 from ops_suite.common.config import ScheduleSettings, Settings
 from ops_suite.common.schedule import DeskHours
@@ -16,12 +17,19 @@ from ops_suite.tdx import watch as watch_module
 from ops_suite.tdx.api_token import ApiToken
 from ops_suite.tdx.dashboard import DashboardRead, WidgetRead
 from ops_suite.tdx.rules import AuditResult
-from ops_suite.tdx.shadow import SCHEMA, ShadowLog, mismatch_categories, shadow_log_path
+from ops_suite.tdx.shadow import (
+    SCHEMA,
+    ShadowLog,
+    feeds_not_read,
+    mismatch_categories,
+    shadow_log_path,
+)
 from ops_suite.tdx.tickets import FeedRead
 from ops_suite.tdx.watch import (
+    DAY_END_DETAILS_ONLY_NOTE,
+    DAY_END_FEEDS_UNEXPLAINED_NOTE,
     DAY_END_MISMATCH_ADVICE,
     DAY_END_NO_RECORDS,
-    DAY_END_READS_ONLY_NOTE,
     AuditRun,
     DayEndState,
     SendOutcome,
@@ -190,6 +198,7 @@ def test_the_notice_leads_with_the_day_and_the_token_then_the_comparison() -> No
         "compared": 2,
         "mismatches": False,
         "mismatch_kind": "none",
+        "feeds_not_read": {"browser": 0, "api": 0},
         "token": "ok",
     }
 
@@ -204,26 +213,92 @@ def test_a_mismatch_under_the_api_adds_what_to_do() -> None:
     assert extras["mismatch_kind"] == "rows_or_findings"
 
 
+ADVICE = {DAY_END_MISMATCH_ADVICE, DAY_END_FEEDS_UNEXPLAINED_NOTE, DAY_END_DETAILS_ONLY_NOTE}
+
+
 @pytest.mark.parametrize(
-    ("shape", "advice", "kind"),
+    ("shapes", "advice", "kind"),
     [
-        ("feed_only_browser", DAY_END_READS_ONLY_NOTE, "reads_only"),
-        ("finding_only_api", DAY_END_MISMATCH_ADVICE, "rows_or_findings"),
-        ("row_only_browser", DAY_END_MISMATCH_ADVICE, "rows_or_findings"),
+        (["feed_only_browser"], DAY_END_FEEDS_UNEXPLAINED_NOTE, "feeds_unexplained"),
+        (["title_differs"], DAY_END_DETAILS_ONLY_NOTE, "details_only"),
+        (["finding_only_api"], DAY_END_MISMATCH_ADVICE, "rows_or_findings"),
+        (["row_only_browser"], DAY_END_MISMATCH_ADVICE, "rows_or_findings"),
+        # The first case that applies wins.
+        (
+            ["title_differs", "feed_only_browser"],
+            DAY_END_FEEDS_UNEXPLAINED_NOTE,
+            "feeds_unexplained",
+        ),
+        (["feed_only_browser", "finding_only_api"], DAY_END_MISMATCH_ADVICE, "rows_or_findings"),
+        (
+            ["title_differs", "feed_not_read_api", "feed_only_browser", "row_only_browser"],
+            DAY_END_MISMATCH_ADVICE,
+            "rows_or_findings",
+        ),
     ],
 )
-def test_the_advice_follows_what_differed(shape: str, advice: str, kind: str) -> None:
+def test_the_advice_follows_what_differed(shapes: list[str], advice: str, kind: str) -> None:
     """Rows or findings that differ could have changed a card, so the browser takes the cards
-    back; a difference only in what each side read waits a day."""
-    records = [COMPARE_SHAPES["identical"], COMPARE_SHAPES[shape]]
+    back; an unexplained one-sided feed is worth a look; detail differences need nothing."""
+    records = [COMPARE_SHAPES["identical"], *(COMPARE_SHAPES[shape] for shape in shapes)]
 
     text, extras = day_end_notice(api_settings(), THURSDAY, CLOSE, DESK, records, GOOD_TOKEN)
 
     lines = text.split("\n\n")
     assert lines[-1] == advice
-    other = ({DAY_END_MISMATCH_ADVICE, DAY_END_READS_ONLY_NOTE} - {advice}).pop()
-    assert other not in lines
+    assert not (ADVICE - {advice}) & set(lines)
     assert (extras["mismatches"], extras["mismatch_kind"]) == (True, kind)
+
+
+def test_a_feed_the_api_failed_to_read_adds_no_advice() -> None:
+    records = [COMPARE_SHAPES["identical"], COMPARE_SHAPES["feed_not_read_api"]]
+
+    text, extras = day_end_notice(api_settings(), THURSDAY, CLOSE, DESK, records, GOOD_TOKEN)
+
+    lines = text.split("\n\n")
+    assert "Feed reads that failed (the other side read them; not a mismatch): API 1." in lines
+    assert "Mismatches: none." in lines
+    assert lines[-1].startswith("Verdict:")
+    assert not ADVICE & set(lines)
+    assert extras["mismatches"] is False
+    assert extras["mismatch_kind"] == "none"
+    assert extras["feeds_not_read"] == {"browser": 0, "api": 1}
+
+
+def test_a_day_with_one_api_feed_read_failure_reports_it_and_gives_no_advice() -> None:
+    """A Wednesday under the API: 29 compared cycles, rows and findings the same on both
+    sides, and one feed the API failed to read (a timeout) while the browser read it."""
+    wednesday = (at(10, 28, 7, 30), at(10, 28, 22, 0))
+    token = make_token(at(10, 29, 22, 10))
+    records = [api_cycle(10) for _ in range(27)] + [api_cycle(5), api_cycle(5, api_failed=1)]
+
+    text, extras = day_end_notice(api_settings(), wednesday, wednesday[1], DESK, records, token)
+
+    print(text)  # the notice as sent, shown with pytest -s
+    lines = text.split("\n\n")
+    assert lines[0] == (
+        "Desk day done (Wed). API token valid until Thu 10:10 PM; it covers tomorrow."
+    )
+    assert lines[1:3] == [
+        "API primary, today: 29 cycles; 29 read through the API, 0 browser fallbacks.",
+        "Browser shadow: 29 compared.",
+    ]
+    assert "Feeds matched: 100.0% (280 of 280)." in lines[3]
+    assert lines[4] == ("Feed reads that failed (the other side read them; not a mismatch): API 1.")
+    assert lines[5] == "Mismatches: none."
+    assert lines[6].startswith("Median per compared cycle:")
+    assert lines[7].startswith("Verdict: the browser matched the API in 29 of 29 compared cycles")
+    assert len(lines) == 8  # no advice line follows
+    assert extras["mismatch_kind"] == "none"
+    assert extras["feeds_not_read"] == {"browser": 0, "api": 1}
+
+
+def test_feeds_not_read_counts_by_side_and_skips_unreadable_records() -> None:
+    unreadable = {**COMPARE_SHAPES["feed_not_read_api"], "rows": None}
+    records = [COMPARE_SHAPES["feed_not_read_api"], COMPARE_SHAPES["identical"], unreadable]
+
+    assert feeds_not_read(records) == {"browser": 0, "api": 1}
+    assert feeds_not_read([COMPARE_SHAPES["browser_failure"]]) == {"browser": 0, "api": 0}
 
 
 def test_mismatch_categories_are_the_codes_found_and_skip_unreadable_records() -> None:
@@ -238,6 +313,8 @@ def test_mismatch_categories_are_the_codes_found_and_skip_unreadable_records() -
     assert mismatch_categories(records) == {"feed_only_browser"}
     assert mismatch_categories([unreadable]) == set()
     assert mismatch_categories([COMPARE_SHAPES["row_only_browser"]]) == {"row_only_browser"}
+    # A feed the API recorded as not read is its read failure, not a mismatch.
+    assert mismatch_categories([COMPARE_SHAPES["feed_not_read_api"]]) == set()
 
 
 def test_the_verdict_counts_compared_cycles_and_lists_failures_apart() -> None:
@@ -253,33 +330,48 @@ def test_the_verdict_counts_compared_cycles_and_lists_failures_apart() -> None:
     )
 
 
-def test_the_two_tiers_open_with_what_differed() -> None:
+def test_each_case_opens_with_what_differed_and_only_rows_or_findings_say_switch() -> None:
     assert DAY_END_MISMATCH_ADVICE.startswith(
         "The browser and the API disagreed on rows or findings."
     )
-    assert DAY_END_READS_ONLY_NOTE.startswith(
+    assert DAY_END_FEEDS_UNEXPLAINED_NOTE.startswith(
+        "A feed was read by one side only with no read failure recorded"
+    )
+    assert "Nothing to switch" in DAY_END_FEEDS_UNEXPLAINED_NOTE
+    assert DAY_END_DETAILS_ONLY_NOTE.startswith(
         "Rows and findings matched in every compared cycle, so no card differed."
     )
-    assert "Nothing to do today; if it shows again tomorrow" in DAY_END_READS_ONLY_NOTE
+    assert DAY_END_DETAILS_ONLY_NOTE.endswith("Nothing to do.")
+    for note in (DAY_END_FEEDS_UNEXPLAINED_NOTE, DAY_END_DETAILS_ONLY_NOTE):
+        assert "tdx.source" not in note and "tomorrow" not in note
 
 
-def test_no_mismatch_gives_neither_line() -> None:
+def test_no_mismatch_gives_no_advice_line() -> None:
     records = [COMPARE_SHAPES["identical"], COMPARE_SHAPES["browser_failure"]]
 
     text, extras = day_end_notice(api_settings(), THURSDAY, CLOSE, DESK, records, GOOD_TOKEN)
 
-    assert DAY_END_MISMATCH_ADVICE not in text and DAY_END_READS_ONLY_NOTE not in text
+    assert not any(advice in text for advice in ADVICE)
     assert (extras["mismatches"], extras["mismatch_kind"]) == (False, "none")
 
 
-@pytest.mark.parametrize("shape", ["feed_only_browser", "finding_only_api"])
-def test_under_shadow_neither_tier_adds_a_line(shape: str) -> None:
+@pytest.mark.parametrize("shape", ["feed_only_browser", "title_differs", "finding_only_api"])
+def test_under_shadow_no_case_adds_a_line(shape: str) -> None:
     settings = api_settings(source="shadow")
     records = [COMPARE_SHAPES[shape]]
 
     text, _ = day_end_notice(settings, THURSDAY, CLOSE, DESK, records, GOOD_TOKEN)
 
-    assert DAY_END_MISMATCH_ADVICE not in text and DAY_END_READS_ONLY_NOTE not in text
+    assert not any(advice in text for advice in ADVICE)
+
+
+def test_the_old_reads_only_names_are_gone() -> None:
+    root = Path(__file__).resolve().parents[2]
+    old = ("DAY_END_" + "READS_ONLY_NOTE", '"reads' + '_only"')
+    for folder in ("src", "tests"):
+        for path in (root / folder).rglob("*.py"):
+            text = path.read_text(encoding="utf-8")
+            assert not any(name in text for name in old), path
 
 
 def test_a_mismatch_under_shadow_needs_no_advice() -> None:
@@ -318,6 +410,7 @@ def test_without_records_or_the_api_the_notice_says_so() -> None:
         "compared": 0,
         "mismatches": False,
         "mismatch_kind": "none",
+        "feeds_not_read": {"browser": 0, "api": 0},
         "token": "off",
     }
 

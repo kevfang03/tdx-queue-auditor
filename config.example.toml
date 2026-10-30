@@ -95,6 +95,10 @@ desk_memory_forget_days = 180
 # "Ready to close": the desk replied last at least this many days ago (1-30) and the requester
 # has been silent since. Listed in shift summaries; see alert_ready_to_close below.
 close_after_days = 3
+# A private note added at least an hour after that reply means the desk keeps the ticket open
+# on purpose (a laptop waiting for pickup, say): "ready to close" waits this many days from the
+# note (1-30), then comes back as "follow up or close".
+close_hold_days = 7
 # Shift summaries mark "(possible duplicate of #id)" when the requester is the same and the
 # titles' words overlap this much (0-1, Jaccard) or one title contains the other.
 duplicate_title_similarity = 0.6

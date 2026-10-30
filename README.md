@@ -104,10 +104,10 @@ On Windows, `uv sync` downloads uv's own Python 3.12 even when another Python is
 Demo: synthetic TDX pages on 127.0.0.1 (no real data, nothing leaves this computer unless --send).
 Unclaimed: 21 ticket(s) on 3 page(s).
 Claimed by others: 6 ticket(s) on 1 page(s).
-Feeds: 17 needed, 17 read, 0 failed, 0 deferred. Entries: 21 (20 reply, 1 private, 0 system), 0 unreadable.
+Feeds: 17 needed, 17 read, 0 failed, 0 deferred. Entries: 22 (20 reply, 2 private, 0 system), 0 unreadable.
 Findings: client waiting 6, follow up with client 0, event outreach due 1, event details pending 1, event over 1, location TBD soon 2, needs review 1, ready to close 1.
 LLM: off; 3 "requestor wrote last" findings keep their wording.
-Checked: 21 unclaimed (17 feeds needed, 0 missing), 6 claimed (counted only). Events: 6, 1 recurring, 1 multi-date, 0 with an unreadable date, 1 without a location. Form-titled tickets: 4 (0 recurring, 0 unreadable); renamed: 2 with a form, 2 without. Event states (no finding): 0 waiting on requester, 1 in progress, 0 outreach not due yet, 1 marketing only, 1 no outreach. Desk members known: 2.
+Checked: 21 unclaimed (17 feeds needed, 0 missing), 6 claimed (counted only). Events: 6, 1 recurring, 1 multi-date, 0 with an unreadable date, 1 without a location. Form-titled tickets: 4 (0 recurring, 0 unreadable); renamed: 2 with a form, 2 without. Event states (no finding): 0 waiting on requester, 1 in progress, 0 details confirmed, 0 outreach not due yet, 1 marketing only, 1 no outreach. Desk members known: 2.
   client_waiting  1000002  requestor_last  76h
   client_waiting  1000003  requestor_last  75h
   client_waiting  1000001  no_reply_yet  74h
@@ -119,8 +119,8 @@ Checked: 21 unclaimed (17 feeds needed, 0 missing), 6 claimed (counted only). Ev
   event_details_pending  1000020  details_pending  72h
   location_tbd_soon  1000007  tbd_soon  49h
   location_tbd_soon  1000025  location_missing  28h
+  ready_to_close  1000022  desk_note_last  240h  note 216h
   event_over  1000006  event_over  118h
-  ready_to_close  1000022  desk_replied_last  100h
   event_form_missing  1000007
   event_form_missing  1000025
   event_state  1000007  no_outreach_yet  A/V on form: —  —

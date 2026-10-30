@@ -155,6 +155,9 @@ class TdxRulesSettings(BaseModel):
     desk_memory_forget_days: int = Field(default=180, ge=30, le=730)
     # The desk replied last this many days ago, client silent since: "ready to close".
     close_after_days: int = Field(default=3, ge=1, le=30)
+    # A desk private note after that reply means the desk keeps the ticket open on purpose:
+    # "ready to close" waits this many days from the note, then comes back naming the note.
+    close_hold_days: int = Field(default=7, ge=1, le=30)
     # Summary rows: same requester and titles at least this similar (token Jaccard) are
     # marked "possible duplicate". Compared in memory only.
     duplicate_title_similarity: float = Field(default=0.6, gt=0, le=1)
