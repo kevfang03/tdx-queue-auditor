@@ -36,6 +36,7 @@ from ops_suite.tdx.alerts import (
     fit_urgent_card,
     format_age,
     plan_alerts,
+    section_hint,
     since_text,
     summary_change,
     summary_heading,
@@ -1234,9 +1235,124 @@ def extras_summary(
 
 
 def test_ready_to_close_wording() -> None:
+    # The tool sees only that the desk spoke last, so the row never implies the issue is fixed.
     assert finding_wording(ready(101)) == (
-        "The help desk replied 4 days ago, no reply since: close if nothing new"
+        "The help desk replied 4 days ago, no reply since: check it's resolved, then close"
     )
+
+
+# --- section tips ---------------------------------------------------------------------------
+
+ROOM_SET = Finding(120, "event_details_pending", "high", "details_room_set", 96, 70)
+STILL_PENDING = Finding(121, "event_details_pending", "high", "details_pending", 60, 100)
+READY_TIP = (
+    "Still waiting on the requester? Add a private note to the ticket and it stays off this "
+    "list for 7 days."
+)
+ROOM_SET_TIP = (
+    "Zoom link already on the spreadsheet? Add a private note to the ticket and the event "
+    "shows as confirmed."
+)
+
+
+def tips(lines: list[str]) -> list[str]:
+    return [line for line in lines if "Add a private note" in line]
+
+
+def test_section_hint_covers_ready_to_close_and_room_set_events_only() -> None:
+    assert section_hint("ready_to_close", [ready(101)], 7) == READY_TIP
+    assert section_hint("ready_to_close", [ready(101)], 10).endswith("for 10 days.")
+    assert section_hint("ready_to_close", [ready(101)], 1).endswith("for 1 day.")
+    assert section_hint("event_details_pending", [STILL_PENDING, ROOM_SET], 7) == ROOM_SET_TIP
+    assert section_hint("event_details_pending", [STILL_PENDING], 7) is None
+    others = [
+        "client_waiting",
+        "follow_up_with_client",
+        "needs_review",
+        "event_outreach_due",
+        "location_tbd_soon",
+        "event_over",
+        "some_new_kind",
+    ]
+    for kind in others:
+        assert section_hint(kind, [ROOM_SET, ready(101)], 7) is None, kind
+
+
+def test_the_ready_to_close_tip_sits_once_under_its_heading_with_the_hold() -> None:
+    _, card = summary([waiting(101), ready(102), ready(103)], close_hold_days=10)
+
+    lines = texts(card)
+    heading = lines.index("Ready to close (2)")
+    assert lines[heading + 1] == READY_TIP.replace("7 days", "10 days")
+    assert len(tips(lines)) == 1
+    assert card["body"][heading + 1] == {
+        "type": "TextBlock",
+        "text": lines[heading + 1],
+        "wrap": True,
+        "isSubtle": True,
+        "size": "Small",
+        "spacing": "None",
+    }
+    # The other section has no tip: its first row follows the heading.
+    assert lines[lines.index("Requester waiting (1)") + 1].startswith("[#101](")
+
+
+def test_the_room_set_tip_needs_a_room_set_row_in_its_section() -> None:
+    _, without = summary([STILL_PENDING, waiting(101)])
+    assert tips(texts(without)) == []
+
+    _, card = summary([STILL_PENDING, ROOM_SET])
+    lines = texts(card)
+    heading = lines.index("Event: follow up with the requester (2)")
+    assert lines[heading + 1] == ROOM_SET_TIP
+    assert tips(lines) == [ROOM_SET_TIP]
+
+
+def test_every_card_with_a_section_shows_its_tip_under_the_heading(tmp_path: Path) -> None:
+    findings = [waiting(101), ROOM_SET, ready(110)]
+    keys = {(f.ticket_id, f.kind) for f in findings}
+    cards = [
+        alert_card(DESK, findings, tmp_path),
+        summary(findings, reader=DESK)[1],
+        delta(findings, keys, reader=DESK)[1],
+    ]
+    for card in cards:
+        lines = texts(card)
+        assert lines[lines.index("Ready to close (1)") + 1] == READY_TIP
+        assert lines[lines.index("Event: follow up with the requester (1)") + 1] == ROOM_SET_TIP
+        assert len(tips(lines)) == 2
+
+    lines = texts(urgent_card(DESK, [ROOM_SET]))
+    assert lines[lines.index("Event: follow up with the requester (1)") + 1] == ROOM_SET_TIP
+
+
+def test_a_tip_never_uses_the_row_budget() -> None:
+    findings = [ready(ticket_id) for ticket_id in range(101, 106)]
+
+    shown, card = summary(findings, max_rows=3)
+    lines = texts(card)
+    assert len(shown) == 3
+    assert lines[2:4] == ["Ready to close (5)", READY_TIP]
+    assert len(lines[4:-1]) == 3 and lines[-1] == "+2 more"
+
+    shown, card = summary(findings, max_rows=0)
+    assert shown == () and texts(card)[2:] == ["Ready to close (5)", READY_TIP, "+5 more"]
+
+
+def test_a_full_summary_with_both_tips_stays_under_the_size_limit() -> None:
+    findings = [
+        *(ready(ticket_id) for ticket_id in range(1000, 1060)),
+        *(
+            Finding(ticket_id, "event_details_pending", "high", "details_room_set", 96, 70)
+            for ticket_id in range(2000, 2060)
+        ),
+    ]
+
+    shown, card = summary(findings, max_rows=120, show_titles=True)
+
+    assert card_size(card) < CARD_MAX_BYTES
+    assert 0 < len(shown) < 120  # trimmed to fit, and the tips survive the trim
+    assert sorted(tips(texts(card))) == sorted([READY_TIP, ROOM_SET_TIP])
 
 
 def test_ready_to_close_after_a_desk_note_names_the_note() -> None:
@@ -1785,7 +1901,7 @@ def test_urgent_card_wording(reader: Reader, ask: str, preview: str) -> None:
 )
 def test_row_wording_names_the_team_as_the_reader_does(reader: Reader, replied: str) -> None:
     assert finding_wording(ready(101), reader) == (
-        f"{replied}, no reply since: close if nothing new"
+        f"{replied}, no reply since: check it's resolved, then close"
     )
     # Wording without a team is the same for every reader: the requester went quiet, so
     # the details row names them, not the team.

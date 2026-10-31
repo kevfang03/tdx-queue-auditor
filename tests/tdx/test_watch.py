@@ -1368,7 +1368,14 @@ def test_the_summary_lists_ready_to_close_without_recording_or_marking_it(
 ) -> None:
     poster = Poster()
     monkeypatch.setattr(watch_module, "post_card", poster)
-    settings = summary_settings()
+    settings = Settings(
+        tdx={
+            "base_url": "https://tdx.example.edu/TDNext/",
+            "summary": {"enabled": True},
+            "rules": {"close_hold_days": 10},
+        },
+        teams={"desk": {"approved": True}},
+    )
     state_path = tmp_path / "alerts-state-desk.json"
     run = make_run([waiting(101), ready(102)], now=SUMMARY_RUN_TIME)
 
@@ -1379,7 +1386,9 @@ def test_the_summary_lists_ready_to_close_without_recording_or_marking_it(
     assert outcome.status == "sent" and outcome.open == 2 and outcome.new == 1
     lines = [block["text"] for block in poster.cards[0]["body"]]
     assert lines[0] == "TDX queue at 7:30 AM: 2 tickets for the help desk (1 added)"
-    assert lines[-2] == "Ready to close (1)"
+    assert lines[-3] == "Ready to close (1)"
+    # The tip under the heading names the configured hold.
+    assert lines[-2].endswith("it stays off this list for 10 days.")
     assert "(added)" not in lines[-1] and "The help desk replied 4 days ago" in lines[-1]
     assert AlertState(state_path).keys() == [(101, "client_waiting")]
 

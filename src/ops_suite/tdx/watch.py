@@ -669,6 +669,7 @@ def draft_card(
         title_chars=tdx.alerts.title_chars,
         show_titles=settings.teams.show_titles(destination),
         reader=card_reader(settings, destination),
+        close_hold_days=tdx.rules.close_hold_days,
     )
     return CardDraft(plan, fitted, card)
 
@@ -793,6 +794,7 @@ def draft_summary(
             duplicates=duplicates,
             urgent_keys=urgent,
             reader=card_reader(settings, destination),
+            close_hold_days=tdx.rules.close_hold_days,
         )
     else:
         events = events_this_week(
@@ -826,6 +828,7 @@ def draft_summary(
             since=request.since,
             urgent_keys=urgent,
             reader=card_reader(settings, destination),
+            close_hold_days=tdx.rules.close_hold_days,
         )
     shown_keys = {(finding.ticket_id, finding.kind) for finding in shown}
     record = AlertPlan(
@@ -1029,6 +1032,7 @@ def send_urgent(
         show_titles=settings.teams.show_titles("desk"),
         max_rows=tdx.alerts.max_rows_per_card,
         reader=card_reader(settings, "desk"),
+        close_hold_days=tdx.rules.close_hold_days,
     )
     counts = {
         "rows": len(shown),

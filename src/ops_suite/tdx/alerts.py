@@ -151,8 +151,24 @@ WORDING: dict[tuple[str, str | None], str] = {
         "{Team} replied {age} ago and added a note {note_age} ago, no reply since: follow up or "
         "close"
     ),
-    ("ready_to_close", None): "{Team} replied {age} ago, no reply since: close if nothing new",
+    # The tool sees only who spoke last, not whether the issue is fixed, so the row asks for
+    # that check before closing.
+    ("ready_to_close", None): (
+        "{Team} replied {age} ago, no reply since: check it's resolved, then close"
+    ),
 }
+# One small tip under a section heading, so readers learn the private-note habit from the
+# card itself: a desk private note after the last reply holds a ready-to-close ticket for
+# ``close_hold_days`` (``{hold}``, as "7 days") and marks a room-set event as confirmed.
+READY_TO_CLOSE_HINT = (
+    "Still waiting on the requester? Add a private note to the ticket and it stays off this "
+    "list for {hold}."
+)
+ROOM_SET_HINT = (
+    "Zoom link already on the spreadsheet? Add a private note to the ticket and the event "
+    "shows as confirmed."
+)
+DEFAULT_CLOSE_HOLD_DAYS = 7
 # A renamed event's feed finding that also stands for its missing room (``Finding.no_room``)
 # ends with the room check, so one ticket is one row.
 NO_ROOM_WORDING: dict[str, str] = {
@@ -521,6 +537,31 @@ def section_label(kind: str) -> str:
     return SECTION_LABELS.get(kind) or kind.replace("_", " ").capitalize()
 
 
+def section_hint(kind: str, rows: Sequence[Finding], close_hold_days: int) -> str | None:
+    """The one-line tip under a section heading, or None.
+
+    ready_to_close: always. event_details_pending: only when a row's reason is
+    details_room_set. Every other kind: None.
+    """
+    if kind == "ready_to_close":
+        return READY_TO_CLOSE_HINT.format(hold=_plural(close_hold_days, "day"))
+    if kind == "event_details_pending" and any(row.reason == "details_room_set" for row in rows):
+        return ROOM_SET_HINT
+    return None
+
+
+def _section_heading(
+    kind: str, rows: Sequence[Finding], close_hold_days: int
+) -> list[dict[str, object]]:
+    """A section's heading with its count, then its tip when it has one. The tip is not a
+    row: it never counts against the row budget."""
+    blocks = [_text(f"{section_label(kind)} ({len(rows)})", weight="Bolder", spacing="Medium")]
+    hint = section_hint(kind, rows, close_hold_days)
+    if hint is not None:
+        blocks.append(_text(hint, isSubtle=True, size="Small", spacing="None"))
+    return blocks
+
+
 def finding_wording(finding: Finding, reader: Reader = PERSONAL) -> str:
     """The card wording for a finding, naming the team as ``reader`` does; never fails on an
     unknown kind, reason or age. A finding that also stands for its event's missing room
@@ -638,6 +679,7 @@ def _card(
     title_chars: int,
     show_titles: bool,
     reader: Reader,
+    close_hold_days: int = DEFAULT_CLOSE_HOLD_DAYS,
 ) -> dict[str, object]:
     checked = checked_line(now, tz, summary_counts)
     if reader.audience == "desk":
@@ -651,9 +693,7 @@ def _card(
     kinds = sorted({due.finding.kind for due in plan.on_card}, key=_kind_order)
     for kind in kinds:
         rows = [due for due in plan.on_card if due.finding.kind == kind]
-        body.append(
-            _text(f"{section_label(kind)} ({len(rows)})", weight="Bolder", spacing="Medium")
-        )
+        body.extend(_section_heading(kind, [due.finding for due in rows], close_hold_days))
         for due in rows:
             ticket_id = due.finding.ticket_id
             link = links.get(ticket_id)
@@ -703,12 +743,22 @@ def fit_card(
     title_chars: int,
     show_titles: bool = True,
     reader: Reader = PERSONAL,
+    close_hold_days: int = DEFAULT_CLOSE_HOLD_DAYS,
 ) -> tuple[AlertPlan, dict[str, object]]:
     """The card, and the plan actually on it: rows are dropped from the end into the
     overflow count until the card is under ``CARD_MAX_BYTES``. Record the returned plan."""
     while True:
         card = _card(
-            plan, rows_by_id, links, now, tz, summary_counts, title_chars, show_titles, reader
+            plan,
+            rows_by_id,
+            links,
+            now,
+            tz,
+            summary_counts,
+            title_chars,
+            show_titles,
+            reader,
+            close_hold_days,
         )
         if card_size(card) < CARD_MAX_BYTES or not plan.on_card:
             return plan, card
@@ -726,6 +776,7 @@ def build_card(
     title_chars: int,
     show_titles: bool = True,
     reader: Reader = PERSONAL,
+    close_hold_days: int = DEFAULT_CLOSE_HOLD_DAYS,
 ) -> dict[str, object]:
     """An Adaptive Card 1.4: the heading, one section per kind, and the overflow line.
 
@@ -742,6 +793,7 @@ def build_card(
         title_chars=title_chars,
         show_titles=show_titles,
         reader=reader,
+        close_hold_days=close_hold_days,
     )[1]
 
 
@@ -1046,6 +1098,7 @@ def _summary_card(
     duplicates: Mapping[int, int],
     urgent_keys: Set[StateKey] = frozenset(),
     reader: Reader = PERSONAL,
+    close_hold_days: int = DEFAULT_CLOSE_HOLD_DAYS,
 ) -> tuple[tuple[Finding, ...], dict[str, object]]:
     lead = reader.summary_lead(bool(findings))
     checked = (
@@ -1084,6 +1137,7 @@ def _summary_card(
         duplicates,
         urgent_keys,
         reader,
+        close_hold_days,
     )
     return shown, _summary_shell(fallback_text(ticket_count(findings), reader), body)
 
@@ -1112,18 +1166,17 @@ def _finding_sections(
     duplicates: Mapping[int, int],
     urgent_keys: Set[StateKey] = frozenset(),
     reader: Reader = PERSONAL,
+    close_hold_days: int = DEFAULT_CLOSE_HOLD_DAYS,
 ) -> tuple[Finding, ...]:
-    """One section per kind with its count, at most ``max_rows`` rows in all (``+N more`` per
-    section past that), appended to ``body``. Rows in ``urgent_keys`` are marked ``(event
-    soon)``; the wording names the team as ``reader`` does. Returns the findings shown by
-    id."""
+    """One section per kind with its count and its tip (``section_hint``), at most
+    ``max_rows`` rows in all (``+N more`` per section past that), appended to ``body``. Rows
+    in ``urgent_keys`` are marked ``(event soon)``; the wording names the team as ``reader``
+    does. Returns the findings shown by id."""
     shown: list[Finding] = []
     budget = max(max_rows, 0)
     for kind in sorted({finding.kind for finding in findings}, key=_kind_order):
         rows = [finding for finding in findings if finding.kind == kind]
-        body.append(
-            _text(f"{section_label(kind)} ({len(rows)})", weight="Bolder", spacing="Medium")
-        )
+        body.extend(_section_heading(kind, rows, close_hold_days))
         visible = rows[:budget]
         budget -= len(visible)
         for finding in visible:
@@ -1187,6 +1240,7 @@ def fit_summary_card(
     since: datetime | None = None,
     urgent_keys: Set[StateKey] = frozenset(),
     reader: Reader = PERSONAL,
+    close_hold_days: int = DEFAULT_CLOSE_HOLD_DAYS,
 ) -> tuple[tuple[Finding, ...], dict[str, object]]:
     """The summary card and the findings it shows by id (the rest are counted as ``+N
     more``). Rows are dropped from the end until the card, mentions included, is under
@@ -1230,6 +1284,7 @@ def fit_summary_card(
             duplicates or {},
             urgent_keys,
             reader,
+            close_hold_days,
         )
         card = with_mentions(card, mention, mention_people)
         if card_size(card) < CARD_MAX_BYTES or not shown:
@@ -1257,6 +1312,7 @@ def build_summary_card(
     duplicates: Mapping[int, int] | None = None,
     since: datetime | None = None,
     reader: Reader = PERSONAL,
+    close_hold_days: int = DEFAULT_CLOSE_HOLD_DAYS,
 ) -> dict[str, object]:
     """The shift-summary Adaptive Card: the heading (``Queue clear`` when nothing is open, a
     late marker when late), "Events this week" when there are any, every open finding
@@ -1282,6 +1338,7 @@ def build_summary_card(
         duplicates=duplicates,
         since=since,
         reader=reader,
+        close_hold_days=close_hold_days,
     )[1]
 
 
@@ -1307,6 +1364,7 @@ def fit_delta_card(
     duplicates: Mapping[int, int] | None = None,
     urgent_keys: Set[StateKey] = frozenset(),
     reader: Reader = PERSONAL,
+    close_hold_days: int = DEFAULT_CLOSE_HOLD_DAYS,
 ) -> tuple[tuple[Finding, ...], dict[str, object]]:
     """A later slot's update card and the findings it shows by id: the heading ``Since 7:30
     AM: N more tickets and M reminders for {who}``, the lead (``delta_lead``: ``total``
@@ -1345,6 +1403,7 @@ def fit_delta_card(
             duplicates or {},
             urgent_keys,
             reader,
+            close_hold_days,
         )
         card = _summary_shell(fallback_text(total, reader), body)
         if card_size(card) < CARD_MAX_BYTES or not shown:
@@ -1373,6 +1432,7 @@ def fit_urgent_card(
     show_titles: bool,
     max_rows: int,
     reader: Reader = PERSONAL,
+    close_hold_days: int = DEFAULT_CLOSE_HOLD_DAYS,
 ) -> tuple[tuple[Finding, ...], dict[str, object]]:
     """The short card that takes urgent event findings to the desk chat between summaries,
     and the findings it shows by id: the heading ``Event soon: N need follow-up``, the team
@@ -1405,6 +1465,7 @@ def fit_urgent_card(
             rows,
             {},
             reader=reader,
+            close_hold_days=close_hold_days,
         )
         card = _summary_shell(fallback_text(tickets, reader), body)
         if card_size(card) < CARD_MAX_BYTES or not shown:

@@ -257,11 +257,11 @@ The manual weekly check-in had a "close these if nothing new" list. The `ready_t
 - its latest visible entry is a **desk** reply (so the requester has written nothing since);
 - that reply is `tdx.rules.close_after_days` (3, 1 to 30) days old or more.
 
-The age shown is the time since the desk reply. A desk reply younger than that, or undated, is still only counted `desk_replied_last`. Wording: "{Team} replied {age} ago, no reply since: close if nothing new" ([Card wording](#card-wording)).
+The age shown is the time since the desk reply. A desk reply younger than that, or undated, is still only counted `desk_replied_last`. Wording: "{Team} replied {age} ago, no reply since: check it's resolved, then close" ([Card wording](#card-wording)). The tool sees only that the desk spoke last and nobody has written since, not whether the issue is fixed: a requester who wrote "not fixed yet, I'll retry myself", answered by the desk with "let us know", looks exactly like a solved ticket. So the row asks for that check before closing, and the card's [tip](#card-wording) under this section points to the desk note below for a ticket still waiting on the requester.
 
 **Held by a desk note.** The desk sometimes keeps such a ticket open on purpose, a laptop waiting for pickup, say. A private note after the desk reply that counts as [in hand](#a-desk-private-note-means-in-hand) holds the ticket back for `tdx.rules.close_hold_days` (7, 1 to 30) days from the note: no finding, counted `desk_note_hold`. Then it comes back, low, reason `desk_note_last`, still aged from the desk reply, with the note's age too: "{Team} replied {age} ago and added a note {note_age} ago, no reply since: follow up or close". A held ticket that has waited that long may need a nudge as much as closing. A ticket opened by a desk member stays only counted `desk_replied_last`, note or not.
 
-Example (run time Thursday 2026-10-08 12:00): ticket 1030 is a laptop repair. Pat replied that the laptop is ready, 250 hours ago, and the next day added a private note that the requester will pick it up, 192 hours ago. Two days after the note, the ticket raised nothing (counted `desk_note_hold`). Now that the note is more than 7 days old: `ready_to_close`, `desk_note_last`, "The help desk replied 10 days ago and added a note 8 days ago, no reply since: follow up or close". Without the note, it would have been listed since 3 days after the reply as "The help desk replied … ago, no reply since: close if nothing new".
+Example (run time Thursday 2026-10-08 12:00): ticket 1030 is a laptop repair. Pat replied that the laptop is ready, 250 hours ago, and the next day added a private note that the requester will pick it up, 192 hours ago. Two days after the note, the ticket raised nothing (counted `desk_note_hold`). Now that the note is more than 7 days old: `ready_to_close`, `desk_note_last`, "The help desk replied 10 days ago and added a note 8 days ago, no reply since: follow up or close". Without the note, it would have been listed since 3 days after the reply as "The help desk replied … ago, no reply since: check it's resolved, then close".
 
 It is a **summary-only** finding by default: it is listed in the "Ready to close" section of every shift summary while it is open, never marked `(added)`, and kept out of the alert cards and `alerts-state.json`, so it never pings on its own. `tdx.alerts.alert_ready_to_close = true` treats it like any other finding (alert cards, re-alerts, `(new)`). The auditor never closes anything: TDX stays read-only.
 
@@ -338,9 +338,16 @@ Personal cards say "you" where desk cards name `{team}`.
 | `location_tbd_soon` / `location_missing` | Event in {age}. No room on the ticket yet. Check the events spreadsheet; if a room is listed, update the ticket. (a date and a time in the title but no room, so no TBD to quote) |
 | any event finding with `no_room` | its own wording, a full stop, then `Location still TBD on the ticket: check the events spreadsheet, and if a room is listed, update the ticket.` (`tbd`) or `No room on the ticket yet: check the events spreadsheet, and if a room is listed, update the ticket.` (`missing`) |
 | `event_over` | Event ended {age} ago: ready to resolve? |
-| `ready_to_close` / `desk_replied_last` | {Team} replied {age} ago, no reply since: close if nothing new |
+| `ready_to_close` / `desk_replied_last` | {Team} replied {age} ago, no reply since: check it's resolved, then close |
 | `ready_to_close` / `desk_note_last` | {Team} replied {age} ago and added a note {note_age} ago, no reply since: follow up or close (`{note_age}`: the time since the desk note that held the ticket) |
 | unknown kind or reason, or age `None` | the kind label, and the age if known |
+
+**Section tips.** Two sections carry one small, subtle line right under their heading, so anyone reading the card learns the [desk private note](#a-desk-private-note-means-in-hand) habit from the card itself. A tip is not a row: it never counts against `max_rows_per_card` or the `+N more` line. It appears on every card that shows its section (alert card, full summary, update, Event soon card); no other section has one.
+
+| section | tip |
+|---|---|
+| Ready to close | Still waiting on the requester? Add a private note to the ticket and it stays off this list for {hold} days. (`{hold}`: `tdx.rules.close_hold_days`, "1 day" when it is 1) |
+| Event: follow up with the requester, only when a row in it has reason `details_room_set` | Zoom link already on the spreadsheet? Add a private note to the ticket and the event shows as confirmed. |
 
 Each row starts with the ticket id, linked to the ticket when its address is on the TDX host, then the title, cut to `title_chars` (80) with its Markdown escaped, so `EVENT [10/20 3pm Room 101] Club` shows its brackets. The card never carries a requestor name, an email address, Prim Resp or feed text, and it is never logged.
 
