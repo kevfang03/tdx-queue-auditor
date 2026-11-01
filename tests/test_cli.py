@@ -7,7 +7,7 @@ import subprocess
 import sys
 from contextlib import contextmanager
 from dataclasses import replace
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from pathlib import Path, PureWindowsPath
 from zoneinfo import ZoneInfo
 
@@ -42,6 +42,7 @@ from ops_suite.tdx.feed_types import FeedEntry, TicketFeed
 from ops_suite.tdx.followup import FollowUpAnswer
 from ops_suite.tdx.guard import BUILT_IN_ALLOWED, AllowedRequest
 from ops_suite.tdx.rows import TicketRow
+from ops_suite.tdx.rules import RuleSettings, evaluate
 from ops_suite.tdx.saved import load_saved_dashboard, save_dashboard
 from ops_suite.tdx.session_log import SessionLog
 from ops_suite.tdx.tickets import DESCRIPTION_SHAPE_KEYS, FeedRead
@@ -519,6 +520,15 @@ ROWS_BASE = "https://tdx.example.edu/TDWorkManagement/"
 WIDGET_POST = "POST /TDWorkManagement/WorkManagement/Widgets/#"
 # The log may name the host (describe_url); ticket links show up as "TicketDet".
 INVENTED = ["Alex Example", "Pat Helpdesk", "Laptop will not connect", "TicketDet"]
+
+
+def hours_before(now: datetime, hours: float) -> datetime:
+    """``hours`` of real time before ``now``, in ``now``'s zone.
+
+    Subtracting a timedelta from an aware local time works on the wall clock, so across a
+    daylight-saving change the real gap is an hour off. Subtracting in UTC keeps it exact.
+    """
+    return (now.astimezone(UTC) - timedelta(hours=hours)).astimezone(now.tzinfo)
 
 
 def _row(kind: str, ticket_id: int) -> TicketRow:
@@ -1126,7 +1136,7 @@ AUDIT_REPLY = (
 
 
 def _audit_row(kind: str, ticket_id: int, now: datetime, hours_ago: float, **fields: object):
-    when = now - timedelta(hours=hours_ago)
+    when = hours_before(now, hours_ago)
     values: dict[str, object] = {
         "widget": kind,
         "ticket_id": ticket_id,
@@ -1164,7 +1174,7 @@ def _audit_scenario(now: datetime) -> tuple[DashboardRead, FeedRead]:
     )
 
     def at(hours_ago: float) -> datetime:
-        return now - timedelta(hours=hours_ago)
+        return hours_before(now, hours_ago)
 
     feeds = FeedRead(
         feeds={
@@ -1331,6 +1341,31 @@ def test_tdx_audit_prints_counts_only(
         assert ticket_id not in captured.out
 
 
+@pytest.mark.parametrize(
+    "now",
+    [
+        datetime(2026, 11, 1, 12, 0, tzinfo=TZ),  # 10 hours after the clocks went back
+        datetime(2027, 3, 14, 12, 0, tzinfo=TZ),  # 9 hours after the clocks went forward
+    ],
+)
+def test_fixture_times_keep_exact_ages_across_a_dst_change(now: datetime) -> None:
+    # Wall-clock subtraction would make these gaps an hour off on such a day.
+    dashboard, feeds = _audit_scenario(now)
+    entry = feeds.feeds[4410001].entries[-1]  # newest first: the requester's reply
+    assert entry.created is not None
+    assert now.astimezone(UTC) - entry.created.astimezone(UTC) == timedelta(hours=73.5)
+    assert now.astimezone(UTC) - hours_before(now, 9).astimezone(UTC) == timedelta(hours=9)
+
+    rows = [row for widget in dashboard.widgets.values() for row in widget.rows]
+    result = evaluate(rows, feeds.feeds, now, RuleSettings(), TZ)
+    (waiting,) = [f for f in result.findings if f.ticket_id == 4410001]
+    assert (waiting.kind, waiting.reason, waiting.age_hours) == (
+        "client_waiting",
+        "requestor_last",
+        73,
+    )
+
+
 def test_tdx_audit_show_ids_adds_ids_and_codes_only(
     rows_env: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -1417,13 +1452,13 @@ def _memory_run(rows_env: pytest.MonkeyPatch, run: int) -> None:
     )
     if run == 1:
         entries = (
-            FeedEntry("Samplehelper, Quinn", now - timedelta(hours=70), "private"),
-            FeedEntry("Alex Example", now - timedelta(hours=90), "reply"),
+            FeedEntry("Samplehelper, Quinn", hours_before(now, 70), "private"),
+            FeedEntry("Alex Example", hours_before(now, 90), "reply"),
         )
     else:
         entries = (
-            FeedEntry(ASSISTANT, now - timedelta(hours=3), "reply"),
-            FeedEntry("Alex Example", now - timedelta(hours=90), "reply"),
+            FeedEntry(ASSISTANT, hours_before(now, 3), "reply"),
+            FeedEntry("Alex Example", hours_before(now, 90), "reply"),
         )
     feeds = FeedRead(
         feeds={ticket_id: TicketFeed(ticket_id, entries)},
@@ -3018,7 +3053,7 @@ def test_tdx_login_that_does_not_finish_records_nothing(
 def test_an_expired_session_in_rows_or_audit_closes_the_session(
     command: str, tmp_path: Path, rows_env: pytest.MonkeyPatch
 ) -> None:
-    signed_in_at = datetime.now(TZ) - timedelta(hours=9)
+    signed_in_at = hours_before(datetime.now(TZ), 9)
     path = _write_sessions(tmp_path, (signed_in_at, None))
     rows_env.setattr(cli, "TdxBrowser", FakeTdxBrowser([]))
     rows_env.setattr(cli, "read_dashboard", FakeRead(NotSignedInError()))

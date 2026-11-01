@@ -1356,7 +1356,7 @@ def test_ready_to_close_alerts_only_when_switched_on(
 
     if alert:
         assert outcome.status == "sent" and len(poster.cards) == 1
-        assert "Ready to close (1)" in json.dumps(poster.cards[0])
+        assert "Check if resolved (1)" in json.dumps(poster.cards[0])
         assert AlertState(state_path).keys() == [(101, "ready_to_close")]
     else:
         assert outcome.status == "nothing_new" and poster.cards == []
@@ -1386,7 +1386,7 @@ def test_the_summary_lists_ready_to_close_without_recording_or_marking_it(
     assert outcome.status == "sent" and outcome.open == 2 and outcome.new == 1
     lines = [block["text"] for block in poster.cards[0]["body"]]
     assert lines[0] == "TDX queue at 7:30 AM: 2 tickets for the help desk (1 added)"
-    assert lines[-3] == "Ready to close (1)"
+    assert lines[-3] == "Check if resolved (1)"
     # The tip under the heading names the configured hold.
     assert lines[-2].endswith("it stays off this list for 10 days.")
     assert "(added)" not in lines[-1] and "The help desk replied 4 days ago" in lines[-1]
@@ -1614,7 +1614,7 @@ def test_a_day_is_one_full_summary_then_deltas_skipped_when_nothing_changed(
     full_lines = lines_of(full)
     assert full_lines[0] == "TDX queue at 7:30 AM: 3 tickets for the help desk (2 added)"
     assert full_lines[2] == "Events this week (1)"
-    assert "Ready to close (1)" in full_lines
+    assert "Check if resolved (1)" in full_lines
     assert full["msteams"]["entities"]  # the mention, on the full post only
     noon_lines = lines_of(noon)
     assert noon_lines[0] == "Since 7:30 AM: 1 more ticket for the help desk"

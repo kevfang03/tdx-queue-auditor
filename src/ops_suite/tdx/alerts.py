@@ -9,9 +9,9 @@ successful post.
 
 The shift summary (``build_summary_card``) lists **all** open findings at a configured time,
 marks the ones added since the last post "(added)", and may mention people. It shows the
-"Events this week" section first, "(possible duplicate of #<id>)" on rows, and "Ready to
-close" last. "Ready to close" findings
-stay out of the alert cards and the alert state unless ``alert_ready_to_close``
+"Events this week" section first, "(possible duplicate of #<id>)" on rows, and the
+ready-to-close findings last, under "Check if resolved". Ready-to-close findings stay out of
+the alert cards and the alert state unless ``alert_ready_to_close``
 (``alertable``). The day's first summary posted is that full card; later slots post a delta
 (``fit_delta_card``: added findings and due reminders as rows, cleared ones as a count), and
 only when it has a row: in a shared chat, an update with nothing to act on is noise.
@@ -76,7 +76,7 @@ SECTION_LABELS: dict[str, str] = {
     "event_details_pending": "Event: follow up with the requester",
     "location_tbd_soon": "Event soon: no room yet",
     "event_over": "Event over: resolve",
-    "ready_to_close": "Ready to close",
+    "ready_to_close": "Check if resolved",
 }
 EVENTS_SECTION_LABEL = "Events this week"
 EVENT_SOON_MARK = "(event soon)"
@@ -151,11 +151,10 @@ WORDING: dict[tuple[str, str | None], str] = {
         "{Team} replied {age} ago and added a note {note_age} ago, no reply since: follow up or "
         "close"
     ),
-    # The tool sees only who spoke last, not whether the issue is fixed, so the row asks for
-    # that check before closing.
-    ("ready_to_close", None): (
-        "{Team} replied {age} ago, no reply since: check it's resolved, then close"
-    ),
+    # The tool sees only who spoke last, not whether the issue is fixed. The section heading
+    # ("Check if resolved") carries that check, because people skim the headings; the row
+    # states only the fact.
+    ("ready_to_close", None): "{Team} replied {age} ago, no reply since",
 }
 # One small tip under a section heading, so readers learn the private-note habit from the
 # card itself: a desk private note after the last reply holds a ready-to-close ticket for

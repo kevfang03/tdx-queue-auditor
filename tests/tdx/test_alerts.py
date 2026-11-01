@@ -1235,10 +1235,9 @@ def extras_summary(
 
 
 def test_ready_to_close_wording() -> None:
-    # The tool sees only that the desk spoke last, so the row never implies the issue is fixed.
-    assert finding_wording(ready(101)) == (
-        "The help desk replied 4 days ago, no reply since: check it's resolved, then close"
-    )
+    # The tool sees only that the desk spoke last, so the row states only that fact: the
+    # section heading ("Check if resolved") carries the check.
+    assert finding_wording(ready(101)) == "The help desk replied 4 days ago, no reply since"
 
 
 # --- section tips ---------------------------------------------------------------------------
@@ -1282,7 +1281,7 @@ def test_the_ready_to_close_tip_sits_once_under_its_heading_with_the_hold() -> N
     _, card = summary([waiting(101), ready(102), ready(103)], close_hold_days=10)
 
     lines = texts(card)
-    heading = lines.index("Ready to close (2)")
+    heading = lines.index("Check if resolved (2)")
     assert lines[heading + 1] == READY_TIP.replace("7 days", "10 days")
     assert len(tips(lines)) == 1
     assert card["body"][heading + 1] == {
@@ -1318,7 +1317,7 @@ def test_every_card_with_a_section_shows_its_tip_under_the_heading(tmp_path: Pat
     ]
     for card in cards:
         lines = texts(card)
-        assert lines[lines.index("Ready to close (1)") + 1] == READY_TIP
+        assert lines[lines.index("Check if resolved (1)") + 1] == READY_TIP
         assert lines[lines.index("Event: follow up with the requester (1)") + 1] == ROOM_SET_TIP
         assert len(tips(lines)) == 2
 
@@ -1332,11 +1331,11 @@ def test_a_tip_never_uses_the_row_budget() -> None:
     shown, card = summary(findings, max_rows=3)
     lines = texts(card)
     assert len(shown) == 3
-    assert lines[2:4] == ["Ready to close (5)", READY_TIP]
+    assert lines[2:4] == ["Check if resolved (5)", READY_TIP]
     assert len(lines[4:-1]) == 3 and lines[-1] == "+2 more"
 
     shown, card = summary(findings, max_rows=0)
-    assert shown == () and texts(card)[2:] == ["Ready to close (5)", READY_TIP, "+5 more"]
+    assert shown == () and texts(card)[2:] == ["Check if resolved (5)", READY_TIP, "+5 more"]
 
 
 def test_a_full_summary_with_both_tips_stays_under_the_size_limit() -> None:
@@ -1403,7 +1402,7 @@ def test_the_summary_sections_are_in_the_check_in_order() -> None:
         "Event: follow up with the requester (1)",
         "Event soon: no room yet (1)",
         "Event over: resolve (1)",
-        "Ready to close (1)",
+        "Check if resolved (1)",
     ]
 
 
@@ -1900,9 +1899,7 @@ def test_urgent_card_wording(reader: Reader, ask: str, preview: str) -> None:
     ],
 )
 def test_row_wording_names_the_team_as_the_reader_does(reader: Reader, replied: str) -> None:
-    assert finding_wording(ready(101), reader) == (
-        f"{replied}, no reply since: check it's resolved, then close"
-    )
+    assert finding_wording(ready(101), reader) == f"{replied}, no reply since"
     # Wording without a team is the same for every reader: the requester went quiet, so
     # the details row names them, not the team.
     assert finding_wording(waiting(101), reader) == finding_wording(waiting(101))

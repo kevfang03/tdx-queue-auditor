@@ -444,7 +444,7 @@ def test_demo_summary_shows_events_duplicates_and_ready_to_close(
         "Event: follow up with the requester (1)",
         "Event soon: no room yet (2)",
         "Event over: resolve (1)",
-        "Ready to close (1)",
+        "Check if resolved (1)",
     ]
     week = lines[lines.index("Events this week (8)") + 1 : lines.index("Requester waiting (6)")]
     assert [line.split("]")[0] for line in week] == [
@@ -509,7 +509,8 @@ def test_demo_summary_kind_delta_shows_new_cleared_and_open(
     )
     assert lines[2].endswith((" AM.", " PM."))
     assert lines[3] == "Requester waiting (2)"
-    assert "Events this week" not in json.dumps(card) and "Ready to close" not in json.dumps(card)
+    dumped = json.dumps(card)
+    assert "Events this week" not in dumped and "Check if resolved" not in dumped
     assert all("(added)" in line for line in lines[4:] if line.startswith("[#"))
     for path, content in real_files.items():
         assert path.read_bytes() == content
