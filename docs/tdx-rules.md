@@ -342,7 +342,7 @@ Personal cards say "you" where desk cards name `{team}`.
 | `ready_to_close` / `desk_note_last` | {Team} replied {age} ago and added a note {note_age} ago, no reply since: follow up or close (`{note_age}`: the time since the desk note that held the ticket) |
 | unknown kind or reason, or age `None` | the kind label, and the age if known |
 
-**Section tips.** Two sections carry one small, subtle line right under their heading, so anyone reading the card learns the [desk private note](#a-desk-private-note-means-in-hand) habit from the card itself. A tip is not a row: it never counts against `max_rows_per_card` or the `+N more` line. It appears on every card that shows its section (alert card, full summary, update, Event soon card); no other section has one.
+**Section tips.** Two sections carry one line right under their heading, at normal size and starting with a bold **Tip:**, so it is read as an instruction rather than fine print and anyone reading the card learns the [desk private note](#a-desk-private-note-means-in-hand) habit from the card itself. A tip is not a row: it never counts against `max_rows_per_card` or the `+N more` line. It appears on every card that shows its section (alert card, full summary, update, Event soon card); no other section has one. Only the word "Tip:" is bold, so the line does not look like a second heading. The table gives each tip's text; the card shows it after **Tip:**.
 
 | section | tip |
 |---|---|

@@ -553,11 +553,15 @@ def _section_heading(
     kind: str, rows: Sequence[Finding], close_hold_days: int
 ) -> list[dict[str, object]]:
     """A section's heading with its count, then its tip when it has one. The tip is not a
-    row: it never counts against the row budget."""
+    row: it never counts against the row budget.
+
+    The tip is drawn at normal size and brightness so readers notice it, with only "Tip:"
+    bold: a fully bold line would look like a second heading under the bold one above it.
+    """
     blocks = [_text(f"{section_label(kind)} ({len(rows)})", weight="Bolder", spacing="Medium")]
     hint = section_hint(kind, rows, close_hold_days)
     if hint is not None:
-        blocks.append(_text(hint, isSubtle=True, size="Small", spacing="None"))
+        blocks.append(_text(f"**Tip:** {hint}", spacing="None"))
     return blocks
 
 

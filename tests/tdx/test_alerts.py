@@ -1252,6 +1252,7 @@ ROOM_SET_TIP = (
     "Zoom link already on the spreadsheet? Add a private note to the ticket and the event "
     "shows as confirmed."
 )
+TIP = "**Tip:** "
 
 
 def tips(lines: list[str]) -> list[str]:
@@ -1282,16 +1283,18 @@ def test_the_ready_to_close_tip_sits_once_under_its_heading_with_the_hold() -> N
 
     lines = texts(card)
     heading = lines.index("Check if resolved (2)")
-    assert lines[heading + 1] == READY_TIP.replace("7 days", "10 days")
+    assert lines[heading + 1] == TIP + READY_TIP.replace("7 days", "10 days")
     assert len(tips(lines)) == 1
-    assert card["body"][heading + 1] == {
+    tip_block = card["body"][heading + 1]
+    assert tip_block == {
         "type": "TextBlock",
         "text": lines[heading + 1],
         "wrap": True,
-        "isSubtle": True,
-        "size": "Small",
         "spacing": "None",
     }
+    # Drawn at normal size and brightness, not bold as a whole, so it is read and not
+    # mistaken for fine print or a second heading.
+    assert not {"isSubtle", "size", "weight", "color"} & tip_block.keys()
     # The other section has no tip: its first row follows the heading.
     assert lines[lines.index("Requester waiting (1)") + 1].startswith("[#101](")
 
@@ -1303,8 +1306,14 @@ def test_the_room_set_tip_needs_a_room_set_row_in_its_section() -> None:
     _, card = summary([STILL_PENDING, ROOM_SET])
     lines = texts(card)
     heading = lines.index("Event: follow up with the requester (2)")
-    assert lines[heading + 1] == ROOM_SET_TIP
-    assert tips(lines) == [ROOM_SET_TIP]
+    assert lines[heading + 1] == TIP + ROOM_SET_TIP
+    assert tips(lines) == [TIP + ROOM_SET_TIP]
+    assert card["body"][heading + 1] == {
+        "type": "TextBlock",
+        "text": TIP + ROOM_SET_TIP,
+        "wrap": True,
+        "spacing": "None",
+    }
 
 
 def test_every_card_with_a_section_shows_its_tip_under_the_heading(tmp_path: Path) -> None:
@@ -1317,12 +1326,14 @@ def test_every_card_with_a_section_shows_its_tip_under_the_heading(tmp_path: Pat
     ]
     for card in cards:
         lines = texts(card)
-        assert lines[lines.index("Check if resolved (1)") + 1] == READY_TIP
-        assert lines[lines.index("Event: follow up with the requester (1)") + 1] == ROOM_SET_TIP
+        assert lines[lines.index("Check if resolved (1)") + 1] == TIP + READY_TIP
+        assert lines[lines.index("Event: follow up with the requester (1)") + 1] == (
+            TIP + ROOM_SET_TIP
+        )
         assert len(tips(lines)) == 2
 
     lines = texts(urgent_card(DESK, [ROOM_SET]))
-    assert lines[lines.index("Event: follow up with the requester (1)") + 1] == ROOM_SET_TIP
+    assert lines[lines.index("Event: follow up with the requester (1)") + 1] == (TIP + ROOM_SET_TIP)
 
 
 def test_a_tip_never_uses_the_row_budget() -> None:
@@ -1331,11 +1342,11 @@ def test_a_tip_never_uses_the_row_budget() -> None:
     shown, card = summary(findings, max_rows=3)
     lines = texts(card)
     assert len(shown) == 3
-    assert lines[2:4] == ["Check if resolved (5)", READY_TIP]
+    assert lines[2:4] == ["Check if resolved (5)", TIP + READY_TIP]
     assert len(lines[4:-1]) == 3 and lines[-1] == "+2 more"
 
     shown, card = summary(findings, max_rows=0)
-    assert shown == () and texts(card)[2:] == ["Check if resolved (5)", READY_TIP, "+5 more"]
+    assert shown == () and texts(card)[2:] == ["Check if resolved (5)", TIP + READY_TIP, "+5 more"]
 
 
 def test_a_full_summary_with_both_tips_stays_under_the_size_limit() -> None:
@@ -1351,7 +1362,7 @@ def test_a_full_summary_with_both_tips_stays_under_the_size_limit() -> None:
 
     assert card_size(card) < CARD_MAX_BYTES
     assert 0 < len(shown) < 120  # trimmed to fit, and the tips survive the trim
-    assert sorted(tips(texts(card))) == sorted([READY_TIP, ROOM_SET_TIP])
+    assert sorted(tips(texts(card))) == sorted([TIP + READY_TIP, TIP + ROOM_SET_TIP])
 
 
 def test_ready_to_close_after_a_desk_note_names_the_note() -> None:

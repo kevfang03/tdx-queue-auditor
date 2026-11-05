@@ -231,11 +231,10 @@ def test_desk_hours_come_from_the_environment(monkeypatch: pytest.MonkeyPatch) -
 
 
 def summary_slots(**summary: object) -> SummarySlots:
+    """Call this inside a test, never at module level: Settings() reads the environment and
+    .env, and only the autouse fixture keeps a test away from the real ones."""
     settings = Settings(tdx={"summary": {"enabled": True, **summary}})
     return SummarySlots.from_settings(settings.tdx.summary, settings.schedule)
-
-
-SLOTS = summary_slots()
 
 
 @pytest.mark.parametrize(
@@ -253,7 +252,7 @@ SLOTS = summary_slots()
 def test_next_summary_slot_across_a_weekday_saturday_and_sunday(
     now: datetime, expected: datetime
 ) -> None:
-    assert SLOTS.next_after(now) == expected
+    assert summary_slots().next_after(now) == expected
 
 
 @pytest.mark.parametrize(
@@ -267,7 +266,7 @@ def test_next_summary_slot_across_a_weekday_saturday_and_sunday(
     ],
 )
 def test_latest_summary_slot(now: datetime, expected: datetime) -> None:
-    assert SLOTS.latest_at_or_before(now) == expected
+    assert summary_slots().latest_at_or_before(now) == expected
 
 
 def test_a_day_without_times_has_no_slots() -> None:
