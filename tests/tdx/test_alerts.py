@@ -368,9 +368,10 @@ def test_card_heading_sections_and_counts(state: AlertState) -> None:
         "Event over: resolve (1)",
     ]
     link = "https://tdx.example.edu/TDNext/Apps/43/Tickets/TicketDet?TicketID=103"
-    assert lines[3] == f"[#103]({link}) Printer jam in the library basement"
-    assert lines[4] == "The requester wrote last, 3 days ago: reply or check in · reminder"
-    assert lines[6] == "The requester wrote last, 3 days ago: reply or check in"
+    assert lines[3].startswith("**Tip:** Nothing to reply yet?")
+    assert lines[4] == f"[#103]({link}) Printer jam in the library basement"
+    assert lines[5] == "The requester wrote last, 3 days ago: reply or check in · reminder"
+    assert lines[7] == "The requester wrote last, 3 days ago: reply or check in"
     assert lines[-1] == "Event ended 2 days ago: ready to resolve?"
 
 
@@ -386,6 +387,7 @@ def test_without_titles_a_row_is_one_linked_line_of_id_and_finding(state: AlertS
     link = "https://tdx.example.edu/TDNext/Apps/43/Tickets/TicketDet?TicketID={}"
     assert texts(card)[2:] == [
         "Requester waiting (2)",
+        TIP + WAITING_TIP,
         f"[#103]({link.format(103)}) · The requester wrote last, 3 days ago: reply or check in"
         " · reminder",
         f"[#101]({link.format(101)}) · The requester wrote last, 3 days ago: reply or check in",
@@ -645,8 +647,8 @@ def test_card_renders_hostile_titles_literally(state: AlertState) -> None:
         plan(state, [waiting(101), event_over(102)]), rows, {}, NOW, TZ, SUMMARY, title_chars=40
     )
     lines = texts(card)
-    assert r"#101 \[x\]\(http://evil\) \*bold\* " in lines[3]
-    assert lines[3].endswith("…")
+    assert r"#101 \[x\]\(http://evil\) \*bold\* " in lines[4]
+    assert lines[4].endswith("…")
     assert "](http://evil)" not in json.dumps(card)
     assert r"#102 EVENT \[10/20 3pm Room 101\] Club" in lines
 
@@ -798,9 +800,10 @@ def test_the_summary_lists_every_open_finding_by_kind_with_new_ones_marked() -> 
     assert lines[0] == "TDX queue at 7:30 AM: 3 tickets for you (1 added)"
     assert lines[1] == "Tickets that need your attention. Checked 26 unclaimed tickets at 7:31 AM."
     assert lines[2] == "Requester waiting (2)"
-    assert lines[3].startswith("[#102](https://tdx.example.edu/") and "(added)" not in lines[3]
-    assert "#101](" in lines[4] and ") (added) · The requester wrote last, 3 days ago" in lines[4]
-    assert lines[5] == "Event over: resolve (1)"
+    assert lines[3].startswith("**Tip:** Nothing to reply yet?")
+    assert lines[4].startswith("[#102](https://tdx.example.edu/") and "(added)" not in lines[4]
+    assert "#101](" in lines[5] and ") (added) · The requester wrote last, 3 days ago" in lines[5]
+    assert lines[6] == "Event over: resolve (1)"
     assert [(f.ticket_id, f.kind) for f in shown] == [
         (102, "client_waiting"),
         (101, "client_waiting"),
@@ -982,7 +985,7 @@ def test_build_summary_card_returns_the_card_alone() -> None:
         title_chars=80, show_titles=False, max_rows=25,
     )  # fmt: skip
     # No link (the address is not on the TDX host): the id stays plain text.
-    assert texts(card)[3] == "#101 · The requester wrote last, 3 days ago: reply or check in"
+    assert texts(card)[4] == "#101 · The requester wrote last, 3 days ago: reply or check in"
 
 
 def test_a_huge_summary_is_trimmed_under_the_size_limit() -> None:
@@ -1252,6 +1255,9 @@ ROOM_SET_TIP = (
     "Zoom link already on the spreadsheet? Add a private note to the ticket and the event "
     "shows as confirmed."
 )
+WAITING_TIP = (
+    "Nothing to reply yet? Add a private note to the ticket and it stays off this list for 3 days."
+)
 TIP = "**Tip:** "
 
 
@@ -1279,7 +1285,8 @@ def test_section_hint_covers_ready_to_close_and_room_set_events_only() -> None:
 
 
 def test_the_ready_to_close_tip_sits_once_under_its_heading_with_the_hold() -> None:
-    _, card = summary([waiting(101), ready(102), ready(103)], close_hold_days=10)
+    no_reply = waiting(101, reason="no_reply_yet")  # a section a note does nothing for
+    _, card = summary([no_reply, ready(102), ready(103)], close_hold_days=10)
 
     lines = texts(card)
     heading = lines.index("Check if resolved (2)")
@@ -1300,7 +1307,7 @@ def test_the_ready_to_close_tip_sits_once_under_its_heading_with_the_hold() -> N
 
 
 def test_the_room_set_tip_needs_a_room_set_row_in_its_section() -> None:
-    _, without = summary([STILL_PENDING, waiting(101)])
+    _, without = summary([STILL_PENDING, waiting(101, reason="no_reply_yet")])
     assert tips(texts(without)) == []
 
     _, card = summary([STILL_PENDING, ROOM_SET])
@@ -1330,7 +1337,8 @@ def test_every_card_with_a_section_shows_its_tip_under_the_heading(tmp_path: Pat
         assert lines[lines.index("Event: follow up with the requester (1)") + 1] == (
             TIP + ROOM_SET_TIP
         )
-        assert len(tips(lines)) == 2
+        assert lines[lines.index("Requester waiting (1)") + 1] == TIP + WAITING_TIP
+        assert len(tips(lines)) == 3
 
     lines = texts(urgent_card(DESK, [ROOM_SET]))
     assert lines[lines.index("Event: follow up with the requester (1)") + 1] == (TIP + ROOM_SET_TIP)
@@ -1376,6 +1384,46 @@ def test_ready_to_close_after_a_desk_note_names_the_note() -> None:
         "The Commons replied 10 days ago and added a note 8 days ago, no reply since: "
         "follow up or close"
     )
+
+
+def test_requester_waiting_after_a_desk_note_names_the_note() -> None:
+    held = Finding(101, "client_waiting", "high", "requestor_last_noted", 100, note_hours=96)
+
+    assert finding_wording(held) == (
+        "The requester wrote 4 days ago and the help desk added a note 4 days ago, no reply "
+        "since: reply or check in"
+    )
+    assert finding_wording(held, COMMONS) == (
+        "The requester wrote 4 days ago and the Commons added a note 4 days ago, no reply "
+        "since: reply or check in"
+    )
+
+
+def test_the_requester_waiting_tip_needs_a_row_a_note_can_hold() -> None:
+    noted = Finding(102, "client_waiting", "high", "requestor_last_noted", 100, note_hours=96)
+    for rows in ([waiting(101)], [noted], [waiting(103, reason="no_reply_yet"), noted]):
+        assert section_hint("client_waiting", rows, 7) == WAITING_TIP
+    assert section_hint("client_waiting", [noted], 7, 1) == WAITING_TIP.replace("3 days", "1 day")
+    others = [
+        waiting(101, reason="no_reply_yet"),
+        waiting(102, reason="expects_reply"),
+        Finding(103, "client_waiting", "high", "event_requester_replied", 30, 24),
+    ]
+    assert section_hint("client_waiting", others, 7) is None
+
+
+def test_the_requester_waiting_tip_sits_once_under_its_heading() -> None:
+    noted = Finding(102, "client_waiting", "high", "requestor_last_noted", 100, note_hours=96)
+    _, card = summary([waiting(101), noted, ready(103)], waiting_hold_days=1)
+
+    lines = texts(card)
+    heading = lines.index("Requester waiting (2)")
+    assert lines[heading + 1] == TIP + WAITING_TIP.replace("3 days", "1 day")
+    assert tips(lines) == [TIP + WAITING_TIP.replace("3 days", "1 day"), TIP + READY_TIP]
+    assert any("added a note 4 days ago" in line for line in lines)
+
+    _, only_new = summary([waiting(101, reason="no_reply_yet")])
+    assert tips(texts(only_new)) == []
 
 
 def test_a_details_confirmed_event_is_listed_without_a_time() -> None:
@@ -1591,10 +1639,11 @@ def test_a_delta_lists_new_findings_and_reminders_and_counts_cleared_ones() -> N
         "2 no longer need attention. Checked at 12:01 PM."
     )
     assert lines[2] == "Requester waiting (1)"
-    assert lines[3].startswith("[#101](") and ") (added) · The requester wrote last," in lines[3]
-    assert lines[4] == "Event over: resolve (1)"
-    assert "(added)" not in lines[5] and lines[5].endswith("· reminder")
-    assert len(lines) == 6  # no row for the cleared findings, no events section
+    assert lines[3] == TIP + WAITING_TIP
+    assert lines[4].startswith("[#101](") and ") (added) · The requester wrote last," in lines[4]
+    assert lines[5] == "Event over: resolve (1)"
+    assert "(added)" not in lines[6] and lines[6].endswith("· reminder")
+    assert len(lines) == 7  # no row for the cleared findings, no events section
     assert "Events this week" not in json.dumps(card)
     assert "entities" not in json.dumps(card)  # no mention on a delta
     assert card["fallbackText"] == "6 tickets need attention"

@@ -99,6 +99,8 @@ close_after_days = 3
 # on purpose (a laptop waiting for pickup, say): "ready to close" waits this many days from the
 # note (1-30), then comes back as "follow up or close".
 close_hold_days = 7
+# A private note after the requester's last reply holds "requester waiting" this many days (1-14).
+waiting_hold_days = 3
 # Shift summaries mark "(possible duplicate of #id)" when the requester is the same and the
 # titles' words overlap this much (0-1, Jaccard) or one title contains the other.
 duplicate_title_similarity = 0.6

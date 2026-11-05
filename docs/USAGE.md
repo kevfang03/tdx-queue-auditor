@@ -264,7 +264,7 @@ Other options: `--no-llm` skips the LLM step for one run (also on `tdx watch`), 
 Settings (in [config.example.toml](../config.example.toml)):
 
 - `[tdx]`: `feed_delay_seconds` (pause between tickets), `max_feeds_per_run`, and `ticket_url_template`. The template is optional and normally empty: a ticket address on the same host with `{id}` for the ticket id, tried when the dashboard's ticket link does not lead to a feed.
-- `[tdx.rules]`: `stale_hours`, `event_over_hours`, `event_tbd_days`, `close_after_days` ("ready to close", 3 days), `close_hold_days` (how long a desk private note holds it back, 7 days), `duplicate_title_similarity`, `desk_signatures` and `extra_staff_names`.
+- `[tdx.rules]`: `stale_hours`, `event_over_hours`, `event_tbd_days`, `close_after_days` ("ready to close", 3 days), `close_hold_days` (how long a desk private note holds it back, 7 days), `waiting_hold_days` (how long a desk private note after the requester's last reply holds "requester waiting" back, 3 days), `duplicate_title_similarity`, `desk_signatures` and `extra_staff_names`.
   - `desk_signatures` (default "SCIS Commons Support" and "CCI Commons Support"): a visible reply whose own text, quoted mail cut first, contains one of these phrases marks its author as desk staff and is remembered like the other strong signals. Matched ignoring case and extra spaces. The requester never becomes desk this way, and no reply text is kept.
   - `extra_staff_names` is an optional override, normally empty. Normally not needed: desk members are learned from Prim Resp, private notes, merge notices and the desk signature in their replies. If you do use it, these are real people's names: keep them only in your own config file, never in the repository.
 - `[tdx.events]`: the event request forms. `form_titles` (the titles that mark an unhandled request, default "CCI Event Request Form" and "SCIS Event Request Form"); `outreach_days` (14: also how far ahead a renamed `EVENT [...]` ticket gets its form and feed read), `details_pending_days` (7), `urgent_days` (3, when "event outreach due" turns high) and `near_event_days` (2, 0 to 30: within this many days, "waiting on the requester" and "requester replied" are raised at once, at high priority); and the option prefixes, matched ignoring case at the start of an answer: `marketing_only_prefixes`, `av_service_prefixes`, `room_space_prefixes` and `known_option_prefixes` (the form's other options, so they are not counted as unknown; both "CCI Operational Assistance" and "SCIS Operational Assistance"). If the desk also reaches out for lobby bookings, add `"Lobby Area"` to `room_space_prefixes`. `alt_host_mailbox` (default empty) is the mailbox requesters add as a Zoom alternative host; event outreach rows name it so the sender can copy it, and say "our shared mailbox" while it is empty. It must be one email address (such as `events@example.edu`, at most 254 characters); anything else stops the config from loading, with a message that does not repeat the value. Set it in your own `.env` (`OPS_SUITE_TDX__EVENTS__ALT_HOST_MAILBOX=...`) or config file.
@@ -712,6 +712,7 @@ urgent_events_to_desk = false
 [tdx.rules]
 close_after_days = 3
 close_hold_days = 7
+waiting_hold_days = 3
 duplicate_title_similarity = 0.6
 
 [tdx.alerts]

@@ -1623,8 +1623,9 @@ def test_a_day_is_one_full_summary_then_deltas_skipped_when_nothing_changed(
         "1 no longer needs attention. Checked at 12:00 PM."
     )
     assert noon_lines[2] == "Requester waiting (1)"
-    assert noon_lines[3].startswith("[#103](") and "(added)" in noon_lines[3]
-    assert len(noon_lines) == 4  # no events, no ready to close, no row for the cleared one
+    assert noon_lines[3].startswith("**Tip:** Nothing to reply yet?")
+    assert noon_lines[4].startswith("[#103](") and "(added)" in noon_lines[4]
+    assert len(noon_lines) == 5  # no events, no ready to close, no row for the cleared one
     assert "entities" not in noon["msteams"]
     assert TITLE not in json.dumps(desk_cards(poster)) and EVENT_TITLE not in json.dumps(full)
     # The per-cycle alert cards went to the personal chat: 08:00 (101, 102), 10:00 (103).
@@ -1678,7 +1679,8 @@ def test_an_update_with_only_cleared_findings_posts_nothing_and_forgets_them(
         "2 tickets need attention in total: the one below, plus 1 posted earlier today. "
         "Checked at 5:00 PM.",
     ]
-    assert lines[3].startswith("[#103](") and "(added)" in lines[3]
+    assert lines[3].startswith("**Tip:** Nothing to reply yet?")
+    assert lines[4].startswith("[#103](") and "(added)" in lines[4]
     assert "#102" not in json.dumps(update) and "no longer" not in json.dumps(update)
 
 

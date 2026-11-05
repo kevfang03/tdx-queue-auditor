@@ -77,6 +77,7 @@ COUNT_KEYS: tuple[str, ...] = (
     "client_recent",
     "desk_replied_last",
     "desk_note_hold",
+    "requester_note_hold",
     "internal_requestor",
     "other_recent",
     "event_tickets",
@@ -119,6 +120,9 @@ class RuleSettings:
     # A desk private note after that reply holds "ready to close" back this many days from
     # the note (``in_hand_note``).
     close_hold_days: int = 7
+    # A desk private note after the requester's last reply holds "requester waiting" back
+    # this many days from the note (``in_hand_note`` with no gap).
+    waiting_hold_days: int = 3
 
     def __repr__(self) -> str:
         return (
@@ -133,7 +137,8 @@ class RuleSettings:
             f"urgent_days={self.urgent_days}, "
             f"near_event_days={self.near_event_days}, "
             f"close_after_days={self.close_after_days}, "
-            f"close_hold_days={self.close_hold_days})"
+            f"close_hold_days={self.close_hold_days}, "
+            f"waiting_hold_days={self.waiting_hold_days})"
         )
 
 
@@ -153,7 +158,8 @@ class Finding:
     # the title) or "missing" (a date and time but no location). The row then asks for the
     # room too, so one ticket is one row. Not part of the shadow compare's key.
     no_room: NoRoom | None = None
-    # Ready to close after a desk note's hold: whole hours since that note (``in_hand_note``).
+    # Ready to close or requester waiting after a desk note's hold: whole hours since that
+    # note (``in_hand_note``).
     note_hours: int | None = None
 
 
@@ -389,15 +395,23 @@ def _desk_acted_after(feed: TicketFeed, requestor: str, is_desk: Callable[[str],
 NOTE_AFTER = timedelta(hours=1)
 
 
-def in_hand_note(feed: TicketFeed) -> FeedEntry | None:
+def in_hand_note(feed: TicketFeed, min_gap: timedelta = NOTE_AFTER) -> FeedEntry | None:
     """The newest private note that comes after the newest visible reply in the feed's order
-    and is dated at least ``NOTE_AFTER`` after it; None when there is none, when the feed has
-    no visible reply, or when either entry is undated. The callers use it only where that
-    reply is the desk's: the desk's one habit for "we have this in hand" (docs/tdx-rules.md,
-    "A desk private note means in hand"). Only staff can write private notes.
+    and is dated at least ``min_gap`` after it; None when there is none, when the feed has
+    no visible reply, or when either entry is undated. It is the desk's one habit for "we
+    have this in hand"; only staff can write private notes.
+
+    Two kinds of caller, with different gaps:
+
+    - Where the newest reply is the desk's, the default ``NOTE_AFTER`` skips the note a desk
+      member logs together with their own email, which says nothing about the answer.
+    - Where the newest reply is the requester's, the caller passes no gap: a desk note after
+      someone else's message is always a deliberate "we read it, we're on it", even minutes
+      later.
+
+    In both:
 
     - The feed's order decides "after", as in ``_desk_acted_after``.
-    - ``NOTE_AFTER`` skips the note logged together with the reply.
     - Undated entries never count: unsure means the reminder stays, because a missed
       follow-up costs more than an extra row.
     - A newer visible reply, from either side, undoes the note: the note no longer comes after
@@ -413,7 +427,7 @@ def in_hand_note(feed: TicketFeed) -> FeedEntry | None:
     for entry in feed.entries[:reply_at]:  # newest first
         if entry.kind != "private" or entry.created is None:
             continue
-        if _hours(reply, entry.created) >= NOTE_AFTER.total_seconds() / 3600:
+        if _hours(reply, entry.created) >= min_gap.total_seconds() / 3600:
             return entry
     return None
 
@@ -834,7 +848,19 @@ def evaluate(
             elif internal(row):
                 counts["internal_requestor"] += 1
             else:
-                add(row, "client_waiting", "high", "requestor_last", _hours(latest.created, now))
+                # The requester's last message is often a confirmation, and the desk's next
+                # step is the work, not a reply. A desk note after it, at any gap, holds the
+                # ticket waiting_hold_days from the note, then it comes back naming the note.
+                waited = _hours(latest.created, now)
+                note = in_hand_note(feed, min_gap=timedelta(0))
+                noted = note.created if note is not None else None  # always dated when found
+                held = _hours(noted, now) if noted is not None else None
+                if held is None:
+                    add(row, "client_waiting", "high", "requestor_last", waited)
+                elif held < rules.waiting_hold_days * 24:
+                    counts["requester_note_hold"] += 1
+                else:
+                    add(row, "client_waiting", "high", "requestor_last_noted", waited, note=held)
         elif any(same_person(latest.author, name) for name in staff) or (
             known_desk is not None and known_desk(latest.author)
         ):
@@ -941,6 +967,8 @@ def format_audit_summary(result: AuditResult, *, show_ids: bool) -> list[str]:
         if counts["desk_note_hold"]
         else ""
     )
+    if counts["requester_note_hold"]:
+        held += f"Requester waiting held by a desk note: {counts['requester_note_hold']}. "
     lines = [
         f"Findings: {findings}.",
         f"Checked: {counts['rows_unclaimed']} unclaimed ({counts['feeds_needed']} feeds needed, "

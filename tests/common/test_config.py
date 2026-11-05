@@ -196,6 +196,7 @@ def test_tdx_audit_settings_defaults_and_example() -> None:
         assert tdx.rules.extra_staff_names == []
         assert tdx.rules.desk_memory is True
         assert tdx.rules.desk_memory_forget_days == 180
+        assert (tdx.rules.close_hold_days, tdx.rules.waiting_hold_days) == (7, 3)
 
 
 def test_tdx_rules_from_the_environment_and_repr(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -212,6 +213,14 @@ def test_tdx_rules_from_the_environment_and_repr(monkeypatch: pytest.MonkeyPatch
     assert "extra_staff_names=1" in repr(tdx.rules)
 
 
+def test_the_requester_waiting_hold_comes_from_the_environment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("OPS_SUITE_TDX__RULES__WAITING_HOLD_DAYS", "1")
+
+    assert load_settings().tdx.rules.waiting_hold_days == 1
+
+
 @pytest.mark.parametrize(
     ("section", "key", "value"),
     [
@@ -226,6 +235,8 @@ def test_tdx_rules_from_the_environment_and_repr(monkeypatch: pytest.MonkeyPatch
         ("tdx.rules", "event_over_hours", "0"),
         ("tdx.rules", "event_tbd_days", "-1"),
         ("tdx.rules", "event_tbd_days", "61"),
+        ("tdx.rules", "waiting_hold_days", "0"),
+        ("tdx.rules", "waiting_hold_days", "15"),
     ],
 )
 def test_invalid_tdx_audit_settings_are_refused(

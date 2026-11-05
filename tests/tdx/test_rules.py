@@ -227,8 +227,9 @@ def test_requestor_matched_leniently() -> None:
     assert only(result).reason == "requestor_last"
 
 
-def test_private_note_after_the_client_does_not_count() -> None:
-    entries = (entry(DESK, 2, "private"), entry(DESK, 3, "system"), entry(REQUESTOR, 73))
+def test_a_status_change_after_the_client_does_not_count() -> None:
+    # A desk private note after the client's reply holds the ticket instead (below).
+    entries = (entry(DESK, 3, "system"), entry(REQUESTOR, 73), entry(DESK, 80, "private"))
     result = run([unclaimed(1, ago(120))], {1: feed(1, *entries)})
     assert only(result).reason == "requestor_last"
 
@@ -509,6 +510,7 @@ def test_every_count_key_is_present() -> None:
         "client_recent",
         "desk_replied_last",
         "desk_note_hold",
+        "requester_note_hold",
         "internal_requestor",
         "other_recent",
         "event_tickets",
@@ -1435,6 +1437,132 @@ def test_the_summary_shows_the_held_tickets_and_the_note_age() -> None:
     )
 
 
+# --- a desk note holds "requester waiting" ---------------------------------------------
+
+
+def _waiting_noted(
+    reply_hours: float | None,
+    note_hours: float | None,
+    *,
+    rules: RuleSettings = STAFF,
+    newer: float | None = None,
+) -> AuditResult:
+    """The requester wrote ``reply_hours`` ago and the desk added a private note
+    ``note_hours`` ago, after it in the feed's order; with ``newer``, the requester wrote
+    again that many hours ago, after the note."""
+    entries = (
+        *((entry(REQUESTOR, newer),) if newer is not None else ()),
+        entry(DESK, note_hours, "private"),
+        entry(REQUESTOR, reply_hours),
+        entry(DESK, 150),
+    )
+    return run([unclaimed(1, ago(200))], {1: feed(1, *entries)}, rules=rules)
+
+
+def test_a_desk_note_after_the_requester_holds_requester_waiting() -> None:
+    result = _waiting_noted(60, 50)
+
+    assert result.findings == ()
+    assert result.counts["requester_note_hold"] == 1
+    assert result.counts["client_waiting"] == 0 and result.counts["desk_note_hold"] == 0
+
+
+def test_a_note_minutes_after_the_requester_holds_too() -> None:
+    result = _waiting_noted(60, 60 - 20 / 60)  # 20 minutes later: no 1-hour gap here
+
+    assert result.findings == () and result.counts["requester_note_hold"] == 1
+
+
+def test_requester_waiting_comes_back_after_the_hold_naming_the_note() -> None:
+    result = _waiting_noted(100, 96)  # the note 4 days ago, the hold 3 days
+
+    assert only(result) == Finding(
+        1, "client_waiting", "high", "requestor_last_noted", 100, note_hours=96
+    )
+    assert result.counts["requester_note_hold"] == 0 and result.counts["client_waiting"] == 1
+    assert not is_follow_up_candidate(only(result))
+
+
+def test_the_requester_hold_ends_waiting_hold_days_after_the_note() -> None:
+    assert _waiting_noted(100, 71.9).findings == ()
+    assert only(_waiting_noted(100, 72)).reason == "requestor_last_noted"
+    one_day = RuleSettings(extra_staff_names=(DESK,), waiting_hold_days=1)
+    assert only(_waiting_noted(60, 30, rules=one_day)) == Finding(
+        1, "client_waiting", "high", "requestor_last_noted", 60, note_hours=30
+    )
+
+
+def test_a_desk_note_before_the_requester_reply_does_not_hold() -> None:
+    entries = (entry(REQUESTOR, 60), entry(DESK, 70, "private"), entry(DESK, 150))
+    result = run([unclaimed(1, ago(200))], {1: feed(1, *entries)}, rules=STAFF)
+
+    assert only(result) == Finding(1, "client_waiting", "high", "requestor_last", 60)
+    assert result.counts["requester_note_hold"] == 0
+
+
+def test_a_requester_reply_after_the_note_undoes_it() -> None:
+    stale = _waiting_noted(100, 90, newer=60)
+    assert only(stale) == Finding(1, "client_waiting", "high", "requestor_last", 60)
+
+    fresh = _waiting_noted(100, 90, newer=10)
+    assert fresh.findings == () and fresh.counts["client_recent"] == 1
+    assert fresh.counts["requester_note_hold"] == 0
+
+
+def test_an_undated_note_or_requester_reply_does_not_hold() -> None:
+    undated_note = _waiting_noted(60, None)
+    assert only(undated_note) == Finding(1, "client_waiting", "high", "requestor_last", 60)
+
+    undated_reply = _waiting_noted(None, 50)
+    assert only(undated_reply) == Finding(
+        1, "needs_review", "normal", "requestor_last_undated", None
+    )
+    for result in (undated_note, undated_reply):
+        assert result.counts["requester_note_hold"] == 0
+
+
+def test_the_newest_desk_note_restarts_the_requester_hold() -> None:
+    entries = (
+        entry(DESK, 10, "private"),
+        entry(DESK, 96, "private"),
+        entry(REQUESTOR, 100),
+        entry(DESK, 150),
+    )
+    result = run([unclaimed(1, ago(200))], {1: feed(1, *entries)}, rules=STAFF)
+
+    assert result.findings == () and result.counts["requester_note_hold"] == 1
+
+
+def test_a_note_twenty_minutes_after_the_desk_reply_still_does_not_hold_ready_to_close() -> None:
+    finding = only(_noted(90, 90 - 20 / 60))  # the 1-hour gap stays for the desk's reply
+
+    assert (finding.kind, finding.reason) == ("ready_to_close", "desk_replied_last")
+
+
+def test_an_internal_requester_with_a_desk_note_is_still_only_counted() -> None:
+    rows = [unclaimed(1, ago(200), requestor=MANAGER)]
+    entries = (entry(DESK, 50, "private"), entry(MANAGER, 60))
+    rules = RuleSettings(extra_staff_names=(DESK, MANAGER))
+
+    result = run(rows, {1: feed(1, *entries)}, rules=rules)
+
+    assert result.findings == () and result.counts["internal_requestor"] == 1
+    assert result.counts["requester_note_hold"] == 0
+
+
+def test_the_summary_shows_held_requester_tickets_and_the_note_age() -> None:
+    held, back = _waiting_noted(60, 50), _waiting_noted(100, 96)
+
+    assert (
+        "Requester waiting held by a desk note: 1. Desk members known"
+        in (format_audit_summary(held, show_ids=False)[1])
+    )
+    assert "held by a desk note" not in format_audit_summary(back, show_ids=False)[1]
+    assert "  client_waiting  1  requestor_last_noted  100h  note 96h" in (
+        format_audit_summary(back, show_ids=True)
+    )
+
+
 def test_ready_to_close_is_not_for_internal_claimed_event_or_form_tickets() -> None:
     internal = _desk_last(
         100, rules=RuleSettings(extra_staff_names=(DESK, MANAGER)), requestor=MANAGER
@@ -2132,6 +2260,20 @@ def test_the_newest_of_two_notes_is_in_hand() -> None:
 
 def test_a_feed_without_a_visible_reply_has_no_note_in_hand() -> None:
     assert in_hand_note(feed(1, entry(DESK, 8, "private"))) is None
+
+
+def test_with_no_gap_a_note_minutes_after_the_reply_is_in_hand() -> None:
+    note = entry(DESK, 9.9, "private")
+
+    assert in_hand_note(feed(1, note, entry(REQUESTOR, 10)), min_gap=timedelta(0)) == note
+    assert in_hand_note(feed(1, note, entry(REQUESTOR, 10))) is None  # the default gap
+
+
+def test_with_no_gap_a_note_dated_before_the_reply_is_not_in_hand() -> None:
+    # After the reply in the feed's order, yet dated before it: the dates disagree, so no.
+    entries = (entry(DESK, 10.5, "private"), entry(REQUESTOR, 10))
+
+    assert in_hand_note(feed(1, *entries), min_gap=timedelta(0)) is None
 
 
 ROOM_28_HOURS_OUT = "EVENT [10/9 4pm Room 101] Zoom recording"

@@ -1181,8 +1181,10 @@ def _audit_scenario(now: datetime) -> tuple[DashboardRead, FeedRead]:
             4410001: TicketFeed(
                 4410001,
                 (
-                    FeedEntry("Riley Testperson", at(70), "private"),
+                    # The note comes before the reply: a desk note after it would hold the
+                    # ticket off "requester waiting".
                     FeedEntry("Alex Example", at(73.5), "reply"),
+                    FeedEntry("Riley Testperson", at(76), "private"),
                 ),
                 latest_reply_text=AUDIT_REPLY,
             ),
@@ -1351,7 +1353,7 @@ def test_tdx_audit_prints_counts_only(
 def test_fixture_times_keep_exact_ages_across_a_dst_change(now: datetime) -> None:
     # Wall-clock subtraction would make these gaps an hour off on such a day.
     dashboard, feeds = _audit_scenario(now)
-    entry = feeds.feeds[4410001].entries[-1]  # newest first: the requester's reply
+    entry = feeds.feeds[4410001].entries[0]  # newest first: the requester's reply
     assert entry.created is not None
     assert now.astimezone(UTC) - entry.created.astimezone(UTC) == timedelta(hours=73.5)
     assert now.astimezone(UTC) - hours_before(now, 9).astimezone(UTC) == timedelta(hours=9)

@@ -408,6 +408,7 @@ def rule_settings(tdx: TdxSettings) -> RuleSettings:
         near_event_days=events.near_event_days,
         close_after_days=rules.close_after_days,
         close_hold_days=rules.close_hold_days,
+        waiting_hold_days=rules.waiting_hold_days,
     )
 
 
@@ -670,6 +671,7 @@ def draft_card(
         show_titles=settings.teams.show_titles(destination),
         reader=card_reader(settings, destination),
         close_hold_days=tdx.rules.close_hold_days,
+        waiting_hold_days=tdx.rules.waiting_hold_days,
     )
     return CardDraft(plan, fitted, card)
 
@@ -795,6 +797,7 @@ def draft_summary(
             urgent_keys=urgent,
             reader=card_reader(settings, destination),
             close_hold_days=tdx.rules.close_hold_days,
+            waiting_hold_days=tdx.rules.waiting_hold_days,
         )
     else:
         events = events_this_week(
@@ -829,6 +832,7 @@ def draft_summary(
             urgent_keys=urgent,
             reader=card_reader(settings, destination),
             close_hold_days=tdx.rules.close_hold_days,
+            waiting_hold_days=tdx.rules.waiting_hold_days,
         )
     shown_keys = {(finding.ticket_id, finding.kind) for finding in shown}
     record = AlertPlan(
@@ -1033,6 +1037,7 @@ def send_urgent(
         max_rows=tdx.alerts.max_rows_per_card,
         reader=card_reader(settings, "desk"),
         close_hold_days=tdx.rules.close_hold_days,
+        waiting_hold_days=tdx.rules.waiting_hold_days,
     )
     counts = {
         "rows": len(shown),
