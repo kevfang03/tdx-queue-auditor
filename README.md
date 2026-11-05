@@ -8,7 +8,7 @@ A read-only auditor for a university IT service desk's TeamDynamix ("TDX") ticke
 
 The desk already gets an alert when something happens to a ticket. Nothing notices when **nothing** happens: a client replied two days ago and nobody answered, a reply came from someone outside the desk, an event is three days out and its room is still "TBD". Finding those meant reading every ticket by hand.
 
-The REST API's usual keys are not issued to student staff, so the auditor first read the queue the way a person does: through a browser with the person's own sign-in, behind a request guard that makes sure that browser can only read. With the desk's approval, it now also reads through the TDX Web API, using a token from the system's own SSO sign-in. The API drives the cards, and the browser keeps reading beside it so the two can be compared.
+The REST API's usual keys are not issued to student staff, so the auditor first read the queue the way a person does: through a browser with the person's own sign-in, behind a request guard that makes sure that browser can only read. With the desk's approval, it now also reads through the TDX Web API, using a token from the system's own SSO sign-in. After a 14-day side-by-side comparison with the browser reader, the API now drives every card.
 
 ## What it does
 
@@ -64,7 +64,7 @@ Details: [docs/PRIVACY.md](docs/PRIVACY.md) and [docs/DESIGN.md](docs/DESIGN.md#
 
 The rules depend only on two data types, `TicketRow` (a queue row) and `TicketFeed` (a ticket's visible entries), and both readers produce exactly those, so the rules, cards and summaries are the same whichever one runs. The API reader is read-only too: it sends only `GET` requests on a short allowlist, checked before anything is sent, and its token comes from a second sign-in the person makes, lives only in the OS keychain and expires after about 24 hours.
 
-One setting, `tdx.source`, picks the reader: `browser` (the default); `shadow`, where the browser drives the cards while the API reads the same tickets and a counts-only record of the comparison is kept (`tdx api compare` reports it); or `api`, where the API drives the cards and the browser takes over any cycle the API cannot run, with a logged reason code. With `api`, the comparison keeps running with the roles swapped. The shadow trial comes before the switch because the cards must not change when the source does.
+One setting, `tdx.source`, picks the reader: `browser` (the default); `shadow`, where the browser drives the cards while the API reads the same tickets and a counts-only record of the comparison is kept (`tdx api compare` reports it); or `api`, where the API drives the cards and the browser takes over any cycle the API cannot run, with a logged reason code. With `api`, the comparison can keep running with the roles swapped, or be switched off with `tdx.shadow.enabled = false`. The shadow trial comes before the switch because the cards must not change when the source does.
 
 Setup and commands: [the TDX API](docs/USAGE.md#tdx-api-proof-of-concept), [shadow mode](docs/USAGE.md#shadow-mode-browser-and-api-side-by-side) and [reading through the API](docs/USAGE.md#reading-through-the-api).
 
@@ -156,13 +156,13 @@ Piloted with the desk's approval on its live queue:
 - **Rule tuning** against manual spot-checks cut *client waiting* findings on the same queue from 14 to 4; in the final checked run, all 3 findings were confirmed by manual review.
 - **The loop:** 5 cycles over 2 hours, all on schedule. The first sent one card and the next four reported "nothing new", so de-duplication held.
 - **The optional LLM step:** a synthetic eval scored 24 of 24 (development set) and 12 of 12 (holdout, run once) with 0 unsafe errors, for about $0.001; on live tickets, 2 of 2 verdicts were judged right, for about $0.0002, and repeat cycles cost nothing.
-- **In daily use:** the auditor runs on one desk member's own computer with the LLM step off, posting to the desk's Teams group chat: a full summary at the day's first shift slot, which replaced a weekly ticket check-in that a person used to compile by reading every ticket; short "since last slot" updates when something changed; and a short "Event soon" card when an event finding falls within 2 days of its event.
-- **Browser and API side by side:** the first side-by-side run showed the browser reader missing answers in event request forms whose full text sits in the collapsed part of the description (the API read 5 forms correctly; a manual check confirmed 2 of 2). The browser reader was fixed, and the two then agreed on findings, event states and id rows. Two days of side-by-side comparison on the live queue followed: 56 of 56 cycles compared, rows matched 2,080 of 2,080 and feeds 526 of 526, with 0 mismatches. On the first day the median cycle took 19.9 s through the API and 37.6 s through the browser. The API then became the source of every card. The browser still reads beside it each cycle and the comparison keeps running; switching back is one setting (`tdx.source = "shadow"`).
+- **In daily use:** the auditor runs on one desk member's own computer with the LLM step off, posting to the desk's Teams group chat: a full summary of every open finding at the day's first shift slot; short "since last slot" updates when something changed; and a short "Event soon" card when an event finding falls within 2 days of its event.
+- **Browser and API side by side:** the first side-by-side run showed the browser reader missing answers in event request forms whose full text sits in the collapsed part of the description (the API read 5 forms correctly; a manual check confirmed 2 of 2). The browser reader was fixed, and a 14-day comparison on the live queue followed, first with the browser driving the cards and then the API. Across 152 compared cycles the two matched on 5,903 of 5,903 rows and gave identical findings every time. Feeds matched 1,417 of 1,419; the two misses were API reads that failed (a dropped connection and a timeout) and worked on the next cycle, with no card changed. The median cycle took about 21 s through the API and 39 s through the browser. As the source, the API ran 289 cycles without needing the browser once, so the comparison was switched off; turning it back on is one setting.
 - **Tests:** more than 1,900, run in CI on Linux, Windows and macOS on every push. No test needs a network, a keychain, a webhook or TDX.
 
 ## Next
 
-**A weekly queue report:** a counts-only card for the desk.
+**A dedicated read-only API account:** an admin-issued key for the tool, so nobody has to sign in each day to renew the token, and the admin controls and can revoke its access.
 
 ## Documentation
 
