@@ -345,7 +345,7 @@ Exit codes: as for `tdx rows`, except that `3` here means the API's own sign-in 
 
 Alerts go to your own Teams chat through a Power Automate **Workflows** webhook. The flow runs on a standard licence (no premium connector). Set it up once:
 
-1. In Teams, open **Workflows** and create a flow from the template **"Send webhook alerts to a chat"**.
+1. In Teams, open **Workflows** and create a flow from the template **"Send webhook alerts to chat"** (search for "Send webhook alerts").
 2. The template's default target, your chat with yourself, fails with "Call made for a thread which is not a ChatThread". In both **"Post card in a chat or channel"** actions, set **Post as: Flow bot**, **Post in: Chat with Flow bot** and **Recipient:** yourself.
 3. Changing "Post in" clears the **Adaptive Card** field: fill it again with the trigger's **"Attachments Adaptive Card"**, and set the False branch's **For each** input to the trigger's **Attachments**. (The editor may wrap the True branch's post in a "For each 1"; that is fine.)
 4. On the trigger ("When a Teams webhook request is received"), set **Who can trigger the flow** to **Anyone**, so the script can post without signing in to Microsoft. Save.

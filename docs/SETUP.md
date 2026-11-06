@@ -12,7 +12,7 @@ Every step starts with **where you do it**:
 | **[TDX WINDOW]** | A browser window the auditor opens for you to sign in to TDX |
 | **[WINDOWS]** | Windows settings |
 
-Each step ends with **✅ You should see**, so you know it worked before moving on. If something else happens, look in [Troubleshooting](#troubleshooting) at the end.
+Each step ends with a **Result:** line saying what you should see, so you know it worked before moving on. If something else happens, look in [Troubleshooting](#troubleshooting) at the end.
 
 **Before you start, you need:**
 
@@ -39,7 +39,7 @@ powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | ie
 
 Then **close PowerShell and open it again**, so it finds the new tools.
 
-✅ You should see: `uv --version` prints a version number.
+**Result:** `uv --version` prints a version number.
 
 ### 1.2 Download the auditor
 
@@ -57,7 +57,7 @@ git clone https://github.com/kevfang03/tdx-queue-auditor
 cd tdx-queue-auditor
 ```
 
-✅ You should see: the prompt now ends in `tdx-queue-auditor>`. **Every later PowerShell step runs from this folder.** If you open a new PowerShell window, run `cd $HOME\tdx-queue-auditor` first.
+**Result:** the prompt now ends in `tdx-queue-auditor>`. **Every later PowerShell step runs from this folder.** If you open a new PowerShell window, run `cd $HOME\tdx-queue-auditor` first.
 
 ### 1.3 Install it
 
@@ -71,7 +71,7 @@ uv sync
 uv run playwright install chromium
 ```
 
-✅ You should see: both finish without a red error. The second one downloads a browser and can take a few minutes.
+**Result:** both finish without a red error. The second one downloads a browser and can take a few minutes.
 
 ---
 
@@ -87,7 +87,7 @@ notepad .env
 
 Notepad asks whether to create a new file: click **Yes**. Paste the settings text from the desk's current runner, then **File > Save** and close Notepad.
 
-✅ You should see: `Get-Content .env` prints the settings back.
+**Result:** `Get-Content .env` prints the settings back.
 
 The file holds the TDX address, the desk's report numbers, summary times and similar settings. It never holds a password, a token or a webhook link; those are kept in Windows Credential Manager, as in [Part 3](#part-3-connect-your-own-teams-chat) and [Part 4](#part-4-sign-in-to-tdx).
 
@@ -107,14 +107,14 @@ This part moves between Teams and the Power Automate website. That's expected: T
 
 1. In the left bar, click **Apps** (or **…**), search for **Workflows**, and open it.
 2. Click **Create** (or **+ New flow**).
-3. In the template search, type **Send webhook alerts to a chat** and click that template.
+3. In the template search, type **Send webhook alerts** and click the template **Send webhook alerts to chat**.
 4. Name it, for example `Queue auditor – my chat`. If Teams asks you to sign in to a connection, do so. Click **Next**.
-5. If it asks where to post, pick anything; you fix it in the next step. Click **Create flow**.
+5. It asks for a **Chat** and lists only group chats. Pick any one; step 3.2 changes it to your own chat. **Don't skip step 3.2**, or your sign-in reminders and test cards post in that group chat. Click **Create flow**.
 6. Teams shows a web link. **Ignore it**; you copy the right one in step 3.3.
 
-<!-- screenshot: setup-3-1-template.png (the template card in Workflows; crop out names) -->
+![The "Send webhook alerts to chat" template in Workflows, with its Chat field](img/setup-3-1-template.png)
 
-✅ You should see: a message that the flow was created.
+**Result:** a message that the flow was created.
 
 ### 3.2 Fix where the flow posts
 
@@ -133,18 +133,17 @@ The template's default target ("chat with yourself") does not work, so change it
 5. Click the **first box** at the top, **When a Teams webhook request is received**, and set **Who can trigger the flow** to **Anyone**. The auditor posts without signing in to Microsoft, so the flow must accept that.
 6. Click **Save** (top right).
 
-<!-- screenshot: setup-3-2-post-card.png (one "Post card in a chat or channel" box with the four fields set; crop out the recipient) -->
-<!-- screenshot: setup-3-2-trigger.png (the trigger box with "Who can trigger the flow: Anyone") -->
+![A "Post card in a chat or channel" box: Post as Flow bot, Post in Chat with Flow bot, the Recipient (blanked here), and Adaptive Card set to content](img/setup-3-2-post-card.png)
 
-✅ You should see: "Your flow is ready" or a saved confirmation, and no red warning on any box.
+![The first box, "When a Teams webhook request is received": Who can trigger the flow set to Anyone, and below it the HTTP URL (blanked here) with its copy icon](img/setup-3-2-trigger.png)
+
+**Result:** "Your flow is ready" or a saved confirmation, and no red warning on any box.
 
 ### 3.3 Copy the flow's link
 
-**[POWER AUTOMATE]** Still in **Edit**, click the first box again (**When a Teams webhook request is received**). It shows a long **HTTP URL**. Click the **copy** icon next to it.
+**[POWER AUTOMATE]** Still in **Edit**, click the first box again (**When a Teams webhook request is received**). It shows a long **HTTP URL**. Click the **copy** icon to the right of it (see the last picture in step 3.2).
 
-<!-- screenshot: setup-3-3-http-url.png (the copy icon next to HTTP URL; blur the link itself) -->
-
-✅ You should see: the link is copied. Don't paste it anywhere except the next step.
+**Result:** the link is copied. Don't paste it anywhere except the next step.
 
 ### 3.4 Save the link in the auditor
 
@@ -156,7 +155,7 @@ uv run ops-suite teams set-webhook
 
 At the prompt, **right-click** to paste. **Nothing appears on screen**; the prompt hides what you paste, like a password. Then press **Enter** once.
 
-✅ You should see: `Webhook saved in the system keychain.`
+**Result:** `Webhook saved in the system keychain.`
 
 ### 3.5 Send a test card
 
@@ -166,7 +165,7 @@ At the prompt, **right-click** to paste. **Nothing appears on screen**; the prom
 uv run ops-suite teams test
 ```
 
-✅ You should see: a test card in **[TEAMS]**, in your chat with **Workflows** (Flow bot).
+**Result:** a test card in **[TEAMS]**, in your chat with **Workflows** (Flow bot).
 
 ---
 
@@ -184,7 +183,7 @@ uv run ops-suite tdx login
 
 If **Windows Hello** pops up (face, fingerprint or PIN) and gets stuck, click **Cancel**, then **Sign in another way**, and choose your **password** or **Authenticator app** approval.
 
-✅ You should see: `TDX API token: saved, expires …`
+**Result:** `TDX API token: saved, expires …`
 
 ### 4.2 Choose the dashboard (optional)
 
@@ -198,7 +197,7 @@ uv run ops-suite tdx set-dashboard
 
 **[TDX WINDOW]** Switch to the desk's shared tickets dashboard: the one that shows both **Unclaimed Tickets in My Group(s)** and **Active Tickets Claimed by Others in My Group(s)**. Your own home dashboard may not. Wait until both lists load, then press **Enter** in PowerShell. It can take a minute or two with nothing printed.
 
-✅ You should see: a line starting `Saved.` If you get "does not open on its own", skip this step.
+**Result:** a line starting `Saved.` If you get "does not open on its own", skip this step.
 
 ---
 
@@ -214,7 +213,7 @@ Nothing in this part posts to Teams.
 uv run ops-suite tdx api check
 ```
 
-✅ You should see: two lines like `Unclaimed report: 26 row(s), 10 column(s), every needed column found.` An error such as `forbidden` means your account cannot see the desk's saved reports: ask whoever owns them to share them with you in TDX.
+**Result:** two lines like `Unclaimed report: 26 row(s), 10 column(s), every needed column found.` An error such as `forbidden` means your account cannot see the desk's saved reports: ask whoever owns them to share them with you in TDX.
 
 ### 5.2 Compare with the current runner
 
@@ -247,7 +246,7 @@ uv run ops-suite teams set-webhook --to desk
 
 Right-click to paste (nothing shows), press **Enter**.
 
-✅ You should see: `Desk webhook saved in the system keychain.` **Don't send a test card to the desk chat**; the first real card in Part 7 shows that it works.
+**Result:** `Desk webhook saved in the system keychain.` **Don't send a test card to the desk chat**; the first real card in Part 7 shows that it works.
 
 ### 6.3 Optional: a readable pop-up
 
@@ -279,7 +278,7 @@ Try it on your **own** flow first, and check how the pop-up looks before adding 
 uv run ops-suite tdx agent uninstall
 ```
 
-✅ You should see: `uv run ops-suite tdx agent status` says `installed no`. Two runners would post every card twice.
+**Result:** `uv run ops-suite tdx agent status` says `installed no`. Two runners would post every card twice.
 
 ### 7.2 Install and start yours
 
@@ -295,7 +294,7 @@ This makes the auditor start by itself every time you sign in to Windows. To sta
 Start-Process "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\Startup\ops-suite tdx watch.cmd"
 ```
 
-✅ You should see: a small minimized window called **ops-suite tdx watch** on the taskbar. Leave it open; closing it stops the auditor.
+**Result:** a small minimized window called **ops-suite tdx watch** on the taskbar. Leave it open; closing it stops the auditor.
 
 ### 7.3 Check it
 
@@ -305,7 +304,7 @@ Start-Process "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\Startup\ops-su
 uv run ops-suite tdx agent status
 ```
 
-✅ You should see: `running yes`. At the next summary time, one card appears in the desk chat.
+**Result:** `running yes`. At the next summary time, one card appears in the desk chat.
 
 ### 7.4 Keep the PC awake
 
@@ -335,7 +334,7 @@ uv run ops-suite tdx api token --headed
 
 **[TDX WINDOW]** Sign in (MFA included; cancel Windows Hello if it gets stuck, as in [step 4.1](#41-sign-in)).
 
-✅ You should see: `TDX API token: saved, expires …`. If you skip it, the desk cards stop the next day until you sign in.
+**Result:** `TDX API token: saved, expires …`. If you skip it, the desk cards stop the next day until you sign in.
 
 **After a restart**, the auditor starts by itself when you sign in to Windows. To check: `uv run ops-suite tdx agent status`. If it doesn't say `running yes`, run the `Start-Process` line from [step 7.2](#72-install-and-start-yours).
 
@@ -361,6 +360,7 @@ Get-Content -Wait -Tail 20 "$env:LOCALAPPDATA\ops-suite\Logs\watch.out.log"
 | `sign_in_timeout` or `window_closed` | The sign-in didn't finish within 5 minutes | Run the command again |
 | `set-dashboard`: "does not open on its own" | The dashboard didn't load by itself | Skip [step 4.2](#42-choose-the-dashboard-optional); it's optional |
 | `tdx api check`: `forbidden` or `not found` | Your account can't see the desk's saved reports | Ask the reports' owner to share them with you in TDX |
+| Sign-in reminders or test cards show up in a group chat | Your own flow still posts to the chat picked in step 3.1 | Redo [step 3.2](#32-fix-where-the-flow-posts) on that flow. Editing keeps its link, so nothing changes in the auditor; check with `uv run ops-suite teams test` |
 | Every card shows up twice in the desk chat | Two runners are on | Switch one off ([step 7.1](#71-switch-off-the-old-runner)) |
 | No cards at all | Outside desk hours, PC asleep, or the evening sign-in was missed | Check `tdx agent status`, then run `tdx api token --headed` |
 
