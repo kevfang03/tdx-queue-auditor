@@ -5,7 +5,13 @@ import pytest
 from pydantic import ValidationError
 
 from ops_suite.common import paths
-from ops_suite.common.config import TdxEventSettings, TeamsDeskSettings, load_settings
+from ops_suite.common.config import (
+    DEFAULT_NUDGE_LINES,
+    TdxEventSettings,
+    TdxSummarySettings,
+    TeamsDeskSettings,
+    load_settings,
+)
 
 
 def test_defaults_load_with_no_file(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -393,3 +399,43 @@ def test_other_sections_still_ignore_unknown_keys(tmp_path: Path) -> None:
     config = tmp_path / "extra.toml"
     config.write_text("[mail.work]\nnot_a_setting = 1\n", encoding="utf-8")
     assert load_settings(config).mail.work.retention_days == 7
+
+
+def test_repeat_full_is_off_and_the_nudge_lines_have_defaults_in_code_and_example() -> None:
+    example = Path(__file__).parent.parent.parent / "config.example.toml"
+
+    for summary in (load_settings().tdx.summary, load_settings(example).tdx.summary):
+        assert summary.repeat_full is False
+        assert summary.nudge_lines == list(DEFAULT_NUDGE_LINES)
+        assert len(summary.nudge_lines) == 4
+
+
+def test_repeat_full_and_nudge_lines_come_from_the_environment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("OPS_SUITE_TDX__SUMMARY__REPEAT_FULL", "true")
+    monkeypatch.setenv("OPS_SUITE_TDX__SUMMARY__NUDGE_LINES", '["{tickets} since {since}", "Hi"]')
+
+    summary = load_settings().tdx.summary
+
+    assert summary.repeat_full is True
+    assert summary.nudge_lines == ["{tickets} since {since}", "Hi"]
+
+
+@pytest.mark.parametrize(
+    ("lines", "message"),
+    [
+        ([], "at least one line"),
+        (["Hi {name}"], "uses {name}; only {tickets} and {since} are allowed"),
+        (["{} left"], "uses {}"),
+        (["{0} left"], "uses {0}"),
+        (["{tickets.real}"], "uses {tickets.real}"),
+        (["{tickets"], "nudge line 1:"),
+        (["ok {tickets}", "   "], "nudge line 2 is empty"),
+    ],
+)
+def test_bad_nudge_lines_are_refused(lines: list[str], message: str) -> None:
+    with pytest.raises(ValidationError) as error:
+        TdxSummarySettings(nudge_lines=lines)
+
+    assert message in str(error.value)

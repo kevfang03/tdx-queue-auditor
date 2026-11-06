@@ -166,6 +166,7 @@ Piloted with the desk's approval on its live queue:
 
 ## Documentation
 
+- [docs/SETUP.md](docs/SETUP.md): a step-by-step guide to setting it up on a new PC, for first-timers.
 - [docs/USAGE.md](docs/USAGE.md): install, configure and run every command.
 - [docs/tdx-rules.md](docs/tdx-rules.md): the rules in plain language, with worked examples.
 - [docs/DESIGN.md](docs/DESIGN.md): the architecture and the key decisions.

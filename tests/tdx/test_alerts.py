@@ -7,10 +7,12 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
-from ops_suite.common.config import TdxAlertSettings, TdxSettings
+from ops_suite.common.config import DEFAULT_NUDGE_LINES, TdxAlertSettings, TdxSettings
 from ops_suite.tdx.alerts import (
+    ACTIONABLE_KINDS,
     CARD_MAX_BYTES,
     NO_ROOM_WORDING,
+    SECTION_LABELS,
     AlertPlan,
     AlertPolicy,
     AlertState,
@@ -35,11 +37,14 @@ from ops_suite.tdx.alerts import (
     fit_summary_card,
     fit_urgent_card,
     format_age,
+    nudge_line,
     plan_alerts,
     section_hint,
     since_text,
     summary_change,
     summary_heading,
+    summary_preview,
+    untouched_keys,
     urgent_event,
 )
 from ops_suite.tdx.feed_types import FeedEntry, TicketFeed
@@ -1009,11 +1014,13 @@ def test_summary_state_remembers_the_slot_the_post_and_the_open_set(tmp_path: Pa
     assert again.full_due(SLOT + timedelta(days=1))  # a new day starts full
     assert again.open == {(101, "client_waiting"), (102, "event_over")}
     assert json.loads(path.read_text(encoding="utf-8")) == {
-        "schema": 3,
+        "schema": 4,
         "last_slot": "2026-10-19T07:30:00-04:00",
         "last_posted": "2026-10-19T07:30:00-04:00",
         "open": ["101:client_waiting", "102:event_over"],
         "known": ["101:client_waiting", "102:event_over"],
+        "day_first_slot": None,
+        "day_first_keys": [],
     }
     assert "client_waiting" not in repr(again) and "open=2" in repr(again)
     assert "known=2" in repr(again)
@@ -2129,3 +2136,217 @@ def test_no_card_uses_another_word_for_the_requester(reader: Reader, tmp_path: P
     for card in every_card(reader, tmp_path):
         text = json.dumps(card, ensure_ascii=False)
         assert not banned.search(text), (banned.search(text), card["body"][0]["text"])
+
+
+# --- repeated full summaries: untouched since the day's first summary ---------------------
+
+FIRST = datetime(2026, 10, 19, 8, 0, tzinfo=TZ)
+LATER = datetime(2026, 10, 19, 12, 30, tzinfo=TZ)
+DESK_WORKER = "Casey Deskworker"
+NUDGE = "👀 3 tickets from 8:00 AM still haven't been touched. Anyone out there?"
+
+
+def entry(author: str, hour: int | None, kind: str = "reply") -> FeedEntry:
+    created = None if hour is None else datetime(2026, 10, 19, hour, 0, tzinfo=TZ)
+    return FeedEntry(author, created, kind)  # type: ignore[arg-type]
+
+
+def feed_of(ticket_id: int, *entries: FeedEntry) -> TicketFeed:
+    return TicketFeed(ticket_id, tuple(entries))  # newest first
+
+
+def untouched(
+    findings: list[Finding], feeds: dict[int, TicketFeed], first_keys: set | None = None
+) -> frozenset:
+    rows_by_id = {f.ticket_id: row(f.ticket_id) for f in findings}
+    keys = first_keys if first_keys is not None else {(f.ticket_id, f.kind) for f in findings}
+    return untouched_keys(findings, feeds, rows_by_id, FIRST, keys)
+
+
+def test_a_ticket_with_no_desk_activity_since_the_first_summary_is_untouched() -> None:
+    finding = waiting(101)
+    feeds = {101: feed_of(101, entry(REQUESTOR, 7), entry(DESK_WORKER, 6))}
+    assert untouched([finding], feeds) == {(101, "client_waiting")}
+
+
+@pytest.mark.parametrize("kind", ["reply", "private"])
+def test_a_desk_reply_or_note_since_the_first_summary_touches_the_ticket(kind: str) -> None:
+    feeds = {101: feed_of(101, entry(DESK_WORKER, 10, kind), entry(REQUESTOR, 7))}
+    assert untouched([waiting(101)], feeds) == frozenset()
+
+
+def test_a_requester_reply_or_a_system_entry_is_not_desk_activity() -> None:
+    feeds = {
+        101: feed_of(101, entry(REQUESTOR, 11), entry("", 10, "system"), entry(DESK_WORKER, 6))
+    }
+    assert untouched([waiting(101)], feeds) == {(101, "client_waiting")}
+
+
+def test_an_undated_newest_desk_entry_keeps_the_reminder() -> None:
+    feeds = {101: feed_of(101, entry(DESK_WORKER, None, "private"), entry(DESK_WORKER, 11))}
+    # The undated note is the newest desk entry: unsure, so the reminder stays.
+    assert untouched([waiting(101)], feeds) == {(101, "client_waiting")}
+
+
+def test_a_title_only_finding_with_no_feed_this_cycle_is_untouched() -> None:
+    tbd = Finding(104, "location_tbd_soon", "high", "tbd_soon", 50)
+    assert untouched([tbd], {}) == {(104, "location_tbd_soon")}
+
+
+def test_ready_to_close_and_findings_new_since_the_first_summary_never_count() -> None:
+    findings = [ready(101), waiting(102)]
+    assert untouched(findings, {}) == {(102, "client_waiting")}
+    assert untouched([waiting(103)], {}, first_keys={(102, "client_waiting")}) == frozenset()
+    # Same ticket, another kind than on the first summary: not the same finding.
+    assert untouched([event_over(102)], {}, first_keys={(102, "client_waiting")}) == frozenset()
+
+
+def test_without_a_first_summary_nothing_is_untouched() -> None:
+    rows_by_id = {101: row(101)}
+    assert untouched_keys([waiting(101)], {}, rows_by_id, None, {(101, "client_waiting")}) == (
+        frozenset()
+    )
+
+
+def test_the_actionable_kinds_are_every_section_but_check_if_resolved() -> None:
+    assert ACTIONABLE_KINDS == set(SECTION_LABELS) - {"ready_to_close"}
+
+
+def test_nudge_lines_rotate_so_consecutive_slots_differ() -> None:
+    lines = list(DEFAULT_NUDGE_LINES)
+    day = [nudge_line(lines, LATER, number, 3, "8:00 AM") for number in (1, 2, 3)]
+    assert len(set(day)) == 3
+    index = (LATER.date().toordinal() * 3 + 2) % 4
+    assert day[1] == lines[index].format(tickets="3 tickets", since="8:00 AM")
+    assert nudge_line(lines[:1], LATER, 2, 1, "8:00 AM") == (
+        "👀 1 ticket from 8:00 AM still haven't been touched. Anyone out there?"
+    )
+    assert nudge_line(["{tickets} since {since}"], LATER, 2, 3, "8:00 AM") == (
+        "3 tickets since 8:00 AM"
+    )
+
+
+def test_the_summary_preview_adds_events_today_and_still_open_only_when_not_zero() -> None:
+    assert summary_preview(5, COMMONS, events_today=2, still_open=3, since="8:00 AM") == (
+        "5 tickets for the Commons · 2 events today · 3 still open since 8:00 AM"
+    )
+    assert (
+        summary_preview(5, COMMONS, events_today=1) == "5 tickets for the Commons · 1 event today"
+    )
+    assert summary_preview(5, COMMONS, still_open=1, since="8:00 AM") == (
+        "5 tickets for the Commons · 1 still open since 8:00 AM"
+    )
+    assert summary_preview(0, DESK) == "Nothing for the help desk right now"
+    assert summary_preview(2, Reader()) == "2 tickets need attention"
+
+
+def later_summary(
+    findings: list[Finding],
+    untouched_set: set,
+    new: set = frozenset(),
+    *,
+    events: list[WeekEvent] = (),  # type: ignore[assignment]
+    nudge: str | None = NUDGE,
+    **options: object,
+) -> tuple[tuple[Finding, ...], dict]:
+    ids = {f.ticket_id for f in findings} | {e.ticket_id for e in events}
+    rows_by_id = {ticket_id: row(ticket_id) for ticket_id in ids}
+    links = card_links(rows_by_id, sorted(ids), TdxSettings(base_url="https://tdx.example.edu/"))
+    return fit_summary_card(
+        findings, new, rows_by_id, links, LATER, LATER, TZ, SUMMARY,
+        title_chars=80, show_titles=False, max_rows=25, events=events, reader=COMMONS,
+        untouched_keys=untouched_set, first_slot=FIRST, nudge=nudge, **options,
+    )  # fmt: skip
+
+
+def test_a_later_full_summary_opens_with_the_banner_and_tags_untouched_rows() -> None:
+    findings = [waiting(101), waiting(102), Finding(104, "location_tbd_soon", "high", "x", 50)]
+    still = {(101, "client_waiting"), (104, "location_tbd_soon")}
+
+    _, card = later_summary(findings, still, events=[week_event(110, 19), week_event(111, 20)])
+
+    banner, marked, heading = card["body"][:3]
+    assert banner == {
+        "type": "TextBlock",
+        "text": escape_markdown(NUDGE),
+        "wrap": True,
+        "size": "Large",
+        "weight": "Bolder",
+        "color": "Attention",
+    }
+    assert marked["text"] == 'Marked "(still open since 8:00 AM)" below.'
+    assert "size" not in marked and "color" not in marked
+    assert heading["text"].startswith("TDX queue at 12:30 PM: 3 tickets for the Commons")
+    lines = texts(card)
+    tagged = [line for line in lines if "(still open since 8:00 AM) ·" in line]
+    assert [line.split("]")[0] for line in tagged] == ["[#101", "[#104"]
+    assert not any(line.startswith("[#102") and "still open" in line for line in lines)
+    assert card["fallbackText"] == (
+        "3 tickets for the Commons · 1 event today · 2 still open since 8:00 AM"
+    )
+
+
+def test_an_added_row_is_never_tagged_still_open() -> None:
+    key = (101, "client_waiting")
+    _, card = later_summary([waiting(101)], {key}, {key})
+    lines = texts(card)
+    assert lines[0].startswith("TDX queue at 12:30 PM")  # no banner
+    assert any("(added)" in line for line in lines)
+    assert "still open" not in json.dumps(card)
+
+
+def test_without_a_nudge_or_untouched_rows_there_is_no_banner_tag_or_count() -> None:
+    for still, nudge in [({(101, "client_waiting")}, None), (set(), NUDGE)]:
+        _, card = later_summary([waiting(101), ready(102)], still, nudge=nudge)
+        assert texts(card)[0].startswith("TDX queue at 12:30 PM")
+        assert "still open" not in json.dumps(card)
+        assert card["fallbackText"] == "2 tickets for the Commons"
+
+
+def test_the_banner_comes_before_the_mentions_and_stays_under_the_size_limit() -> None:
+    findings = [waiting(ticket_id) for ticket_id in range(1000, 1400)]
+    still = {(f.ticket_id, f.kind) for f in findings}
+    shown, card = later_summary(findings, still, mention="everyone")
+    assert card_size(card) < CARD_MAX_BYTES and shown
+    assert card["body"][0]["color"] == "Attention"
+    assert card["msteams"]["entities"]
+
+
+def test_the_delta_preview_counts_events_today() -> None:
+    _, card = delta([waiting(101)], {(101, "client_waiting")}, events_today=2)
+    assert card["fallbackText"] == "1 ticket needs attention · 2 events today"
+
+
+def test_a_schema_3_summary_state_loads_and_the_next_first_post_writes_schema_4(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "summary-state-desk.json"
+    data = {
+        "schema": 3,
+        "last_slot": SLOT.isoformat(),
+        "last_posted": SLOT.isoformat(),
+        "open": ["101:client_waiting"],
+        "known": ["101:client_waiting"],
+    }
+    path.write_text(json.dumps(data), encoding="utf-8")
+
+    state = SummaryState(path)
+    assert state.posted(SLOT) and state.known == {(101, "client_waiting")}
+    assert state.day_first_slot is None and state.day_first_keys == frozenset()
+
+    tomorrow = FIRST + timedelta(days=1)
+    state.record(
+        tomorrow, open_keys={(101, "client_waiting")}, first_keys={(101, "client_waiting")}
+    )
+    again = SummaryState(path)
+    assert json.loads(path.read_text(encoding="utf-8"))["schema"] == 4
+    assert again.day_first_slot == tomorrow
+    assert again.day_first_keys == {(101, "client_waiting")}
+    assert "client_waiting" not in repr(again) and "day_first=1" in repr(again)
+
+    # A later post that is not the day's first keeps the day's first summary.
+    again.record(tomorrow + timedelta(hours=4), open_keys=set())
+    assert SummaryState(path).day_first_slot == tomorrow
+    # A skipped slot never becomes the day's first.
+    again.record(tomorrow + timedelta(days=1), posted=False, first_keys=set())
+    assert SummaryState(path).day_first_slot == tomorrow

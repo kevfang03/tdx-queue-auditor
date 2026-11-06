@@ -569,7 +569,7 @@ Outside desk hours; next run Sat 08:00.
 - **Session expired:** the TDX session lasts less than a day, so expect to sign in about once per desk day. The loop keeps running: it posts **one** plain card ("TDX sign-in expired ...", no ticket data) and prints `14:05 TDX sign-in expired; run "uv run ops-suite tdx login". Checking again every 10 min.` Run `uv run ops-suite tdx login` on the Mac in a second terminal and sign in. The loop checks quietly every 10 minutes inside desk hours (`tdx.watch.signed_out_retry_minutes`, 5 to 30), prints `14:25 Signed in again; resuming.` once you have signed in, and goes back to its normal interval by itself. If you are still signed out on a new day, it sends the notice once more. An expired session never counts toward the failure limit below, and it resets that count, because the browser started and reached TDX.
 - **Profile in use:** while a `tdx login` (or `tdx capture`) window has the browser profile open, the loop cannot start its own browser. That is never a failure, signed in or not: it prints one line per busy spell, `14:05 TDX browser profile in use (a "tdx login" window?); checking again every 10 min.`, checks quietly every `signed_out_retry_minutes`, and goes back to its normal interval after the next successful cycle.
 - **Other failures** (the browser would not start, the page structure changed) print a line such as `14:05 cycle failed (DashboardStructureError); trying again at 14:35.` A browser that would not start also names a reason code: `cycle failed (BrowserStartError: launch_timeout)`. The codes are `not_installed` (run `uv run playwright install chromium`), `launch_timeout` (Chromium did not start within `tdx.browser_launch_timeout_seconds`, default 60; raise it if this repeats), `no_display` (a visible window was asked for where there is no screen), `profile_in_use` (handled as above) and `other`. Playwright's own message is never printed or logged, because it can contain the profile folder and so your user name. After 3 failed cycles in a row (`tdx.watch.failures_before_stop`) it posts one plain "auditor stopped" card and exits with that error's code; the card and the line name the reason code too. A successful cycle resets the count. A Teams post that fails is not a failed cycle: the findings stay due for the next one.
-- Every card carries a short counts-only preview line, such as `3 tickets need attention` (on a desk card, `3 tickets for the help desk`, with the team's name), for places where Teams cannot draw the card (notification banners, the chat list). It holds no ticket ids or titles.
+- Every card carries a short counts-only preview line, such as `3 tickets need attention` (on a desk card, `3 tickets for the help desk`, with the team's name), for places where Teams cannot draw the card (notification banners, the chat list). A shift summary's line can add events today and tickets still open since the morning ([Shift summaries](#shift-summaries)). It holds no ticket ids or titles.
 - A cycle that starts inside desk hours runs to the end. If the next run time falls outside them, the loop waits for the next opening.
 - **Shadow mode** (`tdx.source = "shadow"`): each line also ends with the comparison of the browser and the TDX Web API, such as `API shadow: findings identical.`; see [Shadow mode](#shadow-mode-browser-and-api-side-by-side).
 - **Day-end notice** (`tdx.source` `shadow` or `api`): at each desk day's close, one notice to your personal chat with the day's comparison and the API token's state; see [Day-end notice](#day-end-notice).
@@ -647,7 +647,7 @@ sun = ["12:00"]
 
 These are the defaults. A `[tdx.summary.times]` table in your config replaces all of them, so list every day you want; a day left out has no summaries. Each time must lie inside that weekday's desk hours (the closing time itself is outside), or every command stops with one line naming the time and the day.
 
-**A full summary at the first slot, updates after.** Each day's **first** summary posted is the **full** summary below, with the @mention: it replaces the manual check-in. If the first slot is missed (skipped past its grace window, or the auditor was not running), the next slot posted that day is full instead, so every day gets one full post. Later slots post a short **update**:
+**A full summary at the first slot, updates after.** Each day's **first** summary posted is the **full** summary below, with the @mention: it replaces the manual check-in. If the first slot is missed (skipped past its grace window, or the auditor was not running), the next slot posted that day is full instead, so every day gets one full post. Later slots post a short **update** (or, with `repeat_full`, the full summary again: [below](#shift-summaries)):
 
 ```text
 Since 7:30 AM: 1 more ticket and 1 reminder for the help desk
@@ -667,6 +667,30 @@ TDX queue at 8:12 AM (late, due 7:30 AM): 6 tickets for the help desk (2 added s
 Headings count the tickets that need attention and say for whom ("you" on a personal card), never "open", which reads as open tickets in the queue. Like the update's lead, the heading and its "added" count tickets, not findings (one ticket can carry two rows), so it can say 5 tickets above 7 rows; "Events this week" is not counted. A renamed event with no room that also has a follow-up, an outreach or a requester's reply is one row, not two: that row ends `Location still TBD on the ticket: check the events spreadsheet, and if a room is listed, update the ticket.` (or `No room on the ticket yet: ...`), and "Event soon: no room yet" keeps only the events with nothing else to do. Under the title, a full summary says `Tickets for the help desk to look at. Checked 26 unclaimed tickets at 7:30 AM.`, or `Nothing for the help desk to look at right now. ...` when the queue is clear, with the team's name from `teams.desk.team_name`.
 
 "Added" means not open at the last summary posted ("since yesterday", or `since Fri 5:00 PM` after a gap; just `(2 added)` before the first post). With none added, the part in brackets is left out.
+
+**Repeating the full summary at every slot.** In a busy chat, readers rarely scroll up to the morning card, and a short update (or no post at all) lets a ticket nobody answered slip by. With `repeat_full = true`, **every** slot posts the full summary, never an update and never nothing: a slot with nothing changed, or with nothing to look at (`Queue clear ...`), still posts. Late slots within `grace_minutes` still post late, and the mention goes on every one. On a **later** slot of the day (not the day's first post), when actionable tickets from the day's first summary are still **untouched**, the card opens with one big line in the attention color, with a normal line under it:
+
+```text
+👀 3 tickets from 8:00 AM still haven't been touched. Anyone out there?
+Marked "(still open since 8:00 AM)" below.
+```
+
+and those rows carry `(still open since 8:00 AM)` right after the ticket's link, where `(added)` goes. "Untouched" means the ticket was on the day's first summary with the same finding, is still listed, and has had no desk reply or desk private note since that summary: a reply from the requester does not count, and a ticket whose history this cycle did not read (such as a missing room, which only fixing the title clears) counts as untouched while it is listed. "Check if resolved" rows and "Events this week" never count. The big line rotates through `nudge_lines`, so consecutive slots differ; `{tickets}` becomes `3 tickets` (or `1 ticket`) and `{since}` the first summary's time. Any other placeholder, or an empty list, stops every command with one line naming the problem.
+
+```toml
+[tdx.summary]
+repeat_full = false   # true: the full summary at every slot, with the banner on later ones
+nudge_lines = [
+    "👀 {tickets} from {since} still haven't been touched. Anyone out there?",
+    "Same {tickets} as {since}. They're not going to answer themselves.",
+    "Still waiting since {since}: {tickets}. Just checking someone's reading these 🙂",
+    "{tickets} from {since} are still sitting here, untouched.",
+]
+```
+
+In `.env`: `OPS_SUITE_TDX__SUMMARY__REPEAT_FULL=true`, and the lines as JSON, `OPS_SUITE_TDX__SUMMARY__NUDGE_LINES=["...", "..."]`. With `repeat_full = false` (the default) later slots post updates as above and the banner never shows; the day's first summary is remembered either way.
+
+**The preview line.** A summary card's preview line (its `fallbackText`) counts a little more than other cards': `5 tickets for the help desk · 2 events today · 3 still open since 8:00 AM`. "Events today" are the "Events this week" entries dated that day; "still open" counts the tickets under the banner, so it shows only when the banner does. Parts that are zero are left out. It holds counts only, never ids, titles or names. Teams shows only "Sent a card" for a flow's card; a flow can post this line as a text message too, so the pop-up says something useful ([SETUP.md, step 6.3](SETUP.md#63-optional-a-readable-pop-up)).
 
 **Card times are 12-hour**, like the ticket titles: `7:30 AM`, `12:00 PM`, `Tue 1:37 PM`, and event times such as `1:30–2:30 PM` or `11:30 AM–12:30 PM`. Only the cards change: summary times in your config, the state files, the log and the terminal stay 24-hour.
 

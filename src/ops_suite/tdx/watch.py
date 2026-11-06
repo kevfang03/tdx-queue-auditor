@@ -18,13 +18,15 @@ Shift summaries (``tdx.summary``): the loop also wakes at the configured summary
 times, and a cycle that runs while a slot is due posts ``send_summary`` instead of the alert
 card, recording its findings as alerted. The day's first summary posted is full
 (every open finding, with the mention); later slots post a delta (new findings and due
-reminders, cleared ones as a count) or nothing when no row is new or due. While summaries go to the
+reminders, cleared ones as a count) or nothing when no row is new or due; with
+``tdx.summary.repeat_full`` every slot posts the full summary, with a banner for the tickets
+from the day's first summary that nobody has touched since. While summaries go to the
 desk chat, a desk watch's alert cards go to the personal chat (``alert_destination``,
 ``tdx.summary.desk_alerts`` / ``personal_alerts``). The summary state file
-(``summary-state-desk.json``) holds the last slot dealt with, the last one posted and the
-(ticket id, kind) set open at that post. A slot posted late, or not at all
-within ``grace_minutes``, sends one plain notice to the personal chat. The summary also lists
-the coming week's events and marks possible duplicates, both worked out in memory
+(``summary-state-desk.json``) holds the last slot dealt with, the last one posted, the
+(ticket id, kind) set open at that post and the day's first summary. A slot posted late, or
+not at all within ``grace_minutes``, sends one plain notice to the personal chat. The
+summary also lists the coming week's events and marks possible duplicates, both worked out in memory
 from this run; "ready to close" findings go on it but, unless ``tdx.alerts.alert_ready_to_close``,
 never on an alert card or into the alert state.
 
@@ -89,16 +91,20 @@ from ops_suite.tdx.alerts import (
     Reader,
     StateKey,
     SummaryState,
+    actionable_keys,
     alertable,
     card_links,
     counts_phrase,
+    events_on,
     fit_card,
     fit_delta_card,
     fit_summary_card,
     fit_urgent_card,
+    nudge_line,
     open_findings,
     plan_alerts,
     summary_change,
+    untouched_keys,
     urgent_event,
 )
 from ops_suite.tdx.api_client import TdxApiClient
@@ -218,6 +224,8 @@ class SendOutcome:
     slot: datetime | None = None  # summaries only: the slot
     # Summaries only: the (ticket id, kind) set to remember as open at this post.
     open_keys: frozenset[StateKey] = frozenset()
+    # Summaries only: the actionable findings on it, remembered when it is the day's first.
+    first_keys: frozenset[StateKey] = frozenset()
     # The urgent event findings this cycle took to the desk chat, on their own card or in the
     # summary; None when there were none.
     urgent: "UrgentOutcome | None" = None
@@ -236,13 +244,19 @@ class UrgentOutcome:
 @dataclass(frozen=True, slots=True)
 class SummaryRequest:
     """Post the shift summary for ``slot`` (aware, desk time) in this cycle: the full summary,
-    or a delta against ``previous``, the set open at the last post (at ``since``)."""
+    or a delta against ``previous``, the set open at the last post (at ``since``). ``first``:
+    nothing was posted yet on the slot's day. A later slot of the day knows the day's first
+    summary (``day_first``, with its actionable findings ``day_first_keys``), which a
+    repeated full summary checks for untouched tickets."""
 
     slot: datetime
     late: bool = False
     kind: SummaryKind = "full"
     since: datetime | None = None  # the last slot posted; a delta needs it
     previous: frozenset[StateKey] = frozenset()
+    first: bool = True
+    day_first: datetime | None = None
+    day_first_keys: frozenset[StateKey] = frozenset()
 
 
 # --- one audit ---------------------------------------------------------------------------
@@ -715,6 +729,8 @@ class SummaryDraft:
     cleared: int = 0
     open_keys: frozenset[StateKey] = frozenset()  # what the post leaves as the open set
     urgent: int = 0  # rows marked "(event soon)"
+    first_keys: frozenset[StateKey] = frozenset()  # actionable findings, for the day's first
+    untouched: int = 0  # tickets marked "(still open since ...)" under the banner
 
 
 def draft_summary(
@@ -730,12 +746,19 @@ def draft_summary(
     New and cleared are counted against ``request.previous``, the alertable findings open at
     the last post ("ready to close" is never new unless ``tdx.alerts.alert_ready_to_close``).
 
-    - **Full** (the day's first post): the events this week, every open finding (the new ones
-      marked, possible duplicates pointed out) and the configured mentions.
+    - **Full** (the day's first post, or every slot with ``tdx.summary.repeat_full``): the
+      events this week, every open finding (the new ones marked, possible duplicates pointed
+      out) and the configured mentions. On a repeated full summary (not the day's first), the
+      actionable findings of the day's first summary that nobody has touched since
+      (``untouched_keys``, from this cycle's feeds) get the banner, a line from
+      ``tdx.summary.nudge_lines`` in rotation, and their rows are marked.
     - **Delta** (later slots): rows only for the new findings and the reminders due under the
       alert policy (``state``), the cleared ones as a count; no events and no mention. Its
       ``card`` is None when no row is new, due or urgent, cleared findings or not: the slot
       is skipped and ``open_keys`` leaves the cleared ones out.
+
+    ``first_keys`` are the actionable findings open now: what the caller remembers when this
+    is the day's first post.
 
     ``urgent``: urgent event findings new for the chat this cycle. They go into this summary,
     marked "(event soon)", instead of on a card of their own; a delta lists them even when
@@ -759,6 +782,17 @@ def draft_summary(
         run.rows, tdx.rules.duplicate_title_similarity, rules.form_titles
     )
     show_titles = settings.teams.show_titles(destination)
+    events = events_this_week(
+        run.rows,
+        run.feeds.forms,
+        run.result.event_states,
+        run.now,
+        tz,
+        rules,
+        tdx.summary.events_days,
+    )
+    first_keys = actionable_keys(findings)
+    untouched: frozenset[StateKey] = frozenset()
     card: dict[str, object] | None
     if request.kind == "delta":
         if request.since is None:
@@ -772,7 +806,18 @@ def draft_summary(
             # Nothing to act on: in a shared chat that card is noise. The cleared findings
             # still leave the open set, so a later update does not count them again.
             empty = AlertPlan(on_card=(), overflow=0, cleared=())
-            return SummaryDraft(plan, empty, None, len(findings), 0, 0, "delta", 0, change.open)
+            return SummaryDraft(
+                plan,
+                empty,
+                None,
+                len(findings),
+                0,
+                0,
+                "delta",
+                0,
+                change.open,
+                first_keys=first_keys,
+            )
         links = card_links(rows_by_id, [finding.ticket_id for finding in rows], tdx)
         # The lead counts tickets, not findings: one ticket can carry two findings, and a
         # ticket cleared of one finding still needs attention while another stays open.
@@ -798,17 +843,31 @@ def draft_summary(
             reader=card_reader(settings, destination),
             close_hold_days=tdx.rules.close_hold_days,
             waiting_hold_days=tdx.rules.waiting_hold_days,
+            events_today=events_on(events, request.slot.astimezone(tz).date(), tz),
         )
     else:
-        events = events_this_week(
-            run.rows,
-            run.feeds.forms,
-            run.result.event_states,
-            run.now,
-            tz,
-            rules,
-            tdx.summary.events_days,
-        )
+        nudge: str | None = None
+        first = request.day_first
+        if (
+            tdx.summary.repeat_full
+            and not request.first
+            and first is not None
+            and first.astimezone(tz).date() == request.slot.astimezone(tz).date()
+        ):
+            # Added since the last post is news, not a reminder left untouched.
+            untouched = (
+                untouched_keys(findings, run.feeds.feeds, rows_by_id, first, request.day_first_keys)
+                - change.new
+            )
+            if untouched:
+                slots = SummarySlots.from_settings(tdx.summary, settings.schedule)
+                nudge = nudge_line(
+                    tdx.summary.nudge_lines,
+                    request.slot.astimezone(tz),
+                    slots.number_on_day(request.slot),
+                    len({ticket_id for ticket_id, _ in untouched}),
+                    card_time(first, tz),
+                )
         ids = [*(event.ticket_id for event in events), *(f.ticket_id for f in findings)]
         links = card_links(rows_by_id, ids, tdx)
         shown, card = fit_summary_card(
@@ -833,6 +892,9 @@ def draft_summary(
             reader=card_reader(settings, destination),
             close_hold_days=tdx.rules.close_hold_days,
             waiting_hold_days=tdx.rules.waiting_hold_days,
+            untouched_keys=untouched,
+            first_slot=first,
+            nudge=nudge,
         )
     shown_keys = {(finding.ticket_id, finding.kind) for finding in shown}
     record = AlertPlan(
@@ -853,6 +915,8 @@ def draft_summary(
         len(change.cleared),
         change.open,
         len(shown_keys & set(urgent)),
+        first_keys,
+        len({ticket_id for ticket_id, _ in untouched}),
     )
 
 
@@ -899,6 +963,7 @@ def send_summary(
         "mention": "none" if delta else settings.tdx.summary.mention,
         "destination": destination,
         "urgent": draft.urgent,
+        "untouched": draft.untouched,
     }
 
     def outcome(
@@ -917,6 +982,7 @@ def send_summary(
             cleared=draft.cleared,
             slot=request.slot,
             open_keys=draft.open_keys,
+            first_keys=draft.first_keys,
             urgent=(
                 UrgentOutcome("in_summary", draft.urgent)
                 if status == "sent" and draft.urgent
@@ -1529,9 +1595,11 @@ def watch(
     from its time until ``grace_minutes`` later (and only inside desk hours) until posted; a
     cycle that runs while one is due is called as ``run_cycle(summary=SummaryRequest(...))``,
     otherwise as ``run_cycle()``. The request is ``full`` when nothing was posted yet that
-    day (so a missed first slot makes the next one full), else a ``delta`` against the set open
-    at the last post. A sent summary records its slot and open set in the summary state, so a
-    restart in the same slot does not post again; a delta with nothing new or due records its
+    day (so a missed first slot makes the next one full) or with ``tdx.summary.repeat_full``,
+    else a ``delta`` against the set open at the last post. The day's first post also records
+    its actionable findings, which later full summaries that day check. A sent summary
+    records its slot and open set in the summary state, so a restart in the same slot does not
+    post again; a delta with nothing new or due records its
     slot without a post or a notice. A slot posted more than 15 minutes late, or skipped because no
     cycle posted it in time, sends one notice naming the time (and, when skipped, the last
     failure's reason).
@@ -1711,13 +1779,17 @@ def watch(
             signed_out = notice_day is not None
             request = None
             if pending is not None and summary_state is not None:
-                full = summary_state.full_due(pending)
+                first = summary_state.full_due(pending)
                 request = SummaryRequest(
                     pending,
                     late=_utc(now) - _utc(pending) > SUMMARY_LATE_AFTER,
-                    kind="full" if full else "delta",
+                    # repeat_full: every slot is full, so nobody has to scroll up.
+                    kind="full" if first or summary.repeat_full else "delta",
                     since=summary_state.last_posted,
                     previous=summary_state.open,
+                    first=first,
+                    day_first=summary_state.day_first_slot,
+                    day_first_keys=summary_state.day_first_keys,
                 )
             try:
                 run, outcome = run_cycle() if request is None else run_cycle(summary=request)
@@ -1801,7 +1873,12 @@ def watch(
             if request is not None and summary_path is not None:
                 summary_state = SummaryState(summary_path)  # as this cycle left it
                 if outcome.status == "sent":
-                    summary_state.record(request.slot, posted=True, open_keys=outcome.open_keys)
+                    summary_state.record(
+                        request.slot,
+                        posted=True,
+                        open_keys=outcome.open_keys,
+                        first_keys=outcome.first_keys if request.first else None,
+                    )
                     pending = pending_reason = None
                     if request.late:
                         notify(summary_late_notice(local(request.slot), local(clock())))

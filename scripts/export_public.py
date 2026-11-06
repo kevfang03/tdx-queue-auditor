@@ -44,6 +44,7 @@ ALLOWED_FILES = frozenset(
         "config.example.toml",
         ".env.example",
         "docs/USAGE.md",
+        "docs/SETUP.md",
         "docs/tdx-rules.md",
         "docs/tdx-page-structure.md",
     }
@@ -96,6 +97,8 @@ class BrokenLink:
 
 _OWNER_HANDLE = "kevfang" + "03"
 _PUBLIC_REPO = f"github.com/{_OWNER_HANDLE}/tdx-queue-auditor"
+# The files that may link the public repository: the README, and the setup guide's clone step.
+_REPO_LINK_FILES = frozenset({"README.md", "docs/SETUP.md"})
 _ALLOWED_ADDRESSES = frozenset({"noreply@anthropic.com"})
 _TEST_TLDS = frozenset({"example", "test", "invalid", "localhost"})
 # Placeholder user-profile folder names in the tests and docs. "jos" is a test's "José" written
@@ -116,7 +119,8 @@ def _address_allowed(path: str, line: str, match: re.Match[str]) -> bool:
 
 def _placeholder_user(name: str, allowed: frozenset[str]) -> bool:
     name = name.strip().lower()
-    if not name or name[0] in "%{$<":
+    # An empty name, a variable (%USERNAME%, {user}, $HOME), <you>, or "…" for any name.
+    if not name or name[0] in "%{$<…":
         return True
     return any(name == user or name.startswith(user + " ") for user in allowed)
 
@@ -132,7 +136,7 @@ def _posix_user_allowed(path: str, line: str, match: re.Match[str]) -> bool:
 def _handle_allowed(path: str, line: str, match: re.Match[str]) -> bool:
     if path == "LICENSE" and line.lower().startswith("copyright"):
         return True
-    if path != "README.md":
+    if path not in _REPO_LINK_FILES:
         return False
     start = match.start() - len("github.com/")
     return start >= 0 and line[start : start + len(_PUBLIC_REPO)].lower() == _PUBLIC_REPO

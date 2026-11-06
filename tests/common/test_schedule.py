@@ -335,3 +335,18 @@ def test_mention_people_needs_addresses_and_never_shows_them() -> None:
     )
     assert "mf123" not in repr(settings.tdx.summary)
     assert "mention_people=1" in repr(settings.tdx.summary)
+
+
+def test_a_slot_knows_its_number_in_the_day() -> None:
+    slots = SummarySlots(NY, {0: (time(8, 0), time(12, 30), time(17, 30))})  # Mondays
+
+    assert [
+        slots.number_on_day(at(2026, 10, 19, h, m)) for h, m in ((8, 0), (12, 30), (17, 30))
+    ] == [
+        1,
+        2,
+        3,
+    ]
+    assert slots.number_on_day(at(2026, 10, 19, 7, 0)) == 0
+    assert slots.number_on_day(at(2026, 10, 19, 13, 0)) == 2
+    assert slots.number_on_day(at(2026, 10, 20, 8, 0)) == 0  # no Tuesday slots

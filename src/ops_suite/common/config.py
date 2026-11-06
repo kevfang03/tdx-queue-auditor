@@ -10,6 +10,7 @@ import re
 from collections.abc import Iterator
 from contextvars import ContextVar
 from pathlib import Path
+from string import Formatter
 from typing import Annotated, Literal
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -27,6 +28,14 @@ CONFIG_ENV_VAR = "OPS_SUITE_CONFIG"
 DEFAULT_TEAM_NAME = "the help desk"
 TEAM_NAME_MAX_CHARS = 40
 MAILBOX_MAX_CHARS = 254
+# The banner on a repeated summary: playful, so it gets read, and counts only.
+NUDGE_PLACEHOLDERS = ("tickets", "since")
+DEFAULT_NUDGE_LINES = (
+    "👀 {tickets} from {since} still haven't been touched. Anyone out there?",
+    "Same {tickets} as {since}. They're not going to answer themselves.",
+    "Still waiting since {since}: {tickets}. Just checking someone's reading these 🙂",
+    "{tickets} from {since} are still sitting here, untouched.",
+)
 
 Weekday = Literal["mon", "tue", "wed", "thu", "fri", "sat", "sun"]
 WEEKDAYS: tuple[Weekday, ...] = ("mon", "tue", "wed", "thu", "fri", "sat", "sun")
@@ -269,6 +278,32 @@ class TdxSummarySettings(BaseModel):
     # of its event goes to the desk chat at once, on a short card, once per ticket and kind.
     # It applies only while summaries go to the desk chat and teams.desk.approved is true.
     urgent_events_to_desk: bool = True
+    # Every slot posts the full summary, never a short update and never nothing: readers who
+    # don't scroll up still see every open ticket. On a later slot of the day, a banner names
+    # the tickets from the day's first summary that nobody has touched since.
+    repeat_full: bool = False
+    # The banner's lines, one per slot in rotation. "{tickets}" becomes "3 tickets" and
+    # "{since}" the first summary's time, as "8:00 AM"; no other placeholder is allowed.
+    nudge_lines: list[str] = list(DEFAULT_NUDGE_LINES)
+
+    @field_validator("nudge_lines")
+    @classmethod
+    def _valid_nudge_lines(cls, value: list[str]) -> list[str]:
+        if not value:
+            raise ValueError("nudge_lines needs at least one line")
+        for position, line in enumerate(value, start=1):
+            if not line.strip():
+                raise ValueError(f"nudge line {position} is empty")
+            try:
+                fields = [name for _, name, _, _ in Formatter().parse(line) if name is not None]
+            except ValueError as error:
+                raise ValueError(f"nudge line {position}: {error}") from None
+            unknown = sorted(set(fields) - set(NUDGE_PLACEHOLDERS))
+            if unknown:
+                allowed = " and ".join(f"{{{name}}}" for name in NUDGE_PLACEHOLDERS)
+                shown = ", ".join(f"{{{name}}}" for name in unknown)
+                raise ValueError(f"nudge line {position} uses {shown}; only {allowed} are allowed")
+        return value
 
     @field_validator("times")
     @classmethod

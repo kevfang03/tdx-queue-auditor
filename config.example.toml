@@ -183,8 +183,20 @@ mention = "none"
 mention_people = []
 # "Events this week": unclaimed events with a date this many days from the summary time (1-30).
 events_days = 7
-# The day's first summary posted is full; later slots post only what changed, or nothing. While
-# summaries go to the desk chat, "tdx watch --to desk" sends its alert cards to your personal
+# The day's first summary posted is full; later slots post only what changed, or nothing.
+# repeat_full = true posts the full summary at every slot instead, for readers who don't scroll
+# up. A later slot then opens with a banner when tickets from the day's first summary are
+# still untouched (no desk reply or note since), and marks those rows "(still open since
+# 8:00 AM)". The banner rotates through nudge_lines: "{tickets}" becomes "3 tickets" and
+# "{since}" the first summary's time; no other placeholder is allowed.
+repeat_full = false
+nudge_lines = [
+    "👀 {tickets} from {since} still haven't been touched. Anyone out there?",
+    "Same {tickets} as {since}. They're not going to answer themselves.",
+    "Still waiting since {since}: {tickets}. Just checking someone's reading these 🙂",
+    "{tickets} from {since} are still sitting here, untouched.",
+]
+# While summaries go to the desk chat, "tdx watch --to desk" sends its alert cards to your personal
 # chat (personal_alerts) instead of the desk chat; desk_alerts = true sends them to the desk chat as before.
 desk_alerts = false
 personal_alerts = true

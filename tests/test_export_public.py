@@ -32,6 +32,7 @@ BASE_FILES = {
     "LICENSE": "MIT License\n\nCopyright (c) 2026 Sample Owner\n",
     ".gitignore": "secret.env\n",
     "docs/USAGE.md": "# Usage\n\n## Demo\n\nSee the [design](DESIGN.md#principles).\n",
+    "docs/SETUP.md": "# Setup\n\nThen see [usage](USAGE.md#demo).\n",
     "docs/" + DESIGN_NOTES: "# Working notes\n",
     PLAN_FILE: "# Payload\n",
     "CLAUDE.md": "# Instructions\n",
@@ -101,6 +102,7 @@ def test_exports_the_allowlist_and_the_overlay_only(repo: Path, tmp_path: Path) 
             "README.md",
             "docs/DESIGN.md",
             "docs/PRIVACY.md",
+            "docs/SETUP.md",
             "docs/USAGE.md",
             "pyproject.toml",
             "scripts/export_public.py",
@@ -264,6 +266,7 @@ def test_a_privacy_hit_fails_and_prints_no_matched_text(
         "Co-Authored-By: Claude <noreply" + "@" + "anthropic.com>",
         "Startup file: C:" + "\\Users\\" + "you\\AppData\\Roaming",
         'WIN = r"C:' + "\\Users\\" + 'Desk Owner\\.local\\bin\\uv.exe"',
+        "not the `PS C:" + "\\Users\\" + "…>` prompt line",
         "cd /" + "Users/" + "you/project",
         "uses: astral-sh/setup-uv@v10.3.0",
         "key = sk-ant-test-0000",
@@ -287,12 +290,14 @@ def test_the_owner_handle_is_allowed_only_in_the_public_repo_links() -> None:
         f"Old repo: https://github.com/{handle}/{PRIVATE_REPO}\n".encode(),
         "LICENSE": f"Copyright (c) 2026 {handle}\n".encode(),
         "docs/USAGE.md": f"https://github.com/{handle}/tdx-queue-auditor\n".encode(),
+        "docs/SETUP.md": f"git clone https://github.com/{handle}/tdx-queue-auditor\n"
+        f"Old repo: https://github.com/{handle}/{PRIVATE_REPO}\n".encode(),
     }
 
     hits = export.privacy_hits(files)
 
     handles = [(h.path, h.line) for h in hits if h.pattern == "owner-handle"]
-    assert handles == [("README.md", 3), ("docs/USAGE.md", 1)]
+    assert sorted(handles) == [("README.md", 3), ("docs/SETUP.md", 2), ("docs/USAGE.md", 1)]
 
 
 def test_binary_files_are_not_scanned() -> None:
@@ -364,7 +369,7 @@ def test_check_mode_writes_nothing(
 ) -> None:
     assert export.main(["--check", "--repo", str(repo)]) == 0
 
-    assert "Check only: 11 file(s)" in capsys.readouterr().out
+    assert "Check only: 12 file(s)" in capsys.readouterr().out
     assert not list(tmp_path.rglob(".export-manifest"))
 
 
@@ -390,6 +395,8 @@ def test_this_checkout_passes_the_export_checks() -> None:
         pytest.skip("not a git checkout")
 
     files = export.build_snapshot(REPO_ROOT, allow_dirty=True)
+    # The public docs, the setup guide among them, are all held to the wording checks.
+    assert {"docs/USAGE.md", "docs/SETUP.md", "docs/tdx-rules.md"} <= set(files)
     hits = export.privacy_hits(files)
     broken, checked = export.broken_links(files)
 

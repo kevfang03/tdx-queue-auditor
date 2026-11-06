@@ -134,6 +134,13 @@ class SummarySlots:
             for when in self.times.get(day.weekday(), ())
         ]
 
+    def number_on_day(self, slot: datetime) -> int:
+        """How many of the day's slots (in ``tz``) are at or before ``slot``: 1 for the day's
+        first, 0 for a moment before any of them."""
+        moment = slot.astimezone(UTC)
+        day = slot.astimezone(self.tz).date()
+        return sum(1 for s in self._on(day) if s.astimezone(UTC) <= moment)
+
     def latest_at_or_before(self, now: datetime) -> datetime | None:
         """The most recent slot at or before ``now`` (searching back a week), or None."""
         if now.tzinfo is None or now.utcoffset() is None:
