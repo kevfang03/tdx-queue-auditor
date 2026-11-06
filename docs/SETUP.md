@@ -128,7 +128,7 @@ The template's default target ("chat with yourself") does not work, so change it
    - **Post as:** `Flow bot`
    - **Post in:** `Chat with Flow bot`
    - **Recipient:** your own name or email
-   - **Adaptive Card:** this box empties when you change "Post in". Click into it, click the **lightning-bolt** icon (dynamic content), and choose **Attachments Adaptive Card**.
+   - **Adaptive Card:** if it still holds a value, such as **content** in the picture below, leave it. Only if it's empty, click into it, click the **lightning-bolt** icon (dynamic content), and choose **Attachments Adaptive Card**. The box must hold **one** value: two side by side break the card. The two boxes often show different values (**content**, **string(…)** or **Attachments Adaptive Card**); that's how the template sets them, and all of them work.
 4. Under **False**, click the **For each** box and set its input the same way (lightning bolt) to **Attachments**.
 5. Click the **first box** at the top, **When a Teams webhook request is received**, and set **Who can trigger the flow** to **Anyone**. The auditor posts without signing in to Microsoft, so the flow must accept that.
 6. Click **Save** (top right).
