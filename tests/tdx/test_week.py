@@ -207,7 +207,8 @@ def test_the_row_text_has_date_times_space_av_and_state_only() -> None:
     )
     assert event_details(untimed, TZ) == "Fri 10/23 · no form · location missing"
     assert event_details(waiting, TZ) == (
-        "Fri 10/23 2:00 PM · — · A/V on form: yes · waiting on requester since Tue 8:26 AM"
+        "Fri 10/23 2:00 PM · space not on form · A/V on form: yes"
+        " · waiting on requester since Tue 8:26 AM"
     )
 
 
@@ -239,7 +240,8 @@ def test_event_times_are_shown_in_the_display_time_zone() -> None:
                       None, True, "waiting_on_requester", asked)  # fmt: skip
 
     assert event_details(event, ZoneInfo("America/Los_Angeles")) == (
-        "Fri 10/23 11:00 AM · — · A/V on form: yes · waiting on requester since Tue 5:26 AM"
+        "Fri 10/23 11:00 AM · space not on form · A/V on form: yes"
+        " · waiting on requester since Tue 5:26 AM"
     )
 
 

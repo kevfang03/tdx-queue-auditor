@@ -71,6 +71,8 @@ STATE_LABELS: dict[EventState, str] = {
     "not_read": "not checked yet",
 }
 SPACE_LABELS: dict[SpaceType, str] = {"lobby": "Lobby", "classroom": "Classroom", "other": "Other"}
+# A form was read but its space was not: said in words, since a dash left readers guessing.
+SPACE_NOT_ON_FORM = "space not on form"
 
 
 @dataclass(frozen=True, slots=True)
@@ -186,12 +188,13 @@ def event_details(event: WeekEvent, tz: ZoneInfo, now: datetime | None = None) -
     """``Tue 10/21 3:00–5:00 PM · Lobby · A/V on form: yes · not emailed yet``: no names, no
     free text. "A/V on form" because only the form's checklist is read: A/V asked for later
     is not seen, so "no" does not mean "no A/V needed". Without a form the line says ``no
-    form`` once; a form whose space was not read keeps ``—`` for the space alone. ``now`` is
-    the summary's time, which dates a waiting time a week or more away (``event_state_label``)."""
+    form`` once; a form whose space was not read says ``space not on form`` for the space
+    alone, in words, since readers did not know what a dash meant. ``now`` is the summary's
+    time, which dates a waiting time a week or more away (``event_state_label``)."""
     when = event_when(event, tz)
     state = event_state_label(event, tz, now)
     if event.space is None and event.av is None:
         return f"{when} · no form · {state}"
-    space = SPACE_LABELS[event.space] if event.space is not None else "—"
+    space = SPACE_LABELS[event.space] if event.space is not None else SPACE_NOT_ON_FORM
     av = av_on_form_label(event.av)
     return f"{when} · {space} · A/V on form: {av} · {state}"

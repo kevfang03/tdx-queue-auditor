@@ -185,10 +185,11 @@ mention_people = []
 events_days = 7
 # The day's first summary posted is full; later slots post only what changed, or nothing.
 # repeat_full = true posts the full summary at every slot instead, for readers who don't scroll
-# up. A later slot then opens with a banner when tickets from the day's first summary are
-# still untouched (no desk reply or note since), and marks those rows "(still open since
-# 8:00 AM)". The banner rotates through nudge_lines: "{tickets}" becomes "3 tickets" and
-# "{since}" the first summary's time; no other placeholder is allowed.
+# up. A later slot then opens with a banner when tickets shown on an earlier summary that
+# day are still untouched (no desk reply or note since that post), and lists them right
+# under it in a "Still untouched" section. The banner rotates through nudge_lines:
+# "{tickets}" becomes "3 tickets" and "{since}" the time of the post that first showed them
+# ("8:00 AM", or "earlier today" when that differs); no other placeholder is allowed.
 repeat_full = false
 nudge_lines = [
     "👀 {tickets} from {since} still haven't been touched. Anyone out there?",

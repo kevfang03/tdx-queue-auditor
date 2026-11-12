@@ -16,10 +16,12 @@ the alert cards and the alert state unless ``alert_ready_to_close``
 (``fit_delta_card``: added findings and due reminders as rows, cleared ones as a count), and
 only when it has a row: in a shared chat, an update with nothing to act on is noise. With
 ``tdx.summary.repeat_full`` every slot posts the full card instead, for readers who never
-scroll up; on a later slot it opens with a banner when actionable findings from the day's
-first summary are still untouched (``untouched_keys``), and marks those rows.
+scroll up; on a later slot it opens with a banner when actionable findings shown on an
+earlier summary that day are still untouched (``untouched_keys``), and lists those tickets
+right under it, in a "Still untouched" section of their own.
 ``SummaryState`` remembers the last slot dealt with, the last one posted, the (ticket id,
-kind) set open at that post and the day's first summary; ``summary_change`` compares.
+kind) set open at that post and when each actionable finding was first shown that day;
+``summary_change`` compares.
 Between slots, an event finding within ``near_event_days`` of its event (``urgent_event``)
 goes to the chat on a short card of its own (``fit_urgent_card``) or, in a summary run,
 marked "(event soon)" in the summary.
@@ -842,16 +844,17 @@ def build_card(
 # --- shift summary ----------------------------------------------------------------------
 
 
-_SUMMARY_SCHEMA = 4
+_SUMMARY_SCHEMA = 5
+_FIRST_KEYS_SCHEMA = 4  # the same, with "day_first_keys" (a set) instead of "day_shown"
 _KNOWN_SCHEMA = 3  # the same, before "day_first_slot" and "day_first_keys"
 _OPEN_SET_SCHEMA = 2  # the same, before "known"
 
 
 class SummaryState:
-    """``summary-state-<destination>.json``: ``{"schema": 4, "last_slot": "<ISO local>",
+    """``summary-state-<destination>.json``: ``{"schema": 5, "last_slot": "<ISO local>",
     "last_posted": "<ISO local>", "open": ["<id>:<kind>", ...], "known": [...],
-    "day_first_slot": "<ISO local>", "day_first_keys": [...]}``. Ticket ids, kinds and slot
-    times only.
+    "day_first_slot": "<ISO local>", "day_shown": {"<id>:<kind>": "<ISO local>", ...}}``.
+    Ticket ids, kinds and slot times only.
 
     ``last_slot`` is the last slot dealt with (posted, or skipped with nothing new to show);
     ``last_posted`` the last slot actually posted, which a delta counts "since"; ``open`` the
@@ -859,10 +862,14 @@ class SummaryState:
     ``known`` is every finding the chat has been shown, by a summary or an urgent card, that
     has not cleared since: unlike ``open`` it drops a finding the run it clears, so an urgent
     finding that clears and comes back is posted again. ``day_first_slot`` is the slot of the
-    day's first summary posted and ``day_first_keys`` its actionable findings
-    (``ACTIONABLE_KINDS``): what a later full summary that day checks for tickets nobody has
-    touched since. A schema 3 file has neither and starts both empty, so no banner shows
-    until the next first post of a day; a schema 2 file has no ``known`` either and
+    day's first summary posted, and ``day_shown`` maps each actionable finding
+    (``ACTIONABLE_KINDS``) shown on a summary that day to the slot of the first one that
+    showed it: what a later full summary checks for tickets nobody has touched since
+    (``shown_on``). A schema 4 file kept only the first summary's findings, so each of them
+    gets ``day_first_slot``; ``shown_on`` ignores a map from an earlier day, and the next
+    post starts a fresh one. A schema 3 file has neither and starts both empty, so no
+    banner shows until the next first post of a day; a schema 2 file has no ``known``
+    either and
     starts it as its open set; a schema 1 file (``last_slot`` only) keeps its slot and has no
     post, so the next slot posted is full. An unreadable file is moved aside to ``.bad`` and
     the state starts empty, so the current slot may be posted once more, in full: the safe
@@ -876,13 +883,14 @@ class SummaryState:
         self.open: frozenset[StateKey] = frozenset()
         self.known: frozenset[StateKey] = frozenset()
         self.day_first_slot: datetime | None = None
-        self.day_first_keys: frozenset[StateKey] = frozenset()
+        self.day_shown: dict[StateKey, datetime] = {}
         if path.exists():
             try:
                 self._parse(json.loads(path.read_text(encoding="utf-8")))
             except (ValueError, KeyError, TypeError, AttributeError):
                 self.last_slot = self.last_posted = self.day_first_slot = None
-                self.open = self.known = self.day_first_keys = frozenset()
+                self.open = self.known = frozenset()
+                self.day_shown = {}
                 log.warning("summary state unreadable")
                 try:
                     os.replace(path, path.with_name(path.name + ".bad"))
@@ -896,23 +904,32 @@ class SummaryState:
             self.last_slot = _aware(str(data["last_slot"]))
             return
         schema = data["schema"]
-        if schema not in (_OPEN_SET_SCHEMA, _KNOWN_SCHEMA, _SUMMARY_SCHEMA):
+        if schema not in (_OPEN_SET_SCHEMA, _KNOWN_SCHEMA, _FIRST_KEYS_SCHEMA, _SUMMARY_SCHEMA):
             raise ValueError("unknown schema")
         last_slot, last_posted = data["last_slot"], data["last_posted"]
         self.last_slot = None if last_slot is None else _aware(str(last_slot))
         self.last_posted = None if last_posted is None else _aware(str(last_posted))
         self.open = _key_set(data["open"])
         self.known = self.open if schema == _OPEN_SET_SCHEMA else _key_set(data["known"])
-        if schema == _SUMMARY_SCHEMA:
+        if schema in (_FIRST_KEYS_SCHEMA, _SUMMARY_SCHEMA):
             first = data["day_first_slot"]
             self.day_first_slot = None if first is None else _aware(str(first))
-            self.day_first_keys = _key_set(data["day_first_keys"])
+        if schema == _FIRST_KEYS_SCHEMA:
+            # Only the first summary's findings were kept: each was shown at that slot.
+            keys = _key_set(data["day_first_keys"])
+            slot = self.day_first_slot
+            self.day_shown = {} if slot is None else dict.fromkeys(keys, slot)
+        elif schema == _SUMMARY_SCHEMA:
+            shown = data["day_shown"]
+            if not isinstance(shown, dict):
+                raise ValueError("not a mapping")
+            self.day_shown = {_state_key(str(k)): _aware(str(v)) for k, v in shown.items()}
 
     def __repr__(self) -> str:
         return (
             f"SummaryState(last_slot={self.last_slot!r}, last_posted={self.last_posted!r}, "
             f"open={len(self.open)}, known={len(self.known)}, "
-            f"day_first_slot={self.day_first_slot!r}, day_first={len(self.day_first_keys)})"
+            f"day_first_slot={self.day_first_slot!r}, day_shown={len(self.day_shown)})"
         )
 
     def posted(self, slot: datetime) -> bool:
@@ -927,28 +944,42 @@ class SummaryState:
             return True
         return self.last_posted.astimezone(slot.tzinfo).date() != slot.date()
 
+    def _same_day(self, slot: datetime) -> bool:
+        first = self.day_first_slot
+        return first is not None and first.astimezone(slot.tzinfo).date() == slot.date()
+
+    def shown_on(self, slot: datetime) -> dict[StateKey, datetime]:
+        """``day_shown`` for ``slot``'s day (in the slot's time zone): each actionable finding
+        shown on a summary that day, with the slot that first showed it. Empty when the map
+        is from another day."""
+        return dict(self.day_shown) if self._same_day(slot) else {}
+
     def record(
         self,
         slot: datetime,
         *,
         posted: bool = True,
         open_keys: Set[StateKey] | None = None,
-        first_keys: Set[StateKey] | None = None,
+        shown_keys: Set[StateKey] | None = None,
     ) -> None:
         """Remember ``slot`` as dealt with (``posted``, or skipped with nothing new to show)
         and the open set, which the chat has now been shown (``known``), and write the file
-        atomically. Only after a post, or the decision to skip. ``first_keys``, given only for
-        the day's first post, are its actionable findings: ``slot`` becomes the day's first
-        summary."""
+        atomically. Only after a post, or the decision to skip. ``shown_keys``, given for a
+        post, are the actionable findings it showed: each one not shown earlier that day is
+        remembered with ``slot`` (``day_shown``). A post on a new day becomes the day's first
+        summary and starts a fresh map."""
         self.last_slot = slot
         if posted:
             self.last_posted = slot
         if open_keys is not None:
             self.open = frozenset(open_keys)
             self.known = self.known | self.open
-        if posted and first_keys is not None:
-            self.day_first_slot = slot
-            self.day_first_keys = frozenset(first_keys)
+        if posted and shown_keys is not None:
+            if not self._same_day(slot):
+                self.day_first_slot = slot
+                self.day_shown = {}
+            for key in shown_keys:
+                self.day_shown.setdefault(key, slot)
         self._save()
 
     def update_known(self, known: Set[StateKey], *, shown: Set[StateKey] = frozenset()) -> None:
@@ -970,7 +1001,10 @@ class SummaryState:
             "open": _key_list(self.open),
             "known": _key_list(self.known),
             "day_first_slot": self.day_first_slot.isoformat() if self.day_first_slot else None,
-            "day_first_keys": _key_list(self.day_first_keys),
+            "day_shown": {
+                f"{ticket_id}:{kind}": self.day_shown[(ticket_id, kind)].isoformat()
+                for ticket_id, kind in sorted(self.day_shown)
+            },
         }
         self.path.parent.mkdir(parents=True, exist_ok=True)
         temp_path = self.path.with_name(self.path.name + ".tmp")
@@ -995,7 +1029,7 @@ def _state_key(text: str) -> StateKey:
     return int(ticket), kind
 
 
-# --- untouched since the day's first summary ----------------------------------------------
+# --- untouched since an earlier summary of the day showed them -----------------------------
 
 # The findings that ask the desk to act. "Check if resolved" (ready_to_close) only asks for a
 # look, and "Events this week" is an agenda, so neither counts as untouched.
@@ -1010,7 +1044,10 @@ ACTIONABLE_KINDS = frozenset(
         "event_over",
     }
 )
-STILL_OPEN_MARK = "(still open since {since})"
+UNTOUCHED_SECTION_LABEL = "Still untouched"
+UNTOUCHED_SINCE = "on the cards since {time}"
+# When the untouched tickets were first shown on different posts of the day.
+EARLIER_TODAY = "earlier today"
 
 
 def actionable_keys(findings: Iterable[Finding]) -> frozenset[StateKey]:
@@ -1033,32 +1070,43 @@ def untouched_keys(
     findings: Iterable[Finding],
     feeds: Mapping[int, TicketFeed],
     rows_by_id: Mapping[int, TicketRow],
-    first_slot: datetime | None,
-    first_keys: Set[StateKey],
+    slot: datetime,
+    day_shown: Mapping[StateKey, datetime],
     kinds: Set[str] = ACTIONABLE_KINDS,
 ) -> frozenset[StateKey]:
-    """The findings still open, untouched, since the day's first summary at ``first_slot``,
-    whose actionable findings were ``first_keys``. A finding is untouched when it is one of
-    ``kinds``, its key was on the first summary, and either this cycle read no feed for its
-    ticket (a title-only finding, such as a missing room: still listed means nobody fixed
-    the title) or the feed's newest desk activity (``desk_activity``) is undated or dated
-    before ``first_slot``. Pure: the caller passes this cycle's feeds by ticket id."""
-    if first_slot is None:
-        return frozenset()
+    """The findings still open and untouched since an earlier summary of the day showed them.
+    ``day_shown`` maps each actionable finding shown today to the slot that first showed it
+    (``SummaryState.shown_on``). A finding is untouched when it is one of ``kinds``, it was
+    first shown before ``slot`` (on an earlier post, so not new now), and either this cycle
+    read no feed for its ticket (a title-only finding, such as a missing room: still listed
+    means nobody fixed the title) or the feed's newest desk activity (``desk_activity``) is
+    undated or dated before that first showing. Desk work from before the ticket reached the
+    cards does not count: the card asked for something after it. Pure: the caller passes
+    this cycle's feeds by ticket id."""
     untouched: set[StateKey] = set()
     for finding in findings:
         key = (finding.ticket_id, finding.kind)
-        if finding.kind not in kinds or key not in first_keys:
+        shown = day_shown.get(key)
+        if finding.kind not in kinds or shown is None or shown >= slot:
             continue
         feed = feeds.get(finding.ticket_id)
         if feed is not None:
             row = rows_by_id.get(finding.ticket_id)
             requestor = row.requestor if row is not None else ""
             newest = next((e for e in feed.entries if desk_activity(e, requestor)), None)
-            if newest is not None and newest.created is not None and newest.created >= first_slot:
-                continue  # the desk wrote or noted something since the first summary
+            if newest is not None and newest.created is not None and newest.created >= shown:
+                continue  # the desk wrote or noted something since the card showed it
         untouched.add(key)
     return frozenset(untouched)
+
+
+def since_label(times: Iterable[datetime], tz: ZoneInfo) -> str:
+    """When the untouched tickets were first shown, as the banner and preview line say it:
+    the slot's time (``8:00 AM``) when they all share one, else ``earlier today``."""
+    distinct = set(times)
+    if len(distinct) != 1:
+        return EARLIER_TODAY
+    return card_time(next(iter(distinct)), tz)
 
 
 def nudge_line(
@@ -1066,7 +1114,7 @@ def nudge_line(
 ) -> str:
     """The banner text for ``slot``, the day's ``slot_number``-th summary: one of ``lines``, in
     rotation so that consecutive slots differ whenever there are two lines or more, with
-    ``{tickets}`` as ``3 tickets`` and ``{since}`` as the first summary's time."""
+    ``{tickets}`` as ``3 tickets`` and ``{since}`` as ``since_label`` gives it."""
     index = (slot.date().toordinal() * 3 + slot_number) % len(lines)
     return lines[index].format(tickets=_plural(tickets, "ticket"), since=since)
 
@@ -1081,18 +1129,18 @@ def summary_preview(
     reader: Reader = PERSONAL,
     *,
     events_today: int = 0,
-    still_open: int = 0,
+    untouched: int = 0,
     since: str = "",
 ) -> str:
     """A summary card's counts-only preview line: ``fallback_text``, then ``· 2 events today``
-    and ``· 3 still open since 8:00 AM``, each only when not zero. ``still_open`` counts
-    tickets. A flow can post this line as a text message, so the chat's pop-up says more
-    than "sent a card"; still no ids, titles or names."""
+    and ``· 3 untouched since 8:00 AM`` (``since`` as ``since_label`` gives it), each only
+    when not zero. ``untouched`` counts tickets. A flow can post this line as a text message,
+    so the chat's pop-up says more than "sent a card"; still no ids, titles or names."""
     parts = [fallback_text(count, reader)]
     if events_today:
         parts.append(f"{_plural(events_today, 'event')} today")
-    if still_open and since:
-        parts.append(f"{still_open} still open since {since}")
+    if untouched and since:
+        parts.append(f"{untouched} untouched since {since}")
     return " · ".join(parts)
 
 
@@ -1270,8 +1318,7 @@ def _summary_card(
     close_hold_days: int = DEFAULT_CLOSE_HOLD_DAYS,
     waiting_hold_days: int = DEFAULT_WAITING_HOLD_DAYS,
     banner: str | None = None,
-    still_open: Set[StateKey] = frozenset(),
-    still_open_mark: str = "",
+    untouched: Mapping[StateKey, datetime] | None = None,
     preview: str = "",
 ) -> tuple[tuple[Finding, ...], dict[str, object]]:
     lead = reader.summary_lead(bool(findings))
@@ -1279,12 +1326,30 @@ def _summary_card(
         f"Checked {summary_counts.get('unclaimed', 0)} unclaimed tickets at {card_time(now, tz)}."
     )
     body: list[dict[str, object]] = []
+    untouched = untouched or {}
+    first_shown: tuple[Finding, ...] = ()
     if banner is not None:
-        # First and loud: the reason this card repeats what the chat saw earlier today.
+        # First and loud: the reason this card repeats what the chat saw earlier today. The
+        # tickets it means follow right under it, so nobody has to hunt for them.
         body.append(
             _text(escape_markdown(banner), size="Large", weight="Bolder", color="Attention")
         )
-        body.append(_text(f'Marked "{still_open_mark}" below.', spacing="Small"))
+        first_shown = _untouched_section(
+            body,
+            [f for f in findings if (f.ticket_id, f.kind) in untouched],
+            untouched,
+            new_keys,
+            rows_by_id,
+            links,
+            tz,
+            title_chars,
+            show_titles,
+            max_rows,
+            duplicates,
+            urgent_keys,
+            reader,
+        )
+        findings = [f for f in findings if (f.ticket_id, f.kind) not in untouched]
     body.append(_text(heading, weight="Bolder", size="Medium"))
     body.append(_text(f"{lead} {checked}", isSubtle=True, size="Small", spacing="None"))
     if events:
@@ -1312,16 +1377,15 @@ def _summary_card(
         links,
         title_chars,
         show_titles,
-        max_rows,
+        max_rows - len(first_shown),
         duplicates,
         urgent_keys,
         reader,
         close_hold_days,
         waiting_hold_days,
-        still_open,
-        still_open_mark,
     )
-    return shown, _summary_shell(preview or fallback_text(ticket_count(findings), reader), body)
+    fallback = preview or fallback_text(ticket_count(findings), reader)
+    return (*first_shown, *shown), _summary_shell(fallback, body)
 
 
 def _summary_shell(fallback: str, body: list[dict[str, object]]) -> dict[str, object]:
@@ -1350,14 +1414,11 @@ def _finding_sections(
     reader: Reader = PERSONAL,
     close_hold_days: int = DEFAULT_CLOSE_HOLD_DAYS,
     waiting_hold_days: int = DEFAULT_WAITING_HOLD_DAYS,
-    still_open: Set[StateKey] = frozenset(),
-    still_open_mark: str = "",
 ) -> tuple[Finding, ...]:
     """One section per kind with its count and its tip (``section_hint``), at most
     ``max_rows`` rows in all (``+N more`` per section past that), appended to ``body``. Rows
-    in ``urgent_keys`` are marked ``(event soon)``, rows in ``still_open`` that were not added
-    get ``still_open_mark``; the wording names the team as ``reader`` does. Returns the
-    findings shown by id."""
+    in ``urgent_keys`` are marked ``(event soon)``; the wording names the team as ``reader``
+    does. Returns the findings shown by id."""
     shown: list[Finding] = []
     budget = max(max_rows, 0)
     for kind in sorted({finding.kind for finding in findings}, key=_kind_order):
@@ -1369,15 +1430,7 @@ def _finding_sections(
             shown.append(finding)
             ticket_id = finding.ticket_id
             key = (ticket_id, finding.kind)
-            line = _id_link(ticket_id, links)
-            if key in new_keys:
-                line += " (added)"
-            elif key in still_open and still_open_mark:
-                line += f" {still_open_mark}"
-            if key in urgent_keys:
-                line += f" {EVENT_SOON_MARK}"
-            if ticket_id in duplicates:
-                line += f" (possible duplicate of #{duplicates[ticket_id]})"
+            line = _row_line(finding, links, new_keys, urgent_keys, duplicates)
             wording = finding_wording(finding, reader)
             if key in reminder_keys:
                 wording += " · reminder"
@@ -1392,6 +1445,83 @@ def _finding_sections(
             body.append(_text(wording, isSubtle=True, spacing="None"))
         if len(rows) > len(visible):
             body.append(_text(f"+{len(rows) - len(visible)} more", isSubtle=True, spacing="Small"))
+    return tuple(shown)
+
+
+def _row_line(
+    finding: Finding,
+    links: Mapping[int, str | None],
+    new_keys: Set[StateKey],
+    urgent_keys: Set[StateKey],
+    duplicates: Mapping[int, int],
+) -> str:
+    """A row's first line before the title: the linked id, then ``(added)``, ``(event soon)``
+    and ``(possible duplicate of #<id>)`` where they apply."""
+    ticket_id = finding.ticket_id
+    key = (ticket_id, finding.kind)
+    line = _id_link(ticket_id, links)
+    if key in new_keys:
+        line += " (added)"
+    if key in urgent_keys:
+        line += f" {EVENT_SOON_MARK}"
+    if ticket_id in duplicates:
+        line += f" (possible duplicate of #{duplicates[ticket_id]})"
+    return line
+
+
+def _untouched_section(
+    body: list[dict[str, object]],
+    findings: Sequence[Finding],
+    shown_at: Mapping[StateKey, datetime],
+    new_keys: Set[StateKey],
+    rows_by_id: Mapping[int, TicketRow],
+    links: Mapping[int, str | None],
+    tz: ZoneInfo,
+    title_chars: int,
+    show_titles: bool,
+    max_rows: int,
+    duplicates: Mapping[int, int],
+    urgent_keys: Set[StateKey],
+    reader: Reader,
+) -> tuple[Finding, ...]:
+    """The "Still untouched (N)" section under the banner, appended to ``body``: each
+    untouched ticket once, in the usual row order, with one detail line per untouched finding
+    (``Requester waiting · No reply yet, opened 4 days ago · on the cards since 8:00 AM``):
+    the section label stands in for the usual section the row leaves. ``shown_at`` gives each
+    finding's first showing today. N counts tickets. A ticket shows only when all its findings
+    fit in ``max_rows``; from the first that does not, the rest are ``+N more`` (tickets).
+    Returns the findings shown by id."""
+    by_ticket: dict[int, list[Finding]] = {}
+    for finding in findings:
+        by_ticket.setdefault(finding.ticket_id, []).append(finding)
+    body.append(
+        _text(f"{UNTOUCHED_SECTION_LABEL} ({len(by_ticket)})", weight="Bolder", spacing="Medium")
+    )
+    shown: list[Finding] = []
+    budget = max(max_rows, 0)
+    hidden = 0
+    for ticket_id, group in by_ticket.items():
+        if hidden or len(group) > budget:
+            hidden += 1
+            continue
+        budget -= len(group)
+        shown.extend(group)
+        line = _row_line(group[0], links, new_keys, urgent_keys, duplicates)
+        details = [
+            f"{section_label(f.kind)} · {finding_wording(f, reader)} · "
+            + UNTOUCHED_SINCE.format(time=card_time(shown_at[(f.ticket_id, f.kind)], tz))
+            for f in group
+        ]
+        title = _shown_title(rows_by_id.get(ticket_id), title_chars, show_titles)
+        if not show_titles:
+            # As the usual rows without titles: "#<id> · <detail>" on one line.
+            body.append(_text(f"{line} · {details[0]}", spacing="Small"))
+            details = details[1:]
+        else:
+            body.append(_text(line if title is None else f"{line} {title}", spacing="Small"))
+        body.extend(_text(detail, isSubtle=True, spacing="None") for detail in details)
+    if hidden:
+        body.append(_text(f"+{hidden} more", isSubtle=True, spacing="Small"))
     return tuple(shown)
 
 
@@ -1431,7 +1561,7 @@ def fit_summary_card(
     close_hold_days: int = DEFAULT_CLOSE_HOLD_DAYS,
     waiting_hold_days: int = DEFAULT_WAITING_HOLD_DAYS,
     untouched_keys: Set[StateKey] = frozenset(),
-    first_slot: datetime | None = None,
+    day_shown: Mapping[StateKey, datetime] | None = None,
     nudge: str | None = None,
 ) -> tuple[tuple[Finding, ...], dict[str, object]]:
     """The summary card and the findings it shows by id (the rest are counted as ``+N
@@ -1439,11 +1569,13 @@ def fit_summary_card(
     ``CARD_MAX_BYTES``. Record only the returned findings.
 
     ``untouched_keys``: on a later full summary of the day, the findings nobody has touched
-    since the day's first summary at ``first_slot`` (``untouched_keys()``, which the caller
-    computes from the feeds). With ``nudge``, the banner text, and at least one of them
-    listed and not added since the last post, the card opens with ``nudge`` (large, bold, in
-    the attention color), those rows are marked ``(still open since 8:00 AM)`` and the
-    preview line counts their tickets. Without ``nudge`` none of that shows.
+    since an earlier summary that day first showed them (``untouched_keys()``, which the
+    caller computes from the feeds); ``day_shown`` gives each one's first showing. With
+    ``nudge``, the banner text, and at least one of them listed, the card opens with
+    ``nudge`` (large, bold, in the attention color), then a "Still untouched (N)" section
+    with those tickets, taken out of their usual sections (a section left empty is not
+    shown), and the preview line counts them. Without ``nudge`` none of that shows. The
+    heading still counts every ticket on the card.
 
     ``events`` is the "Events this week" section, first (at most ``max_rows`` rows);
     ``duplicates`` maps a ticket id to the older ticket it may duplicate; ``since`` is the
@@ -1460,29 +1592,32 @@ def fit_summary_card(
     total = ticket_count(ordered)
     new = ticket_count(f for f in ordered if (f.ticket_id, f.kind) in new_keys)
     slot_text = card_time(slot, tz)
-    listed = {(f.ticket_id, f.kind) for f in ordered}
-    still_open = (frozenset(untouched_keys) & listed) - frozenset(new_keys)
+    shown_at = day_shown or {}
+    untouched = {
+        (f.ticket_id, f.kind): shown_at[(f.ticket_id, f.kind)]
+        for f in ordered
+        if (f.ticket_id, f.kind) in untouched_keys and (f.ticket_id, f.kind) in shown_at
+    }
     banner: str | None = None
-    since_first = ""
-    if nudge is not None and first_slot is not None and still_open:
+    since_untouched = ""
+    if nudge is not None and untouched:
         banner = nudge
-        since_first = card_time(first_slot, tz)
+        since_untouched = since_label(untouched.values(), tz)
     else:
-        still_open = frozenset()
-    mark = STILL_OPEN_MARK.format(since=since_first) if banner is not None else ""
+        untouched = {}
     preview = summary_preview(
         total,
         reader,
         events_today=events_on(events, slot.astimezone(tz).date(), tz),
-        still_open=len({ticket_id for ticket_id, _ in still_open}),
-        since=since_first,
+        untouched=len({ticket_id for ticket_id, _ in untouched}),
+        since=since_untouched,
     )
-    since_label = since_text(since, slot, tz) if since is not None else None
+    last = since_text(since, slot, tz) if since is not None else None
     who = reader_name(reader)
     if late:
-        heading = summary_heading(total, new, card_time(now, tz), slot_text, since_label, who=who)
+        heading = summary_heading(total, new, card_time(now, tz), slot_text, last, who=who)
     else:
-        heading = summary_heading(total, new, slot_text, since=since_label, who=who)
+        heading = summary_heading(total, new, slot_text, since=last, who=who)
     rows = max_rows
     while True:
         shown, card = _summary_card(
@@ -1504,8 +1639,7 @@ def fit_summary_card(
             close_hold_days,
             waiting_hold_days,
             banner,
-            still_open,
-            mark,
+            untouched,
             preview,
         )
         card = with_mentions(card, mention, mention_people)
@@ -1537,14 +1671,14 @@ def build_summary_card(
     close_hold_days: int = DEFAULT_CLOSE_HOLD_DAYS,
     waiting_hold_days: int = DEFAULT_WAITING_HOLD_DAYS,
     untouched_keys: Set[StateKey] = frozenset(),
-    first_slot: datetime | None = None,
+    day_shown: Mapping[StateKey, datetime] | None = None,
     nudge: str | None = None,
 ) -> dict[str, object]:
-    """The shift-summary Adaptive Card: the banner on a later full summary with untouched
-    tickets (see ``fit_summary_card``), the heading (``Queue clear`` when nothing is open, a
-    late marker when late), "Events this week" when there are any, every open finding
-    grouped by kind with its count, linked ids marked ``(added)``, ``(still open since 8:00
-    AM)`` and ``(possible duplicate of #<id>)``, titles only with ``show_titles``, ``+N
+    """The shift-summary Adaptive Card: the banner and the "Still untouched" section on a
+    later full summary with untouched tickets (see ``fit_summary_card``), the heading
+    (``Queue clear`` when nothing is open, a late marker when late), "Events this week" when
+    there are any, every other open finding grouped by kind with its count, linked ids marked
+    ``(added)`` and ``(possible duplicate of #<id>)``, titles only with ``show_titles``, ``+N
     more`` past ``max_rows``, the counts-only preview line, and the optional mentions."""
     return fit_summary_card(
         findings,
@@ -1568,7 +1702,7 @@ def build_summary_card(
         close_hold_days=close_hold_days,
         waiting_hold_days=waiting_hold_days,
         untouched_keys=untouched_keys,
-        first_slot=first_slot,
+        day_shown=day_shown,
         nudge=nudge,
     )[1]
 

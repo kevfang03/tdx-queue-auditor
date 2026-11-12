@@ -280,10 +280,11 @@ class TdxSummarySettings(BaseModel):
     urgent_events_to_desk: bool = True
     # Every slot posts the full summary, never a short update and never nothing: readers who
     # don't scroll up still see every open ticket. On a later slot of the day, a banner names
-    # the tickets from the day's first summary that nobody has touched since.
+    # the tickets shown on an earlier summary that day that nobody has touched since.
     repeat_full: bool = False
     # The banner's lines, one per slot in rotation. "{tickets}" becomes "3 tickets" and
-    # "{since}" the first summary's time, as "8:00 AM"; no other placeholder is allowed.
+    # "{since}" the time of the post that first showed them, as "8:00 AM", or "earlier
+    # today" when that differs between them; no other placeholder is allowed.
     nudge_lines: list[str] = list(DEFAULT_NUDGE_LINES)
 
     @field_validator("nudge_lines")

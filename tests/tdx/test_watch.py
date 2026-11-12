@@ -1177,13 +1177,16 @@ def test_a_due_summary_replaces_the_alert_card_and_records_its_findings(
         watch_module.summary_state_path(settings, "desk").read_text(encoding="utf-8")
     )
     assert summary_state == {
-        "schema": 4,
+        "schema": 5,
         "last_slot": "2026-10-19T07:30:00-04:00",
         "last_posted": "2026-10-19T07:30:00-04:00",
         "open": ["101:client_waiting", "102:client_waiting"],
         "known": ["101:client_waiting", "102:client_waiting"],
         "day_first_slot": "2026-10-19T07:30:00-04:00",
-        "day_first_keys": ["101:client_waiting", "102:client_waiting"],
+        "day_shown": {
+            "101:client_waiting": "2026-10-19T07:30:00-04:00",
+            "102:client_waiting": "2026-10-19T07:30:00-04:00",
+        },
     }
 
 
@@ -2041,7 +2044,7 @@ def test_urgent_card_headings_and_lines() -> None:
     )
 
 
-# --- repeated full summaries and the "still untouched" banner ------------------------------
+# --- repeated full summaries and the "Still untouched" section ------------------------------
 
 REPEAT_TIMES = {day: ["08:00", "12:30", "17:30"] for day in ("mon", "tue")}
 DESK_WORKER = "Casey Deskworker"
@@ -2065,14 +2068,21 @@ def with_feeds(run: AuditRun, entries: dict[int, list[FeedEntry]]) -> AuditRun:
     return replace(run, feeds=replace(run.feeds, feeds=feeds))
 
 
-def desk_day(now: datetime) -> AuditRun:
+def desk_day(now: datetime, *, later: bool = False) -> AuditRun:
     """Monday: 101 and 104 get no desk reply or note after 8:00 (104's requester wrote again),
     102 gets a desk reply and 103 a desk note at 10:00, 105 is a title-only finding, 106 is
-    "Check if resolved", and 107 is added at 10:00."""
+    "Check if resolved", and 107 is added at 10:00. With ``later``, 108 and 109 are added at
+    10:00 too: 108 gets a desk note at 2:00 PM, and 109 had a desk reply at 9:00, before any
+    card showed it."""
     findings = [waiting(101), waiting(102), waiting(103), waiting(104), tbd(105), ready(106)]
+    ids = [101, 102, 103, 104, 105, 106, 107]
     if now >= at(10, 19, 10):
         findings.append(waiting(107))
-    run = make_run(findings, ids=(101, 102, 103, 104, 105, 106, 107), now=now)
+        if later:
+            findings.extend([waiting(108), waiting(109)])
+    if later:
+        ids.extend([108, 109])
+    run = make_run(findings, ids=tuple(ids), now=now)
     return with_feeds(
         run,
         {
@@ -2082,6 +2092,8 @@ def desk_day(now: datetime) -> AuditRun:
             104: [said(REQUESTOR, at(10, 19, 10)), said(DESK_WORKER, at(10, 19, 6))],
             106: [said(DESK_WORKER, at(10, 19, 6))],
             107: [said(REQUESTOR, at(10, 19, 9, 30))],
+            108: [said(DESK_WORKER, at(10, 19, 14), "private"), said(REQUESTOR, at(10, 19, 9))],
+            109: [said(DESK_WORKER, at(10, 19, 9))],
         },
     )
 
@@ -2091,15 +2103,23 @@ def row_line(card: dict, ticket_id: int) -> str:
     return line
 
 
+def section_of(card: dict) -> list[str]:
+    """The "Still untouched" section's lines, heading first, up to the card's heading."""
+    lines = lines_of(card)
+    start = next(i for i, line in enumerate(lines) if line.startswith("Still untouched ("))
+    end = next(i for i, line in enumerate(lines) if line.startswith("TDX queue at "))
+    return lines[start:end]
+
+
 @pytest.mark.usefixtures("both_webhooks")
-def test_repeat_full_posts_the_full_summary_at_every_slot_with_the_untouched_banner(
+def test_repeat_full_posts_the_full_summary_at_every_slot_with_the_untouched_section(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     poster = Poster()
     monkeypatch.setattr(watch_module, "post_card", poster)
     settings = summary_settings(times=REPEAT_TIMES, repeat_full=True, mention="everyone")
     clock = Clock(at(10, 19, 7, 55), stop_at=at(10, 19, 17, 35))
-    cycles = SummaryCycles(clock, settings, runs=desk_day)
+    cycles = SummaryCycles(clock, settings, runs=lambda now: desk_day(now, later=True))
 
     code, notices = run_desk_watch(settings, clock, cycles)
 
@@ -2111,9 +2131,9 @@ def test_repeat_full_posts_the_full_summary_at_every_slot_with_the_untouched_ban
     ]
     morning, noon, evening = desk_cards(poster)
 
-    # The day's first summary never has a banner.
+    # The day's first summary has no banner and no section.
     assert heading(morning).startswith("TDX queue at 8:00 AM: 6 tickets for the help desk")
-    assert "still open" not in json.dumps(morning)
+    assert "Still untouched" not in json.dumps(morning)
     assert morning["fallbackText"] == "6 tickets for the help desk"
 
     # 12:30: 101, 104 and 105 are untouched since 8:00; 102 and 103 were answered or noted.
@@ -2121,34 +2141,61 @@ def test_repeat_full_posts_the_full_summary_at_every_slot_with_the_untouched_ban
         settings.tdx.summary.nudge_lines, at(10, 19, 12, 30), 2, 3, "8:00 AM"
     )
     assert noon["body"][0] == {"type": "TextBlock", "text": nudge, "wrap": True, **BANNER_STYLE}
-    assert noon["body"][1]["text"] == 'Marked "(still open since 8:00 AM)" below.'
-    assert noon["body"][2]["text"] == (
-        "TDX queue at 12:30 PM: 7 tickets for the help desk (1 added since 8:00 AM)"
+    section = section_of(noon)
+    assert section[0] == "Still untouched (3)" and noon["body"][1]["weight"] == "Bolder"
+    assert [line.split("]")[0] for line in section[1:]] == ["[#101", "[#104", "[#105"]
+    assert all(line.endswith(" · on the cards since 8:00 AM") for line in section[1:])
+    assert " · Requester waiting · " in row_line(noon, 101)
+    assert noon["body"][5]["text"] == (
+        "TDX queue at 12:30 PM: 9 tickets for the help desk (3 added since 8:00 AM)"
     )
-    for ticket_id in (101, 104, 105):
-        # Right after the linked id, where "(added)" goes.
-        assert f"TicketID={ticket_id}) (still open since 8:00 AM)" in row_line(noon, ticket_id)
+    # Taken out of their usual sections; 105's section, left empty, is gone.
+    assert "Requester waiting (5)" in lines_of(noon)
+    assert not any(line.startswith("Event soon: no room yet") for line in lines_of(noon))
     for ticket_id in (102, 103, 106, 107):
-        assert "still open" not in row_line(noon, ticket_id)
+        assert "on the cards since" not in row_line(noon, ticket_id)
     assert "(added)" in row_line(noon, 107)
-    assert noon["fallbackText"] == "7 tickets for the help desk · 3 still open since 8:00 AM"
+    text = json.dumps(noon, ensure_ascii=False)
+    assert "Marked" not in text and "still open since" not in text
+    assert noon["fallbackText"] == "9 tickets for the help desk · 3 untouched since 8:00 AM"
     assert noon["msteams"]["entities"]  # mentions apply to every full summary
 
-    # 17:30: nothing changed since 12:30, and it still posts, with another line.
-    assert evening["body"][0]["text"] != nudge and evening["body"][0]["color"] == "Attention"
-    assert evening["body"][2]["text"] == "TDX queue at 5:30 PM: 7 tickets for the help desk"
-    assert "(still open since 8:00 AM)" in row_line(evening, 101)
-    assert "still open" not in row_line(evening, 107) and "(added)" not in row_line(evening, 107)
+    # 17:30: 107 and 109, first shown at 12:30, count from 12:30 (109's 9:00 reply was before
+    # any card showed it); 108 got a desk note at 2:00 PM. Another line, "earlier today".
+    evening_nudge = watch_module.nudge_line(
+        settings.tdx.summary.nudge_lines, at(10, 19, 17, 30), 3, 5, "earlier today"
+    )
+    assert evening["body"][0]["text"] == evening_nudge != nudge
+    section = section_of(evening)
+    assert section[0] == "Still untouched (5)"
+    assert [line.split("]")[0] for line in section[1:]] == [
+        "[#101",
+        "[#104",
+        "[#107",
+        "[#109",
+        "[#105",
+    ]
+    assert row_line(evening, 101).endswith(" · on the cards since 8:00 AM")
+    assert row_line(evening, 107).endswith(" · on the cards since 12:30 PM")
+    assert row_line(evening, 109).endswith(" · on the cards since 12:30 PM")
+    assert "on the cards since" not in row_line(evening, 108)
+    assert "(added)" not in row_line(evening, 107)
+    assert lines_of(evening)[7] == "TDX queue at 5:30 PM: 9 tickets for the help desk"
+    assert evening["fallbackText"] == (
+        "9 tickets for the help desk · 5 untouched since earlier today"
+    )
 
     state = watch_module.SummaryState(watch_module.summary_state_path(settings, "desk"))
     assert state.day_first_slot == at(10, 19, 8) and state.last_posted == at(10, 19, 17, 30)
-    assert state.day_first_keys == {
-        (101, "client_waiting"),
-        (102, "client_waiting"),
-        (103, "client_waiting"),
-        (104, "client_waiting"),
-        (105, "location_tbd_soon"),
+    morning_keys = [(101, "client_waiting"), (102, "client_waiting"), (103, "client_waiting"),
+                    (104, "client_waiting"), (105, "location_tbd_soon")]  # fmt: skip
+    noon_keys = [(107, "client_waiting"), (108, "client_waiting"), (109, "client_waiting")]
+    assert state.day_shown == {
+        **dict.fromkeys(morning_keys, at(10, 19, 8)),
+        **dict.fromkeys(noon_keys, at(10, 19, 12, 30)),
     }  # not 106: "Check if resolved" never counts
+    saved = json.loads(watch_module.summary_state_path(settings, "desk").read_text("utf-8"))
+    assert saved["schema"] == 5
 
 
 @pytest.mark.usefixtures("both_webhooks")
@@ -2180,8 +2227,8 @@ def test_each_day_starts_fresh_with_its_own_first_summary(
     path = watch_module.summary_state_path(settings, "desk")
     monday = watch_module.SummaryState(path)
     keys = {(101, "client_waiting")}
-    monday.record(at(10, 19, 8), open_keys=keys, first_keys=keys)
-    monday.record(at(10, 19, 17, 30), open_keys=keys)
+    monday.record(at(10, 19, 8), open_keys=keys, shown_keys=keys)
+    monday.record(at(10, 19, 17, 30), open_keys=keys, shown_keys=keys)
 
     def runs(now: datetime) -> AuditRun:
         return make_run([waiting(101)], now=now)  # no feed read: still listed is untouched
@@ -2192,9 +2239,11 @@ def test_each_day_starts_fresh_with_its_own_first_summary(
     first, noon = desk_cards(poster)
     assert heading(first).startswith("TDX queue at 8:00 AM")  # Monday's keys: no banner
     assert noon["body"][0]["color"] == "Attention"
-    assert "(still open since 8:00 AM)" in row_line(noon, 101)
+    assert section_of(noon)[0] == "Still untouched (1)"
+    assert row_line(noon, 101).endswith(" · on the cards since 8:00 AM")
     state = watch_module.SummaryState(path)
-    assert state.day_first_slot == at(10, 20, 8) and state.day_first_keys == keys
+    assert state.day_first_slot == at(10, 20, 8)
+    assert state.day_shown == dict.fromkeys(keys, at(10, 20, 8))
 
 
 @pytest.mark.usefixtures("both_webhooks")
@@ -2213,6 +2262,8 @@ def test_without_repeat_full_later_slots_stay_deltas_and_never_show_the_banner(
     full, noon = desk_cards(poster)  # 17:30 had nothing new: skipped, as before
     assert heading(noon) == "Since 8:00 AM: 1 more ticket for the help desk"
     assert noon["fallbackText"] == "7 tickets for the help desk"
-    assert "still open" not in json.dumps(desk_cards(poster))
+    assert "Still untouched" not in json.dumps(desk_cards(poster))
     state = watch_module.SummaryState(watch_module.summary_state_path(settings, "desk"))
-    assert state.day_first_slot == at(10, 19, 8) and len(state.day_first_keys) == 5
+    # The state is still written: the 8:00 findings, and 107 from the 12:30 update.
+    assert state.day_first_slot == at(10, 19, 8) and len(state.day_shown) == 6
+    assert state.day_shown[(107, "client_waiting")] == at(10, 19, 12, 30)

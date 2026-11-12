@@ -668,14 +668,17 @@ Headings count the tickets that need attention and say for whom ("you" on a pers
 
 "Added" means not open at the last summary posted ("since yesterday", or `since Fri 5:00 PM` after a gap; just `(2 added)` before the first post). With none added, the part in brackets is left out.
 
-**Repeating the full summary at every slot.** In a busy chat, readers rarely scroll up to the morning card, and a short update (or no post at all) lets a ticket nobody answered slip by. With `repeat_full = true`, **every** slot posts the full summary, never an update and never nothing: a slot with nothing changed, or with nothing to look at (`Queue clear ...`), still posts. Late slots within `grace_minutes` still post late, and the mention goes on every one. On a **later** slot of the day (not the day's first post), when actionable tickets from the day's first summary are still **untouched**, the card opens with one big line in the attention color, with a normal line under it:
+**Repeating the full summary at every slot.** In a busy chat, readers rarely scroll up to the morning card, and a short update (or no post at all) lets a ticket nobody answered slip by. With `repeat_full = true`, **every** slot posts the full summary, never an update and never nothing: a slot with nothing changed, or with nothing to look at (`Queue clear ...`), still posts. Late slots within `grace_minutes` still post late, and the mention goes on every one. On a **later** slot of the day (not the day's first post), when actionable tickets shown on an **earlier** summary that day are still **untouched**, the card opens with one big line in the attention color, and those tickets follow right under it in a section of their own, before the card's usual heading:
 
 ```text
 👀 3 tickets from 8:00 AM still haven't been touched. Anyone out there?
-Marked "(still open since 8:00 AM)" below.
+Still untouched (3)
+#1234 · Requester waiting · No reply yet, opened 4 days ago · on the cards since 8:00 AM
+...
+TDX queue at 12:30 PM: 7 tickets for the help desk
 ```
 
-and those rows carry `(still open since 8:00 AM)` right after the ticket's link, where `(added)` goes. "Untouched" means the ticket was on the day's first summary with the same finding, is still listed, and has had no desk reply or desk private note since that summary: a reply from the requester does not count, and a ticket whose history this cycle did not read (such as a missing room, which only fixing the title clears) counts as untouched while it is listed. "Check if resolved" rows and "Events this week" never count. The big line rotates through `nudge_lines`, so consecutive slots differ; `{tickets}` becomes `3 tickets` (or `1 ticket`) and `{since}` the first summary's time. Any other placeholder, or an empty list, stops every command with one line naming the problem.
+Each row there names the section it would usually sit in, its usual wording, and the post that first showed it today. Those tickets are taken out of their usual sections, so each appears once; a usual section left empty is not shown, and the heading still counts every ticket on the card. The section counts against `max_rows_per_card` like any other rows. "Untouched" means the ticket was on an earlier summary today with the same finding, is still listed, and has had no desk reply or desk private note since **the post that first showed it**: a ticket first listed at 12:30 counts from 12:30, so desk work from before it reached the cards does not count. A reply from the requester does not count either, and a ticket whose history this cycle did not read (such as a missing room, which only fixing the title clears) counts as untouched while it is listed. "Check if resolved" rows and "Events this week" never count. The big line rotates through `nudge_lines`, so consecutive slots differ; `{tickets}` becomes `3 tickets` (or `1 ticket`) and `{since}` the time of the post that first showed them (`8:00 AM`), or `earlier today` when they were first shown on different posts. Any other placeholder, or an empty list, stops every command with one line naming the problem.
 
 ```toml
 [tdx.summary]
@@ -688,9 +691,9 @@ nudge_lines = [
 ]
 ```
 
-In `.env`: `OPS_SUITE_TDX__SUMMARY__REPEAT_FULL=true`, and the lines as JSON, `OPS_SUITE_TDX__SUMMARY__NUDGE_LINES=["...", "..."]`. With `repeat_full = false` (the default) later slots post updates as above and the banner never shows; the day's first summary is remembered either way.
+In `.env`: `OPS_SUITE_TDX__SUMMARY__REPEAT_FULL=true`, and the lines as JSON, `OPS_SUITE_TDX__SUMMARY__NUDGE_LINES=["...", "..."]`. With `repeat_full = false` (the default) later slots post updates as above and the banner never shows; what each post showed is remembered either way.
 
-**The preview line.** A summary card's preview line (its `fallbackText`) counts a little more than other cards': `5 tickets for the help desk · 2 events today · 3 still open since 8:00 AM`. "Events today" are the "Events this week" entries dated that day; "still open" counts the tickets under the banner, so it shows only when the banner does. Parts that are zero are left out. It holds counts only, never ids, titles or names. Teams shows only "Sent a card" for a flow's card; a flow can post this line as a text message too, so the pop-up says something useful ([SETUP.md, step 6.3](SETUP.md#63-optional-a-readable-pop-up)).
+**The preview line.** A summary card's preview line (its `fallbackText`) counts a little more than other cards': `5 tickets for the help desk · 2 events today · 3 untouched since 8:00 AM` (`since earlier today` when they were first shown on different posts). "Events today" are the "Events this week" entries dated that day; "untouched" counts the tickets in the "Still untouched" section, so it shows only when the banner does. Parts that are zero are left out. It holds counts only, never ids, titles or names. Teams shows only "Sent a card" for a flow's card; a flow can post this line as a text message too, so the pop-up says something useful ([SETUP.md, step 6.3](SETUP.md#63-optional-a-readable-pop-up)).
 
 **Card times are 12-hour**, like the ticket titles: `7:30 AM`, `12:00 PM`, `Tue 1:37 PM`, and event times such as `1:30–2:30 PM` or `11:30 AM–12:30 PM`. Only the cards change: summary times in your config, the state files, the log and the terminal stay 24-hour.
 

@@ -19,12 +19,14 @@ times, and a cycle that runs while a slot is due posts ``send_summary`` instead 
 card, recording its findings as alerted. The day's first summary posted is full
 (every open finding, with the mention); later slots post a delta (new findings and due
 reminders, cleared ones as a count) or nothing when no row is new or due; with
-``tdx.summary.repeat_full`` every slot posts the full summary, with a banner for the tickets
-from the day's first summary that nobody has touched since. While summaries go to the
+``tdx.summary.repeat_full`` every slot posts the full summary, with a banner and a section of
+their own for the tickets shown on an earlier summary that day that nobody has touched
+since. While summaries go to the
 desk chat, a desk watch's alert cards go to the personal chat (``alert_destination``,
 ``tdx.summary.desk_alerts`` / ``personal_alerts``). The summary state file
 (``summary-state-desk.json``) holds the last slot dealt with, the last one posted, the
-(ticket id, kind) set open at that post and the day's first summary. A slot posted late, or
+(ticket id, kind) set open at that post, the day's first summary and when each actionable
+finding was first shown that day. A slot posted late, or
 not at all within ``grace_minutes``, sends one plain notice to the personal chat. The
 summary also lists the coming week's events and marks possible duplicates, both worked out in memory
 from this run; "ready to close" findings go on it but, unless ``tdx.alerts.alert_ready_to_close``,
@@ -52,7 +54,7 @@ import sys
 import time
 from collections import Counter
 from collections.abc import Callable, Mapping, Sequence, Set
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import Literal
@@ -103,6 +105,7 @@ from ops_suite.tdx.alerts import (
     nudge_line,
     open_findings,
     plan_alerts,
+    since_label,
     summary_change,
     untouched_keys,
     urgent_event,
@@ -224,8 +227,9 @@ class SendOutcome:
     slot: datetime | None = None  # summaries only: the slot
     # Summaries only: the (ticket id, kind) set to remember as open at this post.
     open_keys: frozenset[StateKey] = frozenset()
-    # Summaries only: the actionable findings on it, remembered when it is the day's first.
-    first_keys: frozenset[StateKey] = frozenset()
+    # Summaries only: the actionable findings it showed, remembered with the slot that first
+    # showed each one that day.
+    shown_keys: frozenset[StateKey] = frozenset()
     # The urgent event findings this cycle took to the desk chat, on their own card or in the
     # summary; None when there were none.
     urgent: "UrgentOutcome | None" = None
@@ -245,9 +249,10 @@ class UrgentOutcome:
 class SummaryRequest:
     """Post the shift summary for ``slot`` (aware, desk time) in this cycle: the full summary,
     or a delta against ``previous``, the set open at the last post (at ``since``). ``first``:
-    nothing was posted yet on the slot's day. A later slot of the day knows the day's first
-    summary (``day_first``, with its actionable findings ``day_first_keys``), which a
-    repeated full summary checks for untouched tickets."""
+    nothing was posted yet on the slot's day. A later slot of the day knows when each
+    actionable finding was first shown that day (``day_shown``, from
+    ``SummaryState.shown_on``), which a repeated full summary checks for untouched
+    tickets."""
 
     slot: datetime
     late: bool = False
@@ -255,8 +260,7 @@ class SummaryRequest:
     since: datetime | None = None  # the last slot posted; a delta needs it
     previous: frozenset[StateKey] = frozenset()
     first: bool = True
-    day_first: datetime | None = None
-    day_first_keys: frozenset[StateKey] = frozenset()
+    day_shown: Mapping[StateKey, datetime] = field(default_factory=dict)
 
 
 # --- one audit ---------------------------------------------------------------------------
@@ -729,8 +733,8 @@ class SummaryDraft:
     cleared: int = 0
     open_keys: frozenset[StateKey] = frozenset()  # what the post leaves as the open set
     urgent: int = 0  # rows marked "(event soon)"
-    first_keys: frozenset[StateKey] = frozenset()  # actionable findings, for the day's first
-    untouched: int = 0  # tickets marked "(still open since ...)" under the banner
+    shown_keys: frozenset[StateKey] = frozenset()  # actionable findings shown by id on it
+    untouched: int = 0  # tickets in the "Still untouched" section under the banner
 
 
 def draft_summary(
@@ -749,16 +753,17 @@ def draft_summary(
     - **Full** (the day's first post, or every slot with ``tdx.summary.repeat_full``): the
       events this week, every open finding (the new ones marked, possible duplicates pointed
       out) and the configured mentions. On a repeated full summary (not the day's first), the
-      actionable findings of the day's first summary that nobody has touched since
-      (``untouched_keys``, from this cycle's feeds) get the banner, a line from
-      ``tdx.summary.nudge_lines`` in rotation, and their rows are marked.
+      actionable findings shown on an earlier summary that day that nobody has touched since
+      (``untouched_keys``, from this cycle's feeds and ``request.day_shown``) get the banner,
+      a line from ``tdx.summary.nudge_lines`` in rotation, and a "Still untouched" section
+      of their own right under it.
     - **Delta** (later slots): rows only for the new findings and the reminders due under the
       alert policy (``state``), the cleared ones as a count; no events and no mention. Its
       ``card`` is None when no row is new, due or urgent, cleared findings or not: the slot
       is skipped and ``open_keys`` leaves the cleared ones out.
 
-    ``first_keys`` are the actionable findings open now: what the caller remembers when this
-    is the day's first post.
+    ``shown_keys`` are the actionable findings the card shows by id: what the caller
+    remembers, after a post, as shown that day.
 
     ``urgent``: urgent event findings new for the chat this cycle. They go into this summary,
     marked "(event soon)", instead of on a card of their own; a delta lists them even when
@@ -791,7 +796,6 @@ def draft_summary(
         rules,
         tdx.summary.events_days,
     )
-    first_keys = actionable_keys(findings)
     untouched: frozenset[StateKey] = frozenset()
     card: dict[str, object] | None
     if request.kind == "delta":
@@ -816,7 +820,6 @@ def draft_summary(
                 "delta",
                 0,
                 change.open,
-                first_keys=first_keys,
             )
         links = card_links(rows_by_id, [finding.ticket_id for finding in rows], tdx)
         # The lead counts tickets, not findings: one ticket can carry two findings, and a
@@ -847,17 +850,16 @@ def draft_summary(
         )
     else:
         nudge: str | None = None
-        first = request.day_first
-        if (
-            tdx.summary.repeat_full
-            and not request.first
-            and first is not None
-            and first.astimezone(tz).date() == request.slot.astimezone(tz).date()
-        ):
-            # Added since the last post is news, not a reminder left untouched.
-            untouched = (
-                untouched_keys(findings, run.feeds.feeds, rows_by_id, first, request.day_first_keys)
-                - change.new
+        day = request.slot.astimezone(tz).date()
+        # Only the slot's own day counts: each finding with the post that first showed it.
+        day_shown = {
+            key: shown_at
+            for key, shown_at in request.day_shown.items()
+            if shown_at.astimezone(tz).date() == day
+        }
+        if tdx.summary.repeat_full and not request.first and day_shown:
+            untouched = untouched_keys(
+                findings, run.feeds.feeds, rows_by_id, request.slot, day_shown
             )
             if untouched:
                 slots = SummarySlots.from_settings(tdx.summary, settings.schedule)
@@ -866,7 +868,7 @@ def draft_summary(
                     request.slot.astimezone(tz),
                     slots.number_on_day(request.slot),
                     len({ticket_id for ticket_id, _ in untouched}),
-                    card_time(first, tz),
+                    since_label((day_shown[key] for key in untouched), tz),
                 )
         ids = [*(event.ticket_id for event in events), *(f.ticket_id for f in findings)]
         links = card_links(rows_by_id, ids, tdx)
@@ -893,7 +895,7 @@ def draft_summary(
             close_hold_days=tdx.rules.close_hold_days,
             waiting_hold_days=tdx.rules.waiting_hold_days,
             untouched_keys=untouched,
-            first_slot=first,
+            day_shown=day_shown,
             nudge=nudge,
         )
     shown_keys = {(finding.ticket_id, finding.kind) for finding in shown}
@@ -915,7 +917,7 @@ def draft_summary(
         len(change.cleared),
         change.open,
         len(shown_keys & set(urgent)),
-        first_keys,
+        actionable_keys(shown),
         len({ticket_id for ticket_id, _ in untouched}),
     )
 
@@ -982,7 +984,7 @@ def send_summary(
             cleared=draft.cleared,
             slot=request.slot,
             open_keys=draft.open_keys,
-            first_keys=draft.first_keys,
+            shown_keys=draft.shown_keys,
             urgent=(
                 UrgentOutcome("in_summary", draft.urgent)
                 if status == "sent" and draft.urgent
@@ -1788,8 +1790,7 @@ def watch(
                     since=summary_state.last_posted,
                     previous=summary_state.open,
                     first=first,
-                    day_first=summary_state.day_first_slot,
-                    day_first_keys=summary_state.day_first_keys,
+                    day_shown=summary_state.shown_on(pending),
                 )
             try:
                 run, outcome = run_cycle() if request is None else run_cycle(summary=request)
@@ -1877,7 +1878,7 @@ def watch(
                         request.slot,
                         posted=True,
                         open_keys=outcome.open_keys,
-                        first_keys=outcome.first_keys if request.first else None,
+                        shown_keys=outcome.shown_keys,
                     )
                     pending = pending_reason = None
                     if request.late:
