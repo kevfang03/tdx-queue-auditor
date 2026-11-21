@@ -12,6 +12,8 @@ from collections import Counter
 
 # Punctuation that separates name parts: comma, period, apostrophe, hyphen, parentheses.
 _PUNCTUATION = re.compile(r"[,.'()\-]")
+# The author TDX puts on what it does by itself, such as applying a workflow rule.
+SYSTEM_AUTHOR = "System"
 
 
 def name_key(name: str) -> tuple[str, ...]:
@@ -34,3 +36,8 @@ def same_person(a: str, b: str) -> bool:
     if len(shorter) < 2:
         return False
     return Counter(shorter) <= Counter(longer)
+
+
+def is_system_author(name: str) -> bool:
+    """True for TDX's own ``System`` author, which is never a person on the desk."""
+    return same_person(name, SYSTEM_AUTHOR)

@@ -15,12 +15,20 @@ class FeedEntry:
     """One activity-feed entry. ``author`` is student data: never log or print it.
 
     kind: "reply" is visible to the requestor (a comment or an email reply), "private" is a
-    private note, "system" is an entry with no visible comment (for example a status change).
+    private note with written text, "system" is an entry with neither (for example a status
+    change, or a private-flagged workflow step or task update).
+
+    desk_work: staff working on the ticket, by someone other than ``System`` and the requester:
+    a written private note, a private-flagged task line or workflow step, or a status change
+    (one that is not private-flagged counts only with the requester known). Routing and
+    clean-up never count: merges, reassignments and other field changes such as the requester,
+    account or priority. Neither does a ticket-created entry.
     """
 
     author: str
     created: datetime | None
     kind: EntryKind
+    desk_work: bool = False
 
     def __repr__(self) -> str:
         when = self.created.isoformat() if self.created else None
@@ -32,9 +40,9 @@ class TicketFeed:
     """A ticket's activity feed, newest entry first.
 
     ``desk_authors``: people the feed itself shows to be staff beyond private-note authors:
-    whoever wrote a merge notice or reassignment, and the author of a visible
-    reply whose own text holds a desk signature, never the requester. Student data, like
-    ``author``.
+    whoever wrote a merge notice, a reassignment or a private-flagged activity entry, and the
+    author of a visible reply whose own text holds a desk signature, never the requester
+    through a signature. ``System`` is never one. Student data, like ``author``.
 
     ``latest_reply_text``: the comment text of the newest "reply" entry only, in
     memory, for the follow-up classifier. Student data: never log, print, store or put it in

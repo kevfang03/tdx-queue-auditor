@@ -249,7 +249,8 @@ def test_without_visibility_a_present_marker_counts() -> None:
     details = read_feed_frames([_ticket_page("5501005")], 5501005, TZ, NOW)
 
     assert details is not None
-    assert {kind for kind, _ in _kinds(details.feed)} == {"private"}
+    # Every entry is flagged. The one holding only a field change is activity, not a note.
+    assert sorted(kind for kind, _ in _kinds(details.feed)) == ["private"] * 5 + ["system"]
     assert details.marker_stats["private_visible"] == 5
     assert details.marker_stats["visibility_fallback"] == 0
 
@@ -261,7 +262,7 @@ def test_a_visibility_list_that_does_not_fit_falls_back_to_presence() -> None:
 
     assert details is not None
     assert details.marker_stats["visibility_fallback"] == 1
-    assert {kind for kind, _ in _kinds(details.feed)} == {"private"}
+    assert sorted(kind for kind, _ in _kinds(details.feed)) == ["private"] * 5 + ["system"]
 
 
 def test_parse_feed_passes_the_visibility_list_on() -> None:

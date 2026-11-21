@@ -169,7 +169,7 @@ class TdxRulesSettings(BaseModel):
     close_hold_days: int = Field(default=7, ge=1, le=30)
     # A desk private note after the requester's last reply means the desk has read it and is
     # on it: "requester waiting" waits this many days from the note, then comes back.
-    waiting_hold_days: int = Field(default=3, ge=1, le=14)
+    waiting_hold_days: int = Field(default=7, ge=1, le=14)
     # Summary rows: same requester and titles at least this similar (token Jaccard) are
     # marked "possible duplicate". Compared in memory only.
     duplicate_title_similarity: float = Field(default=0.6, gt=0, le=1)

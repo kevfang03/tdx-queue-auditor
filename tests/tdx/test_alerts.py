@@ -13,6 +13,7 @@ from ops_suite.tdx.alerts import (
     CARD_MAX_BYTES,
     NO_ROOM_WORDING,
     SECTION_LABELS,
+    UNTOUCHED_HINT,
     AlertPlan,
     AlertPolicy,
     AlertState,
@@ -1265,7 +1266,7 @@ ROOM_SET_TIP = (
     "shows as confirmed."
 )
 WAITING_TIP = (
-    "Nothing to reply yet? Add a private note to the ticket and it stays off this list for 3 days."
+    "Nothing to reply yet? Add a private note to the ticket and it stays off this list for 7 days."
 )
 TIP = "**Tip:** "
 
@@ -1294,8 +1295,8 @@ def test_section_hint_covers_ready_to_close_and_room_set_events_only() -> None:
 
 
 def test_the_ready_to_close_tip_sits_once_under_its_heading_with_the_hold() -> None:
-    no_reply = waiting(101, reason="no_reply_yet")  # a section a note does nothing for
-    _, card = summary([no_reply, ready(102), ready(103)], close_hold_days=10)
+    verdict = waiting(101, reason="expects_reply")  # a section a note does nothing for
+    _, card = summary([verdict, ready(102), ready(103)], close_hold_days=10)
 
     lines = texts(card)
     heading = lines.index("Check if resolved (2)")
@@ -1316,7 +1317,7 @@ def test_the_ready_to_close_tip_sits_once_under_its_heading_with_the_hold() -> N
 
 
 def test_the_room_set_tip_needs_a_room_set_row_in_its_section() -> None:
-    _, without = summary([STILL_PENDING, waiting(101, reason="no_reply_yet")])
+    _, without = summary([STILL_PENDING, waiting(101, reason="expects_reply")])
     assert tips(texts(without)) == []
 
     _, card = summary([STILL_PENDING, ROOM_SET])
@@ -1412,9 +1413,8 @@ def test_the_requester_waiting_tip_needs_a_row_a_note_can_hold() -> None:
     noted = Finding(102, "client_waiting", "high", "requestor_last_noted", 100, note_hours=96)
     for rows in ([waiting(101)], [noted], [waiting(103, reason="no_reply_yet"), noted]):
         assert section_hint("client_waiting", rows, 7) == WAITING_TIP
-    assert section_hint("client_waiting", [noted], 7, 1) == WAITING_TIP.replace("3 days", "1 day")
+    assert section_hint("client_waiting", [noted], 7, 1) == WAITING_TIP.replace("7 days", "1 day")
     others = [
-        waiting(101, reason="no_reply_yet"),
         waiting(102, reason="expects_reply"),
         Finding(103, "client_waiting", "high", "event_requester_replied", 30, 24),
     ]
@@ -1427,12 +1427,12 @@ def test_the_requester_waiting_tip_sits_once_under_its_heading() -> None:
 
     lines = texts(card)
     heading = lines.index("Requester waiting (2)")
-    assert lines[heading + 1] == TIP + WAITING_TIP.replace("3 days", "1 day")
-    assert tips(lines) == [TIP + WAITING_TIP.replace("3 days", "1 day"), TIP + READY_TIP]
+    assert lines[heading + 1] == TIP + WAITING_TIP.replace("7 days", "1 day")
+    assert tips(lines) == [TIP + WAITING_TIP.replace("7 days", "1 day"), TIP + READY_TIP]
     assert any("added a note 4 days ago" in line for line in lines)
 
-    _, only_new = summary([waiting(101, reason="no_reply_yet")])
-    assert tips(texts(only_new)) == []
+    _, only_verdict = summary([waiting(101, reason="expects_reply")])
+    assert tips(texts(only_verdict)) == []
 
 
 def test_a_details_confirmed_event_is_listed_without_a_time() -> None:
@@ -2302,7 +2302,14 @@ def test_a_later_full_summary_puts_untouched_tickets_in_their_own_section_under_
 
     _, card = later_summary(findings, still, events=[week_event(110, 19), week_event(111, 20)])
 
-    banner, section, first, second, heading = card["body"][:5]
+    banner, section, tip, first, second, heading = card["body"][:6]
+    assert tip == {
+        "type": "TextBlock",
+        "text": TIP + UNTOUCHED_HINT,
+        "wrap": True,
+        "spacing": "None",
+    }
+    assert sum(block["text"] == TIP + UNTOUCHED_HINT for block in card["body"]) == 1
     assert banner == {
         "type": "TextBlock",
         "text": escape_markdown(NUDGE),
@@ -2341,7 +2348,7 @@ def test_with_titles_an_untouched_row_has_its_title_then_the_detail_line() -> No
     _, card = later_summary(
         [waiting(101), waiting(102)], {(101, "client_waiting")}, show_titles=True
     )
-    row_line, detail_line = card["body"][2], card["body"][3]
+    row_line, detail_line = card["body"][3], card["body"][4]
     assert row_line["text"].startswith("[#101](") and row_line["text"].endswith(TITLES[101])
     assert detail_line == {
         "type": "TextBlock",
@@ -2360,8 +2367,8 @@ def test_untouched_tickets_from_different_posts_say_earlier_today() -> None:
     _, card = later_summary([waiting(101), tbd], still, shown=shown, slot=EVENING)
 
     lines = texts(card)
-    assert lines[2].endswith(detail(waiting(101), "8:00 AM"))
-    assert lines[3].endswith(detail(tbd, "12:30 PM"))
+    assert lines[3].endswith(detail(waiting(101), "8:00 AM"))
+    assert lines[4].endswith(detail(tbd, "12:30 PM"))
     assert card["fallbackText"] == "2 tickets for the Commons · 2 untouched since earlier today"
 
 
@@ -2373,8 +2380,8 @@ def test_a_ticket_with_two_untouched_findings_is_listed_once() -> None:
 
     lines = texts(card)
     assert lines[1] == "Still untouched (1)"
-    assert lines[2].endswith(detail(waiting(101), "8:00 AM"))
-    assert lines[3] == detail(event_over(101), "8:00 AM")
+    assert lines[3].endswith(detail(waiting(101), "8:00 AM"))
+    assert lines[4] == detail(event_over(101), "8:00 AM")
     assert sum(line.startswith("[#101]") for line in lines) == 1
     assert card["fallbackText"].endswith(" · 1 untouched since 8:00 AM")
 
@@ -2385,7 +2392,7 @@ def test_an_added_untouched_row_keeps_its_added_tag_in_the_section() -> None:
     _, card = later_summary([waiting(101)], {key}, {key})
     lines = texts(card)
     assert lines[1] == "Still untouched (1)"
-    assert lines[2].startswith("[#101](") and ") (added) · " in lines[2]
+    assert lines[3].startswith("[#101](") and ") (added) · " in lines[3]
 
 
 def test_without_a_nudge_or_untouched_rows_there_is_no_banner_section_or_count() -> None:
@@ -2404,6 +2411,8 @@ def test_the_untouched_section_counts_against_the_row_budget() -> None:
 
     lines = texts(card)
     assert lines[1] == "Still untouched (3)"
+    assert lines[2] == TIP + UNTOUCHED_HINT  # the tip is not a row: two rows still fit
+    assert lines[3].startswith("[#101](") and lines[4].startswith("[#102](")
     assert "+1 more" in lines
     assert "Requester waiting (2)" in lines and "+2 more" in lines
     assert [f.ticket_id for f in shown] == [101, 102]

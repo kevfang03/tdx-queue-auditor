@@ -26,10 +26,12 @@ Student assistants never claim tickets: a ticket stays **unclaimed** while the d
 | Unclaimed row | Created under 48 hours ago | none (counted `unclaimed_recent`) | | |
 | Unclaimed row | Created unreadable | counted `unclaimed_created_unreadable`, and its feed is opened | | |
 | Unclaimed, feed needed | Feed not read | none (counted `feed_missing`) | | |
-| Unclaimed, feed needed | No entry the requestor can see | client waiting, aged from Created (none when a desk member opened the ticket, below) | high | `no_reply_yet` |
+| Unclaimed, feed needed | No entry the requestor can see, and no dated desk work | client waiting, aged from Created (none when a desk member opened the ticket, below) | high | `no_reply_yet` |
+| Unclaimed, feed needed | No entry the requestor can see, and the newest desk work under 7 days old (`waiting_hold_days`; see "Desk work on a ticket with no reply" below) | none (counted `no_reply_work_hold`) | | |
+| Unclaimed, feed needed | The same, with that desk work 7+ days old | client waiting, aged from Created, naming the work | high | `no_reply_worked` |
 | Unclaimed, feed needed | Latest visible entry by the requestor, 48+ hours old | client waiting (the follow-up classifier may change it, below; none when a desk member opened the ticket) | high | `requestor_last` |
-| Unclaimed, feed needed | The same, and a desk private note after that entry, under 3 days old (`waiting_hold_days`; see "A desk private note means in hand" below) | none (counted `requester_note_hold`) | | |
-| Unclaimed, feed needed | The same, with that note 3+ days old | client waiting, naming the note (never classified) | high | `requestor_last_noted` |
+| Unclaimed, feed needed | The same, and a desk private note after that entry, under 7 days old (`waiting_hold_days`; see "A desk private note means in hand" below) | none (counted `requester_note_hold`) | | |
+| Unclaimed, feed needed | The same, with that note 7+ days old | client waiting, naming the note (never classified) | high | `requestor_last_noted` |
 | Unclaimed, feed needed | Latest visible entry by the requestor, under 48 hours | none (counted `client_recent`) | | |
 | Unclaimed, feed needed | Latest visible entry by the requestor, no date | needs review | normal | `requestor_last_undated` |
 | Unclaimed, feed needed | Latest visible entry by a desk member (known in this run, or remembered), under 3 days old (`close_after_days`), or undated | none (counted `desk_replied_last`) | | |
@@ -67,20 +69,20 @@ A renamed event further out than 14 days, or past, never gets its page read. Wit
 - **Same person:** names match ignoring case, punctuation and order ("Example, Alex" is "Alex Example"), and a middle name on one side only still matches. There is no fuzzy matching: a typo is someone else.
 - **Desk member:** built once per run, before any ticket is judged, from:
   - every Prim Resp name in the claimed widget;
-  - everyone who wrote a private note in any feed read in the run (only staff can);
-  - whoever wrote a merge notice (or another entry the feed reader marks as staff-only);
+  - everyone who wrote a private note or a private-flagged activity entry in any feed read in the run (only staff can);
+  - whoever wrote a merge notice or a reassignment (or another entry the feed reader marks as staff-only);
   - whoever wrote a visible reply whose **own** text contains the desk signature (see "The desk signature" below);
   - everyone other than the ticket's requestor who appears in the feeds of **2 or more different tickets** in the run (a student assistant replies on many tickets; a CC'd colleague usually on one);
   - the optional local list `extra_staff_names` (an override, normally empty);
   - anyone in the **desk-member memory** (below).
 
-  The requestor is checked first, so a staff member who opened their own ticket is treated as the requestor. The run summary prints how many desk members it knew in the run; the memory is not part of that count.
+  The requestor is checked first, so a staff member who opened their own ticket is treated as the requestor. `System`, the author TDX puts on what it does by itself, is never a desk member, even if an older desk memory holds it. The run summary prints how many desk members it knew in the run; the memory is not part of that count.
 
 ## The desk-member memory
 
 A student assistant who replies on one ticket in a run, writes no private note and is not Prim Resp anywhere looks like "anyone else". So the auditor remembers desk members across runs (without it, a live `tdx watch` run flagged a desk reply an hour old):
 
-- **What is remembered:** only names seen through a **strong** signal: Prim Resp of a claimed ticket, the author of a private note, the author of a merge notice, or the author of a reply signed with the desk signature. From then on, one reply is enough for that person to count as desk.
+- **What is remembered:** only names seen through a **strong** signal: Prim Resp of a claimed ticket, the author of a private note or private-flagged activity entry, the author of a merge notice, or the author of a reply signed with the desk signature. From then on, one reply is enough for that person to count as desk.
 - **What is not:** the "2 or more tickets in one run" guess, so a colleague who is often CC'd cannot become desk for good. `extra_staff_names` is not copied into the memory either; it stays in your config.
 - **How:** in `tdx/desk-members.json` in the data folder (see the README), next to the alert state. Each person is stored as a salted SHA-256 hash of their normalised name ("Example, Alex" and "Alex Example" give the same hash), with the date last seen. No name is ever written. The salt is random per file, so the hashes mean nothing on another computer.
 - **Forgetting:** a member not seen for 180 days (`tdx.rules.desk_memory_forget_days`, 30 to 730) is dropped. Delete the file to reset it; a corrupt file is moved aside to `desk-members.json.bad` and the memory starts empty.
@@ -172,7 +174,7 @@ The rows are tried in this order. The requester writing last is the one case whe
 - **A desk entry newer than the requester's message.** The requester wrote the latest visible entry, and a desk member (never the requester themself) has written any entry since: a private note, a status or title change. "Newer" is the feed's order, not the timestamps, so an undated entry counts by its place. It shows the desk has read the message and acted on it. A new message from the requester after that entry starts the rule over. When the desk has not emailed the requester yet, the outreach row still comes, as the plain "Email the requester" row: the email is still owed.
 - **A location in a renamed ticket's title** while the desk waits on the requester. The desk renames a ticket from TBD to a room once it has found the room, from the requester or another way (a resubmitted form, the events spreadsheet). A room in the title means the main detail is in; what may be left is the Zoom link and the recording, which the last check covers. Any location counts, "Zoom" or "Online" included, since those still need the link. It must be named in the leading `[...]` or `(...)` group, next to the date: text left there once the dates, times, weekdays and joining words are taken out, as in `EVENT [10/28 10:30 AM - 11:30 AM Room 912] Talk`. A group with only a date (`EVENT [10/14] Talk`), only a date and a time, TBD, or a title with no such group keeps the usual rule, because whether a room is set cannot be told from it and a missed follow-up costs more than an extra row. Form-titled tickets have no title location and keep the usual rule too.
 
-Within the last 3 days the usual rows come back as one last check: a reply owed to the requester as in the first table, and for a location in the title the `details_room_set` row, high, "The room is set; confirm the Zoom link and recording if they're still open". Until then "Events this week" lists such an event as `in progress`. A desk private note turns that last check off too ([A desk private note means in hand](#a-desk-private-note-means-in-hand)). Normal (non-event) tickets are unchanged: there, a private note still leaves the client waiting for a reply.
+Within the last 3 days the usual rows come back as one last check: a reply owed to the requester as in the first table, and for a location in the title the `details_room_set` row, high, "The room is set; confirm the Zoom link and recording if they're still open". Until then "Events this week" lists such an event as `in progress`. A desk private note turns that last check off too ([A desk private note means in hand](#a-desk-private-note-means-in-hand)). Normal (non-event) tickets have their own holds, in the next section.
 
 **Known limit: renamed tickets further out.** A renamed `EVENT [...]` ticket whose next date is more than 14 days away is not opened, so a requester's unanswered question on it is not seen until the event comes within 14 days. Form-titled tickets are opened at any age, so they have no such gap.
 
@@ -189,7 +191,16 @@ Within the last 3 days the usual rows come back as one last check: a reply owed 
 
 ### A desk private note means in hand
 
-The desk has one habit that tells the tool a reminder is already handled: a **private note** on the ticket, written after the last visible reply. Any note counts; its text is never read. Only staff can write private notes, so no other desk test is needed.
+The desk has one habit that tells the tool a reminder is already handled: a **private note** on the ticket, written after the last visible reply. Any written note counts; what it says is never interpreted or kept. Only staff can write private notes, so no other desk test is needed.
+
+**What counts as a written note.** TDX also flags some of its own activity lines as private. A private-flagged entry is a note only if it holds text other than these fixed lines, each tested on its own, ignoring case, with quoted history and attachments left out:
+
+- a field change: `Changed Status from <b>New</b> to <b>In Process</b>.`;
+- a task line: `Ticket Task / ...`;
+- a workflow step: `Approved the "..." step in the "..." workflow.` or `Selected "..." for the "..." step in the "..." workflow.`;
+- a workflow rule: `Changing Workflow from "..." to "..." as a result of applying the "..." rule.`
+
+If any other line has a word in it, the entry is a written note, so a status change with a typed comment is a note and an unknown TDX phrase stays one. An entry with only these lines is a `system` entry: it never holds a ticket as in hand, but its author still counts as desk, unless that author is `System`. A reply nested under a private entry by the same author follows the same test.
 
 A note counts (`in_hand_note`) when:
 
@@ -203,7 +214,17 @@ It is used in three places, two where the desk replied last and one where the re
 
 - **An event with a room in the title, waiting on the requester.** The `details_room_set` last check is not raised, at any distance to the event, and "Events this week" lists the event as `details confirmed` (counted `event_details_confirmed`). The desk often keeps the Zoom link on the events spreadsheet, which the tool cannot see. **A missing room does not qualify:** with TBD or no location in the title, `details_pending` and `details_pending_near` still fire with a note, because a note cannot tell the tool a room was found; the desk renames the ticket once the room is known.
 - **Ready to close.** The ticket is held for `close_hold_days` (7) from the note, then comes back naming the note ([Ready to close](#ready-to-close)).
-- **Requester waiting.** The requester's last message is often a confirmation ("yes, go ahead"), and the desk's next step is to do the work, not to write back. The rules alone can't tell a confirmation from a question, so the desk says "in hand" with a note. The ticket is held for `tdx.rules.waiting_hold_days` (3, 1 to 14) days from the note, counted `requester_note_hold`, then comes back as `client_waiting`, reason `requestor_last_noted`, still aged from the requester's reply, with the note's age too. The hold is shorter than ready to close's because here the requester is waiting on the desk. The follow-up classifier never sees these tickets: only `requestor_last` goes to it. Event tickets, `no_reply_yet`, `needs_review` and claimed tickets are not held this way, and a requester who is a desk member stays counted `internal_requestor`.
+- **Requester waiting.** The requester's last message is often a confirmation ("yes, go ahead"), and the desk's next step is to do the work, not to write back. The rules alone can't tell a confirmation from a question, so the desk says "in hand" with a note. The ticket is held for `tdx.rules.waiting_hold_days` (7, 1 to 14) days from the note, counted `requester_note_hold`, then comes back as `client_waiting`, reason `requestor_last_noted`, still aged from the requester's reply, with the note's age too. The follow-up classifier never sees these tickets: only `requestor_last` goes to it. Event tickets, `needs_review` and claimed tickets are not held this way, and a requester who is a desk member stays counted `internal_requestor`.
+
+**Desk work on a ticket with no reply.** A ticket with no visible reply is often being worked on privately, a staff-created deployment ticket, say. An entry is **desk work** when its author is neither `System` nor the requester and it is one of:
+
+- a written private note;
+- a private-flagged `Ticket Task / ...` line, or an `Approved the "..." step` or `Selected "..." for` workflow line;
+- a status change (`Changed Status from ... to ...`). Private-flagged, it always counts. Not private-flagged, it counts only when the requester is known, because it could be the requester's own.
+
+**Routing and clean-up are not desk work**, private or not: merges, reassignments and every other field change, such as the requester, account, priority, responsibility or title. Tickets are often forwarded, then reassigned or given the right requester, and that person may still be waiting for a first reply. The author of such an entry still counts as a desk member. A ticket-created entry never counts either.
+
+The newest dated desk work decides. Under `waiting_hold_days` (7) old, the ticket raises nothing and is counted `no_reply_work_hold`. After that it comes back as `client_waiting`, high, reason `no_reply_worked`, aged from Created, with the work's age too. With no desk work, or only undated work, it is `no_reply_yet` as before. A ticket a desk member opened is checked first and stays `internal_requestor`; event tickets have their own rules above.
 
 Example (run time Thursday 2026-10-08 12:00): ticket 1027 was renamed `EVENT [10/9 4pm Room 210] Example Seminar`, 28 hours away; Pat asked the requester for the Zoom link 10 days ago and got no answer. Yesterday Pat found the link on the events spreadsheet and added a private note. No finding (`details_room_set` would have fired), counted `event_details_confirmed`, listed `details confirmed`. Had Pat's only note been logged 20 minutes after the email, the last check would still come. Had the title said `EVENT [10/9 4pm TBD] Example Seminar`, the note would change nothing: the `details_pending_near` row, which also asks for the room, still comes.
 
@@ -240,7 +261,7 @@ Findings: client waiting 1, follow up with client 0, event outreach due 0, event
 Checked: 10 unclaimed (6 feeds needed, 3 missing), 2 claimed (counted only). Events: 5, 1 recurring, 1 multi-date, 1 with an unreadable date, 0 without a location. Form-titled tickets: 0 (0 recurring, 0 unreadable); renamed: 0 with a form, 0 without. Event states (no finding): 0 waiting on requester, 0 in progress, 0 details confirmed, 0 outreach not due yet, 0 marketing only, 0 no outreach. Desk members known: 1.
 ```
 
-When a desk member opened some tickets (above), the `Checked:` line adds `Internal (desk requester): N.` after the claimed count; with none, the line is as shown. `Event states (no finding)` counts the upcoming events whose page was read and that raised nothing, by state: waiting on the requester before the details-pending window, in progress, details confirmed by a desk note, not emailed yet before the outreach window, marketing only and no email needed. When a desk note holds some ready-to-close tickets ([Ready to close](#ready-to-close)), the line adds `Ready to close held by a desk note: N.` before `Desk members known`.
+When a desk member opened some tickets (above), the `Checked:` line adds `Internal (desk requester): N.` after the claimed count; with none, the line is as shown. `Event states (no finding)` counts the upcoming events whose page was read and that raised nothing, by state: waiting on the requester before the details-pending window, in progress, details confirmed by a desk note, not emailed yet before the outreach window, marketing only and no email needed. When a desk note holds some ready-to-close tickets ([Ready to close](#ready-to-close)), the line adds `Ready to close held by a desk note: N.` before `Desk members known`, and likewise `Requester waiting held by a desk note: N.` and `No reply yet held by desk work: N.` for those holds.
 
 With `show_ids`, one line per finding (most urgent first: priority, then longest waiting; a `desk_note_last` line ends with the note's age too, `  ready_to_close  1030  desk_note_last  250h  note 192h`), one per event with an unreadable date, so the date reader can be improved, one per unreadable event request form, and one per renamed event without a form:
 
@@ -292,9 +313,9 @@ Only the day's **first** summary posted is that full list (a missed first slot m
 **Repeated full summaries** (`tdx.summary.repeat_full`, off by default): every slot posts the full list instead of an update, even with nothing changed or nothing open. Each summary posted (not a skipped slot) remembers its **actionable** findings, each with the time of the first post that showed it that day: every kind except `ready_to_close`, so "Check if resolved" and "Events this week" never count. A new day starts afresh. On a later full summary that day, a finding is **untouched** when all of these hold:
 
 - the same ticket and kind was on an earlier summary today, and is a finding now (one first shown at this slot is new, not untouched);
-- this cycle read no feed for the ticket (a title-only finding such as a missing room: still listed means nobody fixed the title), or the feed's newest **desk activity** is dated before **the post that first showed it today**: desk work from before it reached the cards does not count. Desk activity is any private note, or a visible reply whose author is not the requester (matched as names are everywhere else). System entries never count. An undated newest desk entry counts as untouched, and a reply whose author or requester is unknown is not desk activity: unsure keeps the reminder.
+- this cycle read no feed for the ticket (a title-only finding such as a missing room: still listed means nobody fixed the title), or the feed's newest **desk activity** is dated before **the post that first showed it today**: desk work from before it reached the cards does not count. Desk activity is any written private note, any [desk work](#a-desk-private-note-means-in-hand) (so a status change or task update by staff counts), or a visible reply whose author is not the requester (matched as names are everywhere else). Other system entries, such as a reassignment or a changed requester, and anything by `System`, never count. An undated newest desk entry counts as untouched, and a reply whose author or requester is unknown is not desk activity: unsure keeps the reminder.
 
-With at least one untouched finding, the card opens with a banner (large, bold, in the attention color), one of `tdx.summary.nudge_lines` in rotation, and right under it, before the card's usual heading, a **Still untouched (N)** section (N counts tickets). It lists each untouched ticket once, in the usual row order: the linked id (and the title with `show_titles`), then `{section} · {usual wording} · on the cards since {time}`, such as `Requester waiting · No reply yet, opened 4 days ago · on the cards since 8:00 AM`, one such line per untouched finding of the ticket. Those findings are taken out of their usual sections: a section left empty is not shown, the others' counts drop, and the heading still counts every ticket on the card. The section counts against `max_rows_per_card` like other rows. Rotation: line number `(the slot's date as a day count × 3 + the slot's number in the day) mod the number of lines`, so consecutive slots differ whenever there are two lines or more. Without `repeat_full` the banner never shows.
+With at least one untouched finding, the card opens with a banner (large, bold, in the attention color), one of `tdx.summary.nudge_lines` in rotation, and right under it, before the card's usual heading, a **Still untouched (N)** section (N counts tickets) with its [tip](#card-wording) right under the heading. It lists each untouched ticket once, in the usual row order: the linked id (and the title with `show_titles`), then `{section} · {usual wording} · on the cards since {time}`, such as `Requester waiting · No reply yet, opened 4 days ago · on the cards since 8:00 AM`, one such line per untouched finding of the ticket. Those findings are taken out of their usual sections: a section left empty is not shown, the others' counts drop, and the heading still counts every ticket on the card. The section counts against `max_rows_per_card` like other rows. Rotation: line number `(the slot's date as a day count × 3 + the slot's number in the day) mod the number of lines`, so consecutive slots differ whenever there are two lines or more. Without `repeat_full` the banner never shows.
 
 The summary also has three things, all worked out in memory from the same run, with no LLM:
 
@@ -338,6 +359,7 @@ Personal cards say "you" where desk cards name `{team}`.
 | `client_waiting` / `requestor_last` | The requester wrote last, {age} ago: reply or check in |
 | `client_waiting` / `requestor_last_noted` | The requester wrote {age} ago and {team} added a note {note_age} ago, no reply since: reply or check in (`{note_age}`: the time since the desk note that held the ticket) |
 | `client_waiting` / `no_reply_yet` | No reply yet, opened {age} ago |
+| `client_waiting` / `no_reply_worked` | No reply yet, opened {age} ago. {Team} last worked on it {note_age} ago: reply or check in (`{note_age}`: the time since the newest desk work) |
 | `client_waiting` / `expects_reply` | The requester has waited {age} for a reply |
 | `client_waiting` / `event_requester_replied` | Event {when}. The requester replied {age} ago: read it and confirm the details |
 | `follow_up_with_client` / `client_follow_up` | The requester said they'd follow up; quiet {age}: check in |
@@ -356,11 +378,12 @@ Personal cards say "you" where desk cards name `{team}`.
 | `ready_to_close` / `desk_note_last` | {Team} replied {age} ago and added a note {note_age} ago, no reply since: follow up or close (`{note_age}`: the time since the desk note that held the ticket) |
 | unknown kind or reason, or age `None` | the kind label, and the age if known |
 
-**Section tips.** Three sections carry one line right under their heading, at normal size and starting with a bold **Tip:**, so it is read as an instruction rather than fine print and anyone reading the card learns the [desk private note](#a-desk-private-note-means-in-hand) habit from the card itself. A tip is not a row: it never counts against `max_rows_per_card` or the `+N more` line. It appears on every card that shows its section (alert card, full summary, update, Event soon card); no other section has one. Only the word "Tip:" is bold, so the line does not look like a second heading. The table gives each tip's text; the card shows it after **Tip:**.
+**Section tips.** Four sections carry one line right under their heading, at normal size and starting with a bold **Tip:**, so it is read as an instruction rather than fine print and anyone reading the card learns the [desk private note](#a-desk-private-note-means-in-hand) habit from the card itself. A tip is not a row: it never counts against `max_rows_per_card` or the `+N more` line. It appears on every card that shows its section (alert card, full summary, update, Event soon card; "Still untouched" is only on a repeated full summary); no other section has one. Only the word "Tip:" is bold, so the line does not look like a second heading. The table gives each tip's text; the card shows it after **Tip:**.
 
 | section | tip |
 |---|---|
-| Requester waiting, only when a row in it has reason `requestor_last` or `requestor_last_noted` (a note does nothing for the others) | Nothing to reply yet? Add a private note to the ticket and it stays off this list for {hold}. (`{hold}`: `tdx.rules.waiting_hold_days`, as "3 days", "1 day" when it is 1) |
+| Still untouched | Already on it? A reply or a private note on the ticket takes it off this list. |
+| Requester waiting, only when a row in it has reason `requestor_last`, `requestor_last_noted`, `no_reply_yet` or `no_reply_worked` (a note does nothing for the others) | Nothing to reply yet? Add a private note to the ticket and it stays off this list for {hold}. (`{hold}`: `tdx.rules.waiting_hold_days`, as "7 days", "1 day" when it is 1) |
 | Check if resolved | Still waiting on the requester? Add a private note to the ticket and it stays off this list for {hold} days. (`{hold}`: `tdx.rules.close_hold_days`, "1 day" when it is 1) |
 | Event: follow up with the requester, only when a row in it has reason `details_room_set` | Zoom link already on the spreadsheet? Add a private note to the ticket and the event shows as confirmed. |
 

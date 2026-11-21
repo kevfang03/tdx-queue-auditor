@@ -2143,10 +2143,11 @@ def test_repeat_full_posts_the_full_summary_at_every_slot_with_the_untouched_sec
     assert noon["body"][0] == {"type": "TextBlock", "text": nudge, "wrap": True, **BANNER_STYLE}
     section = section_of(noon)
     assert section[0] == "Still untouched (3)" and noon["body"][1]["weight"] == "Bolder"
-    assert [line.split("]")[0] for line in section[1:]] == ["[#101", "[#104", "[#105"]
-    assert all(line.endswith(" · on the cards since 8:00 AM") for line in section[1:])
+    assert section[1].startswith("**Tip:** Already on it?")
+    assert [line.split("]")[0] for line in section[2:]] == ["[#101", "[#104", "[#105"]
+    assert all(line.endswith(" · on the cards since 8:00 AM") for line in section[2:])
     assert " · Requester waiting · " in row_line(noon, 101)
-    assert noon["body"][5]["text"] == (
+    assert noon["body"][6]["text"] == (
         "TDX queue at 12:30 PM: 9 tickets for the help desk (3 added since 8:00 AM)"
     )
     # Taken out of their usual sections; 105's section, left empty, is gone.
@@ -2168,7 +2169,7 @@ def test_repeat_full_posts_the_full_summary_at_every_slot_with_the_untouched_sec
     assert evening["body"][0]["text"] == evening_nudge != nudge
     section = section_of(evening)
     assert section[0] == "Still untouched (5)"
-    assert [line.split("]")[0] for line in section[1:]] == [
+    assert [line.split("]")[0] for line in section[2:]] == [
         "[#101",
         "[#104",
         "[#107",
@@ -2180,7 +2181,7 @@ def test_repeat_full_posts_the_full_summary_at_every_slot_with_the_untouched_sec
     assert row_line(evening, 109).endswith(" · on the cards since 12:30 PM")
     assert "on the cards since" not in row_line(evening, 108)
     assert "(added)" not in row_line(evening, 107)
-    assert lines_of(evening)[7] == "TDX queue at 5:30 PM: 9 tickets for the help desk"
+    assert lines_of(evening)[8] == "TDX queue at 5:30 PM: 9 tickets for the help desk"
     assert evening["fallbackText"] == (
         "9 tickets for the help desk · 5 untouched since earlier today"
     )

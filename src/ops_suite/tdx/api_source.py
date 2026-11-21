@@ -56,9 +56,16 @@ from ops_suite.tdx.event_form import (
     description_to_text,
     parse_event_form,
 )
-from ops_suite.tdx.feed import FeedDetails, comment_facts, comment_text, empty_marker_stats
+from ops_suite.tdx.feed import (
+    FeedDetails,
+    comment_facts,
+    comment_text,
+    empty_marker_stats,
+    entry_kind,
+    is_desk_work,
+)
 from ops_suite.tdx.feed_types import EntryKind, FeedEntry, TicketFeed
-from ops_suite.tdx.names import same_person
+from ops_suite.tdx.names import is_system_author, same_person
 from ops_suite.tdx.rows import (
     KNOWN_COLUMNS,
     REQUIRED_COLUMNS,
@@ -379,6 +386,7 @@ class _Entry:
     created: datetime | None
     kind: EntryKind
     body: str = ""  # a reply's comment HTML, read for text only if it is the newest reply
+    desk_work: bool = False
 
 
 def _body(item: Mapping[str, object]) -> str:
@@ -402,7 +410,14 @@ class _FeedMapper:
         self.stats = empty_marker_stats()
         self.desk_authors: list[str] = []
 
-    def _add(self, author: str, stamp: object, kind: EntryKind, body: str = "") -> None:
+    def _add(
+        self,
+        author: str,
+        stamp: object,
+        kind: EntryKind,
+        body: str = "",
+        desk_work: bool = False,
+    ) -> None:
         if not author:
             self.shapes.append("no author")
             return
@@ -411,11 +426,21 @@ class _FeedMapper:
             self.shapes.append(
                 f"undated: {date_shape(stamp) if isinstance(stamp, str) else 'no timestamp'}"
             )
-        self.entries.append(_Entry(author, created, kind, body if kind == "reply" else ""))
+        self.entries.append(
+            _Entry(author, created, kind, body if kind == "reply" else "", desk_work)
+        )
 
     def _desk(self, author: str) -> None:
+        if is_system_author(author):
+            return
         if author and not any(same_person(author, known) for known in self.desk_authors):
             self.desk_authors.append(author)
+
+    def _private_activity(self, author: str, flagged: bool, kind: EntryKind) -> None:
+        """A private-flagged entry with no written text: only staff can flag one, so its
+        author is desk, as a note's author is. ``System`` never is."""
+        if flagged and kind == "system":
+            self._desk(author)
 
     def _signed(self, author: str, kind: EntryKind, signed: bool) -> None:
         if kind != "reply" or not signed or not author or same_person(author, self.requester):
@@ -435,18 +460,19 @@ class _FeedMapper:
         self.stats["private_visible"] += private
         if note is not None:
             self.stats["merge_notes" if note == "merge" else "reassignments"] += 1
-            if author:
+            if author and not is_system_author(author):
                 self.desk_authors.append(author)  # only staff merge or reassign tickets
             self._add(author, item.get("CreatedDate"), "system")
             private = False  # replies under a TDX notice inherit nothing
         else:
-            if private:
-                kind: EntryKind = "private"
-            elif update_type in (UPDATE_TYPE_CREATED, UPDATE_TYPE_MY_WORK) or not facts.visible:
-                kind = "system"
-            else:
-                kind = "reply"
-            self._add(author, item.get("CreatedDate"), kind, body)
+            lines = facts.lines
+            shown = lines.visible and update_type not in (UPDATE_TYPE_CREATED, UPDATE_TYPE_MY_WORK)
+            kind = entry_kind(private, lines.written, shown)
+            worked = update_type != UPDATE_TYPE_CREATED and is_desk_work(
+                author, self.requester, private, lines
+            )
+            self._add(author, item.get("CreatedDate"), kind, body, worked)
+            self._private_activity(author, private, kind)
             self._signed(author, kind, facts.signed)
         expected = _int(item.get("RepliesCount"))
         if not expected:
@@ -466,11 +492,16 @@ class _FeedMapper:
             # the entry's author wrote it, as the feed page shows it.
             inherited = private and same_person(reply_author, author)
             self.stats["inherited_private"] += inherited
-            if inherited:
-                reply_kind: EntryKind = "private"
-            else:
-                reply_kind = "reply" if reply_facts.visible else "system"
-            self._add(reply_author, reply.get("CreatedDate"), reply_kind, reply_body)
+            reply_lines = reply_facts.lines
+            reply_kind = entry_kind(inherited, reply_lines.written, reply_lines.visible)
+            self._add(
+                reply_author,
+                reply.get("CreatedDate"),
+                reply_kind,
+                reply_body,
+                is_desk_work(reply_author, self.requester, inherited, reply_lines),
+            )
+            self._private_activity(reply_author, inherited, reply_kind)
             if note != "merge":  # nothing inside a merge notice counts
                 self._signed(reply_author, reply_kind, reply_facts.signed)
 
@@ -503,7 +534,7 @@ def map_feed(
     newest = next((entry for entry in ordered if entry.kind == "reply"), None)
     feed = TicketFeed(
         ticket_id=ticket_id,
-        entries=tuple(FeedEntry(e.author, e.created, e.kind) for e in ordered),
+        entries=tuple(FeedEntry(e.author, e.created, e.kind, e.desk_work) for e in ordered),
         unreadable=len(mapper.shapes),
         desk_authors=tuple(mapper.desk_authors),
         latest_reply_text=comment_text(newest.body) if newest is not None else None,

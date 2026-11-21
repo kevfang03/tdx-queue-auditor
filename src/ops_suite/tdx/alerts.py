@@ -119,6 +119,10 @@ WORDING: dict[tuple[str, str | None], str] = {
         "reply or check in"
     ),
     ("client_waiting", "no_reply_yet"): "No reply yet, opened {age} ago",
+    # Desk work with no visible reply held the ticket; the hold is over.
+    ("client_waiting", "no_reply_worked"): (
+        "No reply yet, opened {age} ago. {Team} last worked on it {note_age} ago: reply or check in"
+    ),
     # The follow-up classifier's verdicts; "unsure" keeps requestor_last.
     ("client_waiting", "expects_reply"): "The requester has waited {age} for a reply",
     ("client_waiting", "event_requester_replied"): (
@@ -184,11 +188,14 @@ ROOM_SET_HINT = (
 REQUESTER_WAITING_HINT = (
     "Nothing to reply yet? Add a private note to the ticket and it stays off this list for {hold}."
 )
+UNTOUCHED_HINT = "Already on it? A reply or a private note on the ticket takes it off this list."
 DEFAULT_CLOSE_HOLD_DAYS = 7
-DEFAULT_WAITING_HOLD_DAYS = 3
-# The requester-waiting reasons a desk note can hold. The others (no reply yet, the
-# classifier's verdicts, an event reply) are not held by a note, so they get no tip.
-_NOTE_HOLDS_WAITING = frozenset({"requestor_last", "requestor_last_noted"})
+DEFAULT_WAITING_HOLD_DAYS = 7
+# The requester-waiting reasons a desk note can hold. The others (the classifier's verdicts,
+# an event reply) are not held by a note, so they get no tip.
+_NOTE_HOLDS_WAITING = frozenset(
+    {"requestor_last", "requestor_last_noted", "no_reply_yet", "no_reply_worked"}
+)
 # A renamed event's feed finding that also stands for its missing room (``Finding.no_room``)
 # ends with the room check, so one ticket is one row.
 NO_ROOM_WORDING: dict[str, str] = {
@@ -566,8 +573,9 @@ def section_hint(
     """The one-line tip under a section heading, or None.
 
     ready_to_close: always. client_waiting: only when a row's reason is one a desk note can
-    hold (requestor_last, requestor_last_noted). event_details_pending: only when a row's
-    reason is details_room_set. Every other kind: None.
+    hold (requestor_last, requestor_last_noted, no_reply_yet, no_reply_worked).
+    event_details_pending: only when a row's reason is details_room_set. Every other kind:
+    None.
     """
     if kind == "ready_to_close":
         return READY_TO_CLOSE_HINT.format(hold=_plural(close_hold_days, "day"))
@@ -1056,10 +1064,11 @@ def actionable_keys(findings: Iterable[Finding]) -> frozenset[StateKey]:
 
 
 def desk_activity(entry: FeedEntry, requestor: str) -> bool:
-    """Whether ``entry`` is the desk acting on the ticket: any private note, or a visible reply
-    whose author is known and is not the requester. System entries never count. With the
-    requester or the author unknown, a reply does not count: unsure keeps the reminder."""
-    if entry.kind == "private":
+    """Whether ``entry`` is the desk acting on the ticket: any private note, any staff work
+    (``FeedEntry.desk_work``, such as a status change or task update), or a visible reply
+    whose author is known and is not the requester. Other system entries never count. With
+    the requester or the author unknown, a reply does not count: unsure keeps the reminder."""
+    if entry.kind == "private" or entry.desk_work:
         return True
     if entry.kind != "reply" or not requestor.strip() or not entry.author.strip():
         return False
@@ -1497,6 +1506,7 @@ def _untouched_section(
     body.append(
         _text(f"{UNTOUCHED_SECTION_LABEL} ({len(by_ticket)})", weight="Bolder", spacing="Medium")
     )
+    body.append(_text(f"**Tip:** {UNTOUCHED_HINT}", spacing="None"))  # not a row
     shown: list[Finding] = []
     budget = max(max_rows, 0)
     hidden = 0

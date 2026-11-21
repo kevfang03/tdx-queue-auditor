@@ -202,7 +202,7 @@ def test_tdx_audit_settings_defaults_and_example() -> None:
         assert tdx.rules.extra_staff_names == []
         assert tdx.rules.desk_memory is True
         assert tdx.rules.desk_memory_forget_days == 180
-        assert (tdx.rules.close_hold_days, tdx.rules.waiting_hold_days) == (7, 3)
+        assert (tdx.rules.close_hold_days, tdx.rules.waiting_hold_days) == (7, 7)
 
 
 def test_tdx_rules_from_the_environment_and_repr(monkeypatch: pytest.MonkeyPatch) -> None:

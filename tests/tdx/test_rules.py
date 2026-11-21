@@ -511,6 +511,7 @@ def test_every_count_key_is_present() -> None:
         "desk_replied_last",
         "desk_note_hold",
         "requester_note_hold",
+        "no_reply_work_hold",
         "internal_requestor",
         "other_recent",
         "event_tickets",
@@ -1474,18 +1475,18 @@ def test_a_note_minutes_after_the_requester_holds_too() -> None:
 
 
 def test_requester_waiting_comes_back_after_the_hold_naming_the_note() -> None:
-    result = _waiting_noted(100, 96)  # the note 4 days ago, the hold 3 days
+    result = _waiting_noted(200, 192)  # the note 8 days ago, the hold 7 days
 
     assert only(result) == Finding(
-        1, "client_waiting", "high", "requestor_last_noted", 100, note_hours=96
+        1, "client_waiting", "high", "requestor_last_noted", 200, note_hours=192
     )
     assert result.counts["requester_note_hold"] == 0 and result.counts["client_waiting"] == 1
     assert not is_follow_up_candidate(only(result))
 
 
 def test_the_requester_hold_ends_waiting_hold_days_after_the_note() -> None:
-    assert _waiting_noted(100, 71.9).findings == ()
-    assert only(_waiting_noted(100, 72)).reason == "requestor_last_noted"
+    assert _waiting_noted(200, 167.9).findings == ()
+    assert only(_waiting_noted(200, 168)).reason == "requestor_last_noted"
     one_day = RuleSettings(extra_staff_names=(DESK,), waiting_hold_days=1)
     assert only(_waiting_noted(60, 30, rules=one_day)) == Finding(
         1, "client_waiting", "high", "requestor_last_noted", 60, note_hours=30
@@ -1551,14 +1552,14 @@ def test_an_internal_requester_with_a_desk_note_is_still_only_counted() -> None:
 
 
 def test_the_summary_shows_held_requester_tickets_and_the_note_age() -> None:
-    held, back = _waiting_noted(60, 50), _waiting_noted(100, 96)
+    held, back = _waiting_noted(60, 50), _waiting_noted(200, 192)
 
     assert (
         "Requester waiting held by a desk note: 1. Desk members known"
         in (format_audit_summary(held, show_ids=False)[1])
     )
     assert "held by a desk note" not in format_audit_summary(back, show_ids=False)[1]
-    assert "  client_waiting  1  requestor_last_noted  100h  note 96h" in (
+    assert "  client_waiting  1  requestor_last_noted  200h  note 192h" in (
         format_audit_summary(back, show_ids=True)
     )
 

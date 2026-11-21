@@ -1,14 +1,16 @@
 """A ticket's activity feed from the HTML of its page's frames. Pure functions; no Playwright.
 
 The selectors follow docs/tdx-page-structure.md, "Ticket page and feed": only class names and
-roles the ticket capture kept unmasked, never ids, and never page text except the TDX interface
-phrase of a field change ("Changed Status from ... to ..."), which is only tested, never kept.
+roles the ticket capture kept unmasked, never ids, and never page text except fixed TDX interface
+phrases (a field change, "Changed Status from ... to ...", and the other activity lines below),
+which are only tested, never kept.
 
-Private notes: an entry is private when its private marker (``span.feed-private``) is
+Private notes: an entry is private-flagged when its private marker (``span.feed-private``) is
 *rendered*. The page may carry the marker on entries where it is hidden, which the HTML alone
 cannot show, so the browser side passes one visibility flag per marker
 (``private_marker_visible``). Without that list, a marker that is present counts, which is how
-the synthetic fixture tests run.
+the synthetic fixture tests run. A flagged entry is a written note (``private``) only if it
+holds text other than fixed TDX activity lines; otherwise it is ``system``.
 
 Personal data rule: authors stay inside ``FeedEntry`` objects in memory, and comment text is
 read only to tell whether any is there, except the newest reply's, which is kept in memory as
@@ -29,7 +31,7 @@ from bs4 import BeautifulSoup, NavigableString, Tag
 
 from ops_suite.tdx.feed_types import EntryKind, FeedEntry, TicketFeed
 from ops_suite.tdx.followup import strip_quoted
-from ops_suite.tdx.names import same_person
+from ops_suite.tdx.names import is_system_author, same_person
 from ops_suite.tdx.rows import date_shape, parse_tdx_datetime
 
 FeedState = Literal["absent", "loading", "entries", "empty"]
@@ -60,14 +62,32 @@ HIDDEN_CLASSES = frozenset({"hidden", "ng-hide", "d-none"})
 # are "system" entries, whatever their private marker says:
 # - a merge notice, "Merged incident <id> (<title>, originally created by <name>):", followed
 #   by the merged ticket's whole thread. It stays ONE entry;
-# - a reassignment, "Reassigned this incident from <group> to <group>.".
+# - a reassignment, "Reassigned this <incident, service request, ...> from <group> to <group>.".
 # The author of either counts as desk staff: only staff merge or reassign tickets.
 MERGE_NOTE_PREFIXES: tuple[str, ...] = ("Merged incident",)
-SYSTEM_NOTE_PREFIXES: tuple[str, ...] = ("Reassigned this incident from",)
+SYSTEM_NOTE_PREFIXES: tuple[str, ...] = tuple(
+    f"Reassigned this {item} from"
+    for item in ("incident", "service request", "problem", "change", "release", "ticket")
+)
 
 # The TDX interface phrase of a field change, tested on one line of a comment that also holds
 # bold text: "Changed Status from <b>New</b> to <b>In Process</b>."
 _FIELD_CHANGE = re.compile(r"changed\b.*\bfrom\b.*\bto\b", re.IGNORECASE | re.DOTALL)
+# The field change that shows someone working the ticket. Other fields (requester, account,
+# priority, responsibility, title) are routing and clean-up.
+_STATUS_CHANGE = re.compile(r"changed status from\b", re.IGNORECASE)
+# The other fixed lines TDX writes for activity on a ticket. A whole line must match, so a
+# sentence typed after one makes the entry a written note. Only tested, never kept.
+_WORK_LINE = re.compile(
+    r"ticket task\s*/.*"
+    r'|approved the "[^"]*" step in the "[^"]*" workflow\.?'
+    r'|selected "[^"]*" for the "[^"]*" step in the "[^"]*" workflow\.?',
+    re.IGNORECASE,
+)
+_RULE_LINE = re.compile(
+    r'changing workflow from "[^"]*" to "[^"]*" as a result of applying the "[^"]*" rule\.?',
+    re.IGNORECASE,
+)
 _BOLD_MARK = "\x00"
 _LINE_MARK = "\x01"
 _BLOCK_TAGS = ["div", "p", "li", "ul", "ol", "table", "tr", "h1", "h2", "h3", "h4"]
@@ -111,6 +131,7 @@ class _Entry:
     kind: EntryKind
     # A reply's comment parts, read for text only if it turns out to be the newest reply.
     parts: tuple[Tag | NavigableString, ...] = ()
+    desk_work: bool = False
 
 
 def _soup(html: str) -> BeautifulSoup:
@@ -227,9 +248,27 @@ def _comment_lines(parts: Sequence[Tag | NavigableString]) -> list[tuple[str, bo
     return lines
 
 
-def _has_visible_comment(parts: Sequence[Tag | NavigableString]) -> bool:
-    """True if the parts hold comment text other than field-change lines."""
-    return any(_WORD.search(text) and not change for text, change in _comment_lines(parts))
+@dataclass(frozen=True, slots=True)
+class LineFacts:
+    """What a comment's lines are, without their text."""
+
+    visible: bool  # a line with a word in it other than a field change
+    written: bool  # a line with a word in it other than any fixed TDX activity line
+    work_line: bool  # a task line or an approved or selected workflow step
+    status_change: bool  # a TDX field-change line for the Status field
+
+
+def _line_facts(parts: Sequence[Tag | NavigableString]) -> LineFacts:
+    worded = [(text, change) for text, change in _comment_lines(parts) if _WORD.search(text)]
+    typed = [text for text, change in worded if not change]
+    return LineFacts(
+        visible=bool(typed),
+        written=any(
+            not _WORK_LINE.fullmatch(text) and not _RULE_LINE.fullmatch(text) for text in typed
+        ),
+        work_line=any(_WORK_LINE.fullmatch(text) for text in typed),
+        status_change=any(change and _STATUS_CHANGE.match(text) for text, change in worded),
+    )
 
 
 def _comment_text(parts: Sequence[Tag | NavigableString]) -> str | None:
@@ -275,10 +314,28 @@ def _comment_parts(container: Tag, excluded: frozenset[str]) -> list[Tag | Navig
     return parts
 
 
-def _kind(private: bool, parts: Sequence[Tag | NavigableString]) -> EntryKind:
-    if private:
-        return "private"
-    return "reply" if _has_visible_comment(parts) else "system"
+def entry_kind(flagged: bool, written: bool, visible: bool) -> EntryKind:
+    """An entry's kind. A private-flagged entry is a note only if it holds written text;
+    with nothing but fixed TDX activity lines it is ``system``."""
+    if flagged:
+        return "private" if written else "system"
+    return "reply" if visible else "system"
+
+
+def is_desk_work(author: str, requester: str, flagged: bool, lines: LineFacts) -> bool:
+    """Whether an entry is staff working on the ticket, by anyone but ``System`` and the
+    requester: a written private note, a private-flagged task line or workflow step, or a
+    status change. A status change that is not private-flagged counts only with the requester
+    known, since the requester may have made it.
+
+    Routing and clean-up never count, because a forwarded ticket with a real requester still
+    needs a reply: merges and reassignments (the readers never call this for them) and every
+    other field change, such as the requester, account or priority."""
+    if is_system_author(author) or same_person(author, requester):
+        return False
+    if flagged:
+        return lines.written or lines.work_line or lines.status_change
+    return lines.status_change and bool(requester.strip())
 
 
 NoteKind = Literal["merge", "reassignment"]
@@ -308,7 +365,7 @@ def _note_kind(parts: Sequence[Tag | NavigableString]) -> NoteKind | None:
 class CommentFacts:
     """What one comment says, without its text: the facts the feed reader uses."""
 
-    visible: bool  # comment text other than TDX field-change lines
+    lines: LineFacts  # what its lines are
     note: NoteKind | None  # opens with a merge notice or a reassignment
     signed: bool  # its own text (quoted mail cut) holds a desk signature
 
@@ -323,7 +380,7 @@ def comment_facts(html: str, signatures: Sequence[str] = ()) -> CommentFacts:
     same rules as the feed page's comments. Only the answers leave; the text is dropped."""
     parts = _fragment_parts(html)
     return CommentFacts(
-        visible=_has_visible_comment(parts),
+        lines=_line_facts(parts),
         note=_note_kind(parts),
         signed=_has_signature(parts, signature_phrases(signatures)),
     )
@@ -385,6 +442,7 @@ class _Reader:
         stamp: str | None,
         kind: EntryKind,
         parts: Sequence[Tag | NavigableString] = (),
+        desk_work: bool = False,
     ) -> None:
         if not author:
             self.shapes.append("no author")
@@ -393,7 +451,15 @@ class _Reader:
         if created is None:
             self.shapes.append(f"undated: {date_shape(stamp) if stamp else 'no timestamp'}")
         kept = tuple(parts) if kind == "reply" else ()
-        self.entries.append(_Entry(author, created, kind, kept))
+        self.entries.append(_Entry(author, created, kind, kept, desk_work))
+
+    def _private_activity(self, author: str, flagged: bool, kind: EntryKind) -> None:
+        """A private-flagged entry with no written text: only staff can flag one, so its
+        author is desk, as a note's author is. ``System`` never is."""
+        if not flagged or kind != "system" or not author or is_system_author(author):
+            return
+        if not any(same_person(author, known) for known in self.desk_authors):
+            self.desk_authors.append(author)
 
     def _marked(self, container: Tag | None) -> bool:
         """Whether ``container`` holds a rendered private marker; counts the block's markers."""
@@ -415,7 +481,7 @@ class _Reader:
             self.stats["merge_notes"] += 1
         elif note == "reassignment":
             self.stats["reassignments"] += 1
-        if note is not None and author:
+        if note is not None and author and not is_system_author(author):
             self.desk_authors.append(author)  # like a private note: only staff merge or reassign
         return note
 
@@ -445,8 +511,11 @@ class _Reader:
             self.add(author, _own_timestamp(body), "system")
             private = False  # replies under a TDX notice inherit nothing
         else:
-            kind = _kind(private, parts)
-            self.add(author, _own_timestamp(body), kind, parts)
+            lines = _line_facts(parts)
+            kind = entry_kind(private, lines.written, lines.visible)
+            worked = is_desk_work(author, self.requester, private, lines)
+            self.add(author, _own_timestamp(body), kind, parts, worked)
+            self._private_activity(author, private, kind)
             self._signed(author, kind, parts)
         for reply in _children(body):
             if not _has_class(reply, REPLY_CLASS):
@@ -460,13 +529,17 @@ class _Reader:
             inherited = not own and private and same_person(reply_author, author)
             self.stats["inherited_private"] += inherited
             reply_parts = _comment_parts(reply, NOT_REPLY_COMMENT_CLASSES)
-            reply_kind = _kind(own or inherited, reply_parts)
+            flagged = own or inherited
+            reply_lines = _line_facts(reply_parts)
+            reply_kind = entry_kind(flagged, reply_lines.written, reply_lines.visible)
             self.add(
                 reply_author,
                 _timestamp_text(_child_with_class(reply, REPLY_CONTEXT_CLASS)),
                 reply_kind,
                 reply_parts,
+                is_desk_work(reply_author, self.requester, flagged, reply_lines),
             )
+            self._private_activity(reply_author, flagged, reply_kind)
             if note != "merge":  # nothing inside a merge notice counts
                 self._signed(reply_author, reply_kind, reply_parts)
 
@@ -540,7 +613,7 @@ def read_feed_frames(
     ordered = _newest_first(reader.entries)
     feed = TicketFeed(
         ticket_id=ticket_id,
-        entries=tuple(FeedEntry(e.author, e.created, e.kind) for e in ordered),
+        entries=tuple(FeedEntry(e.author, e.created, e.kind, e.desk_work) for e in ordered),
         unreadable=len(reader.shapes),
         desk_authors=tuple(reader.desk_authors),
         latest_reply_text=_latest_reply_text(ordered),

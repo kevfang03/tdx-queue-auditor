@@ -31,7 +31,7 @@ from zoneinfo import ZoneInfo
 from ops_suite.tdx.event_form import EventForm, SpaceType
 from ops_suite.tdx.events import is_event_title, is_recurring_event, parse_event_title
 from ops_suite.tdx.feed_types import FeedEntry, TicketFeed
-from ops_suite.tdx.names import same_person
+from ops_suite.tdx.names import is_system_author, same_person
 from ops_suite.tdx.rows import TicketRow
 
 FindingKind = Literal[
@@ -78,6 +78,7 @@ COUNT_KEYS: tuple[str, ...] = (
     "desk_replied_last",
     "desk_note_hold",
     "requester_note_hold",
+    "no_reply_work_hold",
     "internal_requestor",
     "other_recent",
     "event_tickets",
@@ -121,8 +122,9 @@ class RuleSettings:
     # the note (``in_hand_note``).
     close_hold_days: int = 7
     # A desk private note after the requester's last reply holds "requester waiting" back
-    # this many days from the note (``in_hand_note`` with no gap).
-    waiting_hold_days: int = 3
+    # this many days from the note (``in_hand_note`` with no gap). Recent desk work holds a
+    # ticket with no visible reply for the same time.
+    waiting_hold_days: int = 7
 
     def __repr__(self) -> str:
         return (
@@ -159,7 +161,7 @@ class Finding:
     # room too, so one ticket is one row. Not part of the shadow compare's key.
     no_room: NoRoom | None = None
     # Ready to close or requester waiting after a desk note's hold: whole hours since that
-    # note (``in_hand_note``).
+    # note (``in_hand_note``). On ``no_reply_worked``: since the newest desk work.
     note_hours: int | None = None
 
 
@@ -443,7 +445,7 @@ class _People:
         self._tickets: list[set[int]] = []
 
     def add(self, name: str, ticket_id: int | None = None) -> None:
-        if not name:
+        if not name or is_system_author(name):
             return
         index = next((i for i, known in enumerate(self._names) if same_person(name, known)), None)
         if index is None:
@@ -564,11 +566,15 @@ def evaluate(
         """The requestor is desk staff for certain: nobody is waiting on this ticket."""
         if not rules.skip_desk_requestors or not row.requestor:
             return False
+        if is_system_author(row.requestor):
+            return False  # even if an older desk memory holds it
         if any(same_person(row.requestor, name) for name in strong_staff):
             return True
         return known_desk is not None and known_desk(row.requestor)
 
     def is_desk(name: str) -> bool:
+        if is_system_author(name):
+            return False  # even if an older desk memory holds it
         return any(same_person(name, known) for known in staff) or (
             known_desk is not None and known_desk(name)
         )
@@ -834,7 +840,15 @@ def evaluate(
                 counts["internal_requestor"] += 1
                 continue
             age = _hours(row.created, now) if row.created is not None else None
-            add(row, "client_waiting", "high", "no_reply_yet", age)
+            # Staff working on the ticket without writing to the requester: held
+            # waiting_hold_days from the newest such entry, then it comes back naming that work.
+            worked = next((e.created for e in feed.entries if e.desk_work and e.created), None)
+            if worked is None:
+                add(row, "client_waiting", "high", "no_reply_yet", age)
+            elif _hours(worked, now) < rules.waiting_hold_days * 24:
+                counts["no_reply_work_hold"] += 1
+            else:
+                add(row, "client_waiting", "high", "no_reply_worked", age, note=_hours(worked, now))
             continue
 
         latest = visible[0]
@@ -861,9 +875,7 @@ def evaluate(
                     counts["requester_note_hold"] += 1
                 else:
                     add(row, "client_waiting", "high", "requestor_last_noted", waited, note=held)
-        elif any(same_person(latest.author, name) for name in staff) or (
-            known_desk is not None and known_desk(latest.author)
-        ):
+        elif is_desk(latest.author):
             # The desk replied last and the requester has been silent since: once that is
             # close_after_days old, the ticket can be closed if nothing new comes in.
             quiet = _hours(latest.created, now) if latest.created is not None else None
@@ -969,6 +981,8 @@ def format_audit_summary(result: AuditResult, *, show_ids: bool) -> list[str]:
     )
     if counts["requester_note_hold"]:
         held += f"Requester waiting held by a desk note: {counts['requester_note_hold']}. "
+    if counts["no_reply_work_hold"]:
+        held += f"No reply yet held by desk work: {counts['no_reply_work_hold']}. "
     lines = [
         f"Findings: {findings}.",
         f"Checked: {counts['rows_unclaimed']} unclaimed ({counts['feeds_needed']} feeds needed, "
