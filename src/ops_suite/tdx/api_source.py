@@ -26,6 +26,9 @@ change. The browser stays the default source; this one is a read-only proof of c
 - **Event forms** come from ``GET /{app}/tickets/{id}``'s description, through
   ``description_to_text`` (the same text step as the browser reader's) into
   ``parse_event_form``, which cuts the Recipient Data block off first.
+- **Staff accounts** (``tdx.rules.staff_accounts``): an unclaimed ticket whose requestor has a
+  listed name has its own record read, and its requester email compared with that name's
+  address. Only a yes or no leaves the comparison; neither address is kept, logged or shown.
 - **Ticket links** for the cards: ``tdx.ticket_url_template``, else the ticket page the
   dashboard's links open (``/TDNext/Apps/<app>/Tickets/TicketDet.aspx?TicketID=<id>``).
 - **The app id**: ``tdx.api.app_id``, else the ``/Apps/<id>/`` of ``tdx.ticket_url_template``,
@@ -85,6 +88,7 @@ UPDATE_TYPE_CREATED = 4
 UPDATE_TYPE_MY_WORK = 5
 UPDATE_TYPE_MERGE = 6
 HTML_COLUMN = 11  # the reference's ColumnDataType "Html": sanitised HTML strings
+REQUESTER_EMAIL = "RequestorEmail"  # the ticket record's field for the requester's address
 # The ticket page the dashboard's ticket links open (docs/tdx-page-structure.md, frames).
 TICKET_PAGE = "/TDNext/Apps/{app}/Tickets/TicketDet.aspx?TicketID={id}"
 _APP_IN_LINK = re.compile(r"/Apps/(\d+)/Tickets/", re.IGNORECASE)
@@ -97,6 +101,11 @@ _TICKET_FAILURES = frozenset(
 )
 
 
+def _is_ticket_failure(reason: str) -> bool:
+    """A failure of one ticket, which leaves the run going; any other reason stops it."""
+    return reason in _TICKET_FAILURES or reason.startswith("http_5")
+
+
 @dataclass(frozen=True, slots=True)
 class ApiQueue:
     """What one API read gives: the same summaries as the browser read, plus the app id."""
@@ -107,6 +116,8 @@ class ApiQueue:
     app_id: int
     app_id_source: str  # "setting", "ticket_url_template" or "first ticket"
     requests: Mapping[str, int] = field(default_factory=dict)  # endpoint pattern -> count
+    # Unclaimed tickets whose requester has a listed staff name but was not confirmed.
+    not_staff_requesters: frozenset[int] = frozenset()
 
 
 # --- values -----------------------------------------------------------------------------
@@ -633,7 +644,7 @@ def read_feeds(
                 log.info("form read", extra={"ticket_id": ticket_id, "readable": form is not None})
         except (ApiError, DashboardStructureError) as error:
             reason = getattr(error, "reason", "bad_shape")
-            if reason not in _TICKET_FAILURES and not reason.startswith("http_5"):
+            if not _is_ticket_failure(reason):
                 raise
             failed.append(ticket_id)
             failures_in_a_row += 1
@@ -671,6 +682,62 @@ def read_feeds(
     )
 
 
+def _folded_address(value: object) -> str:
+    """An address as compared: stripped and case-folded; "" if it is not text."""
+    return value.strip().casefold() if isinstance(value, str) else ""
+
+
+def _requester_address(client: TdxApiClient, app_id: int, ticket_id: int) -> str:
+    """The ticket's requester email, folded; "" when it is missing or this one ticket can't be
+    read. Errors that stop a run still raise. Callers must not keep or show the result."""
+    try:
+        ticket = client.get(f"/{app_id}/tickets/{ticket_id}")
+    except ApiError as error:
+        if not _is_ticket_failure(error.reason):
+            raise
+        log.info("requester not read", extra={"ticket_id": ticket_id, "reason": error.reason})
+        return ""
+    return _folded_address(ticket.get(REQUESTER_EMAIL)) if isinstance(ticket, dict) else ""
+
+
+def requester_email_readable(client: TdxApiClient, app_id: int, ticket_id: int) -> bool:
+    """Whether this ticket's record gives a requester email. Never returns the value."""
+    return bool(_requester_address(client, app_id, ticket_id))
+
+
+def unconfirmed_staff_requesters(
+    client: TdxApiClient,
+    app_id: int,
+    rows: Sequence[TicketRow],
+    feeds: Collection[int],
+    accounts: Mapping[str, str],
+) -> frozenset[int]:
+    """The unclaimed tickets with a read feed whose requestor has a name in ``accounts`` but
+    whose own requester email does not match it. A missing, empty or unreadable email is not a
+    match: the reminder stays. No request is made for anyone else, or with no accounts."""
+    unconfirmed: set[int] = set()
+    checked = 0
+    for row in rows:
+        if row.widget != "unclaimed" or row.ticket_id not in feeds:
+            continue
+        expected = {
+            _folded_address(address)
+            for name, address in accounts.items()
+            if same_person(row.requestor, name)
+        }
+        if not expected:
+            continue
+        checked += 1
+        found = _requester_address(client, app_id, row.ticket_id)
+        if not found or found not in expected:
+            unconfirmed.add(row.ticket_id)
+    if checked:
+        log.info(
+            "staff requesters checked", extra={"checked": checked, "unconfirmed": len(unconfirmed)}
+        )
+    return frozenset(unconfirmed)
+
+
 def read_queue(
     tdx: TdxSettings,
     client: TdxApiClient,
@@ -697,6 +764,9 @@ def read_queue(
         form_ticket_ids=set(plan.form_ticket_ids),
         form_options=options,
     )
+    not_staff = unconfirmed_staff_requesters(
+        client, app_id, rows, feeds.feeds, tdx.rules.staff_accounts
+    )
     return ApiQueue(
         dashboard=dashboard,
         feeds=feeds,
@@ -704,4 +774,5 @@ def read_queue(
         app_id=app_id,
         app_id_source=source,
         requests=dict(client.requests),
+        not_staff_requesters=not_staff,
     )

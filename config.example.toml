@@ -77,6 +77,13 @@ event_tbd_days = 3
 # Resp, private notes, merge notices and the desk signature in their replies. These are real
 # people's names: keep them only in your own config file, never in the repository.
 extra_staff_names = []
+# Optional, normally empty: for a staff name that someone else in the directory also has. Maps
+# the display name to that person's email as TDX shows it, for example
+# staff_accounts = { "Alex Example" = "alex.example@example.edu" }
+# A listed name counts as staff, but a ticket is internal only when the API confirms that its
+# requester has this email; otherwise the reminder stays. Browser reads can't confirm it. These
+# are real people's details: keep them only in your own config file, never in the repository.
+staff_accounts = {}
 # A visible reply whose own text (quoted mail cut first) contains one of these phrases marks
 # its author as desk staff, remembered like the other strong signals. Matched ignoring case
 # and extra spaces; the requester never becomes desk this way, and no reply text is kept.

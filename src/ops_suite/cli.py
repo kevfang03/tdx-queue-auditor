@@ -1541,6 +1541,18 @@ def _tdx_api_check(args: argparse.Namespace) -> int:
                 f"{details.marker_stats['nested']} of them replies, "
                 f"{details.feed.unreadable} unreadable."
             )
+        if tdx.rules.staff_accounts:
+            unclaimed = widgets.get("unclaimed")
+            readable = "not checked"
+            if unclaimed is not None and unclaimed.rows:
+                found = api_source.requester_email_readable(
+                    client, app_id, unclaimed.rows[0].ticket_id
+                )
+                readable = "yes" if found else "no"
+            print(
+                f"Staff accounts: {len(tdx.rules.staff_accounts)} listed; "
+                f"requester email readable: {readable}."
+            )
         print(_requests_line(client))
         if unset:
             print(

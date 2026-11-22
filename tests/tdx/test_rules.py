@@ -513,6 +513,7 @@ def test_every_count_key_is_present() -> None:
         "requester_note_hold",
         "no_reply_work_hold",
         "internal_requestor",
+        "staff_name_unconfirmed",
         "other_recent",
         "event_tickets",
         "event_recurring",

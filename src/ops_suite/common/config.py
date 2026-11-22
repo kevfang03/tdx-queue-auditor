@@ -146,7 +146,11 @@ class TdxWidgetSettings(BaseModel):
 
 
 class TdxRulesSettings(BaseModel):
-    """The stale rules (tdx audit). Staff names are personal data: keep them in your own config."""
+    """The stale rules (tdx audit). Staff names and addresses are personal data: keep them in
+    your own config."""
+
+    # A validation error's text would otherwise repeat the input, addresses included.
+    model_config = ConfigDict(hide_input_in_errors=True)
 
     stale_hours: int = Field(default=48, ge=1, le=720)
     event_over_hours: int = Field(default=24, ge=1, le=720)
@@ -154,6 +158,10 @@ class TdxRulesSettings(BaseModel):
     # Optional override, normally empty. Normally not needed: desk members are learned from
     # Prim Resp, private notes, merge notices and the desk signature in their replies.
     extra_staff_names: list[str] = []
+    # Display name -> email as TDX shows it, for a staff name someone else also has. A listed
+    # name counts as staff, but a ticket is internal only when its own requester email matches;
+    # when that can't be confirmed, the reminder stays.
+    staff_accounts: dict[str, str] = {}
     # A visible reply whose own text (quoted mail cut) holds one of these marks its author as
     # desk. Matched case-insensitively after collapsing whitespace; the text is never kept.
     desk_signatures: list[str] = ["SCIS Commons Support", "CCI Commons Support"]
@@ -174,10 +182,28 @@ class TdxRulesSettings(BaseModel):
     # marked "possible duplicate". Compared in memory only.
     duplicate_title_similarity: float = Field(default=0.6, gt=0, le=1)
 
+    @field_validator("staff_accounts", mode="before")
+    @classmethod
+    def _valid_staff_accounts(cls, value: object) -> dict[str, str]:
+        """Runs before the type check, whose error location would repeat a name. Errors name
+        the entry's position, never its name or address."""
+        if not isinstance(value, dict):
+            raise ValueError("must map display names to email addresses")
+        accounts: dict[str, str] = {}
+        for position, (name, address) in enumerate(value.items(), start=1):
+            if not isinstance(name, str) or not name.strip():
+                raise ValueError(f"entry {position} has a blank name")
+            if not isinstance(address, str) or _ADDRESS.fullmatch(address.strip()) is None:
+                raise ValueError(f"entry {position} is not an email address like name@example.edu")
+            accounts[name.strip()] = address.strip()
+        if len(accounts) != len(value):
+            raise ValueError("a name is listed twice")
+        return accounts
+
     def __repr_args__(self) -> Iterator[tuple[str | None, object]]:
-        """Show only how many staff names there are, never the names."""
+        """Show only how many staff names and accounts there are, never what they are."""
         for name, value in super().__repr_args__():
-            yield name, (len(value) if name == "extra_staff_names" else value)
+            yield name, (len(value) if name in ("extra_staff_names", "staff_accounts") else value)
 
 
 class TdxEventSettings(BaseModel):
@@ -395,6 +421,9 @@ class TdxShadowSettings(BaseModel):
 
 
 class TdxSettings(BaseModel):
+    # The rules hold personal data, which a validation error's text would otherwise repeat.
+    model_config = ConfigDict(hide_input_in_errors=True)
+
     base_url: str = ""
     # Where tdx watch and tdx audit read the queue: the browser; the browser with the TDX Web
     # API read beside it for comparison ("shadow"); or the API, with the browser reading any
@@ -542,6 +571,8 @@ class Settings(BaseSettings):
         env_file_encoding="utf-8",
         env_ignore_empty=True,
         extra="ignore",
+        # Settings hold personal data, which a validation error's text would otherwise repeat.
+        hide_input_in_errors=True,
     )
 
     paths: PathsSettings = PathsSettings()

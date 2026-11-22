@@ -53,7 +53,7 @@ import os
 import sys
 import time
 from collections import Counter
-from collections.abc import Callable, Mapping, Sequence, Set
+from collections.abc import Callable, Collection, Mapping, Sequence, Set
 from dataclasses import dataclass, field, replace
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
@@ -146,6 +146,7 @@ from ops_suite.tdx.rules import (
     apply_verdicts,
     evaluate,
     plan_feeds,
+    staff_name_tickets,
     strong_desk_names,
 )
 from ops_suite.tdx.saved import load_saved_dashboard
@@ -331,18 +332,32 @@ def judge(
     tz: ZoneInfo,
     memory: DeskMemory | None,
     forms: Mapping[int, EventForm] | None = None,
+    *,
+    not_staff_requesters: Collection[int] = (),
 ) -> tuple[AuditResult, int | None]:
     """Apply the rules, with the desk-member memory when there is one, and the parsed event
-    request forms.
+    request forms. ``not_staff_requesters``: see ``evaluate``.
 
     The memory first learns this run's strong desk names, then answers ``known_desk``, and is
     saved afterwards. Returns the result and the number of members remembered (None without
     a memory).
     """
     if memory is None:
-        return evaluate(rows, feeds, now, rules, tz, forms=forms), None
+        result = evaluate(
+            rows, feeds, now, rules, tz, forms=forms, not_staff_requesters=not_staff_requesters
+        )
+        return result, None
     memory.remember(strong_desk_names(rows, feeds), now)
-    result = evaluate(rows, feeds, now, rules, tz, known_desk=memory.knows, forms=forms)
+    result = evaluate(
+        rows,
+        feeds,
+        now,
+        rules,
+        tz,
+        known_desk=memory.knows,
+        forms=forms,
+        not_staff_requesters=not_staff_requesters,
+    )
     memory.save(now)
     return result, len(memory)
 
@@ -394,7 +409,11 @@ def classify_step(
 ) -> tuple[AuditResult, FollowUpOutcome, LlmDayUsage]:
     """Classify with ``client`` and apply the verdicts. Internal: ``follow_up`` calls it with
     ``institutional`` for the live queue, and only ``tdx demo`` with ``synthetic``."""
-    desk_names = [*strong_desk_names(rows, feeds.feeds), *rules.extra_staff_names]
+    desk_names = [
+        *strong_desk_names(rows, feeds.feeds),
+        *rules.extra_staff_names,
+        *rules.staff_account_names,
+    ]
     outcome = classify_follow_ups(
         result,
         rows,
@@ -427,6 +446,7 @@ def rule_settings(tdx: TdxSettings) -> RuleSettings:
         close_after_days=rules.close_after_days,
         close_hold_days=rules.close_hold_days,
         waiting_hold_days=rules.waiting_hold_days,
+        staff_account_names=tuple(rules.staff_accounts),  # the names, never the addresses
     )
 
 
@@ -571,7 +591,14 @@ def read_and_judge_api(
         error.audit_step = step  # type: ignore[attr-defined]
         raise
     log.info("api requests", extra={"requests": dict(queue.requests)})
-    run = _judged(settings, queue.dashboard, queue.feeds, list(queue.rows), now)
+    run = _judged(
+        settings,
+        queue.dashboard,
+        queue.feeds,
+        list(queue.rows),
+        now,
+        not_staff_requesters=queue.not_staff_requesters,
+    )
     return replace(run, source="api", api_requests=sum(queue.requests.values()))
 
 
@@ -581,16 +608,24 @@ def _judged(
     feeds: FeedRead,
     rows: list[TicketRow],
     now: datetime,
+    *,
+    not_staff_requesters: Collection[int] | None = None,
 ) -> AuditRun:
+    """The rules over one read. ``not_staff_requesters`` None: a read with no account data
+    (the browser), which can confirm nobody, so every listed name's ticket stays unconfirmed."""
     tdx = settings.tdx
+    rules = rule_settings(tdx)
+    if not_staff_requesters is None:
+        not_staff_requesters = staff_name_tickets(rows, rules.staff_account_names)
     result, remembered = judge(
         rows,
         feeds.feeds,
         now,
-        rule_settings(tdx),
+        rules,
         ZoneInfo(tdx.display_timezone),
         open_desk_memory(settings),
         feeds.forms,
+        not_staff_requesters=not_staff_requesters,
     )
     return AuditRun(
         dashboard=dashboard,

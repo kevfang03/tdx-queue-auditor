@@ -110,6 +110,12 @@ A manager sometimes opens a ticket as a reminder or notice for the queue. Nobody
 - **Everything else stays:** a requestor reply under 48 hours is still `client_recent`; an undated one is still `needs_review`; `other_last`, `desk_replied_last`, events and recent tickets are unchanged.
 - **Switch:** `tdx.rules.skip_desk_requestors = false` brings the findings back.
 - **Still flagged?** A manager who is never Prim Resp and never writes a private note has no strong signal. Add that person to `tdx.rules.extra_staff_names` in your own config (never in the repository).
+- **Two people with one name:** names alone can't tell a staff member from someone else in the directory with the same name, whose ticket would then count as internal and raise no reminder. `tdx.rules.staff_accounts` ties a display name to that person's email, in your own config only. A listed name counts as staff, so it needs no second line in `extra_staff_names`.
+  - For an unclaimed ticket with a read feed whose requestor has a listed name, the API reader opens the ticket's record and compares its requester email with the listed one, ignoring case and outer spaces. Only a match makes the ticket internal.
+  - **Unsure means the reminder stays.** A different, missing or empty email, or a ticket whose record can't be read, leaves the ticket **not** internal, even when the desk memory or `extra_staff_names` holds the name. The normal rules then apply, and the run's summary adds `Requester shares a staff name, not confirmed: N.`
+  - A browser read has no account data, so every unclaimed ticket from a listed name is unconfirmed.
+  - The addresses are never logged, printed or stored outside your config. `tdx api check` says only whether the requester email is readable.
+  - **Known limit:** this checks the ticket's requester only. A same-named person who appears as a feed **author** on someone else's ticket is still judged by name.
 
 ## Event requests
 

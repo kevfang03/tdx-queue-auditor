@@ -21,7 +21,7 @@ Personal data rule: titles and names are student data. Findings, counts, summary
 """
 
 from collections import Counter
-from collections.abc import Callable, Iterable, Mapping, Sequence
+from collections.abc import Callable, Collection, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 from types import MappingProxyType
@@ -80,6 +80,7 @@ COUNT_KEYS: tuple[str, ...] = (
     "requester_note_hold",
     "no_reply_work_hold",
     "internal_requestor",
+    "staff_name_unconfirmed",
     "other_recent",
     "event_tickets",
     "event_recurring",
@@ -125,6 +126,9 @@ class RuleSettings:
     # this many days from the note (``in_hand_note`` with no gap). Recent desk work holds a
     # ticket with no visible reply for the same time.
     waiting_hold_days: int = 7
+    # Staff names tied to an account in the runner's settings. Names only: the addresses stay
+    # with the reader that compares them.
+    staff_account_names: tuple[str, ...] = ()
 
     def __repr__(self) -> str:
         return (
@@ -140,7 +144,8 @@ class RuleSettings:
             f"near_event_days={self.near_event_days}, "
             f"close_after_days={self.close_after_days}, "
             f"close_hold_days={self.close_hold_days}, "
-            f"waiting_hold_days={self.waiting_hold_days})"
+            f"waiting_hold_days={self.waiting_hold_days}, "
+            f"staff_account_names=<{len(self.staff_account_names)} names>)"
         )
 
 
@@ -500,13 +505,13 @@ def _desk_members(
     """Everyone known to be desk staff in this run, one name per person.
 
     The ``strong_desk_names``; anyone other than the ticket's requestor seen in the feeds of
-    2+ different tickets; and the local extra_staff_names list.
+    2+ different tickets; and the local extra_staff_names and staff account lists.
     """
     rows = list(rows)
     requestors = {row.ticket_id: row.requestor for row in rows}
     desk = _People()
     _add_strong(desk, rows, feeds)
-    for name in rules.extra_staff_names:
+    for name in (*rules.extra_staff_names, *rules.staff_account_names):
         desk.add(name)
     others = _People()
     for ticket_id, feed in feeds.items():
@@ -521,6 +526,16 @@ def _desk_members(
     return desk.names()
 
 
+def staff_name_tickets(rows: Iterable[TicketRow], names: Sequence[str]) -> frozenset[int]:
+    """The unclaimed tickets whose requestor has one of ``names``. A name alone can't tell two
+    people apart, so a reader with no account data leaves all of these unconfirmed."""
+    return frozenset(
+        row.ticket_id
+        for row in rows
+        if row.widget == "unclaimed" and any(same_person(row.requestor, name) for name in names)
+    )
+
+
 # --- evaluation --------------------------------------------------------------------------
 
 
@@ -533,6 +548,7 @@ def evaluate(
     *,
     known_desk: Callable[[str], bool] | None = None,
     forms: Mapping[int, EventForm] | None = None,
+    not_staff_requesters: Collection[int] = (),
 ) -> AuditResult:
     """Apply the stale rules to every row. See docs/tdx-rules.md for the table.
 
@@ -546,8 +562,13 @@ def evaluate(
     With ``rules.skip_desk_requestors``, a ticket whose requestor is desk staff through a
     strong signal (``strong_desk_names``, extra_staff_names or ``known_desk``; never the
     2+-tickets guess) raises no client_waiting finding and is counted ``internal_requestor``.
+
+    ``not_staff_requesters``: tickets whose requester has a listed staff name but could not be
+    confirmed as that person. They are never internal, whatever the names or the memory say,
+    and the unclaimed ones are counted ``staff_name_unconfirmed``.
     """
     _require_aware(now)
+    not_staff = frozenset(not_staff_requesters)
     rows = _unique(rows)
     counts: Counter[str] = Counter({key: 0 for key in COUNT_KEYS})
     findings: list[Finding] = []
@@ -560,10 +581,16 @@ def evaluate(
     staff = _desk_members(rows, feeds, rules)
     counts["desk_members_known"] = len(staff)
     # For internal tickets: certain desk staff only, never the 2+-tickets guess.
-    strong_staff = [*strong_desk_names(rows, feeds), *rules.extra_staff_names]
+    strong_staff = [
+        *strong_desk_names(rows, feeds),
+        *rules.extra_staff_names,
+        *rules.staff_account_names,
+    ]
 
     def internal(row: TicketRow) -> bool:
         """The requestor is desk staff for certain: nobody is waiting on this ticket."""
+        if row.ticket_id in not_staff:
+            return False  # shares a staff name, not confirmed as that person
         if not rules.skip_desk_requestors or not row.requestor:
             return False
         if is_system_author(row.requestor):
@@ -751,6 +778,8 @@ def evaluate(
         counts[f"rows_{row.widget}"] += 1
         if row.widget == "claimed":
             continue  # the full-timers' tickets: counted only
+        if row.ticket_id in not_staff:
+            counts["staff_name_unconfirmed"] += 1
 
         if is_form_ticket(row, rules):
             counts["event_forms"] += 1
@@ -974,6 +1003,10 @@ def format_audit_summary(result: AuditResult, *, show_ids: bool) -> list[str]:
         if counts["internal_requestor"]
         else ""
     )
+    if counts["staff_name_unconfirmed"]:
+        internal += (
+            f"Requester shares a staff name, not confirmed: {counts['staff_name_unconfirmed']}. "
+        )
     held = (
         f"Ready to close held by a desk note: {counts['desk_note_hold']}. "
         if counts["desk_note_hold"]
